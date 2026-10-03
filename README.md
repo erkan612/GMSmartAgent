@@ -143,7 +143,7 @@ var _decision = gmsa_agent_consume(agent);
 if (_decision != undefined) {
     var _option = gmsa_decision_get_chosen(_decision);
     if (_option != undefined) {
-        gmsa_agent_set_current(agent, _option.action.index, _option.target);
+        gmsa_agent_set_current_option(agent, _option);
         // act on _option.action.name and _option.target: your movement, your rules
     }
 }
@@ -194,7 +194,7 @@ Measured on the VM target with trivial callbacks, so these numbers are GMSmartAg
 | Cost per scored option | ~8 us, flat from 10 to 500 targets |
 | Simple agent think (3 options) | ~23 us |
 | Thinks per step, 2 ms budget | ~84, from 100 up to 10,000 agents |
-| Budget overshoot | under 60 us, cold and warm |
+| Budget overshoot | under 60 us once running, up to ~170 us on the first lap with 10,000 agents |
  
 What that means at 60 fps with a 2 ms budget:
  
