@@ -258,7 +258,10 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 - **v1.3: Learning from outcomes** - Agents that learn from how their own choices turn out: rewards, credit over time, and exploration limited to plausible options.
 - **v1.4: Planning** - A Plan module where utility scoring picks the goal and a hierarchical task network planner works out the steps.
 - **v1.5: Planning across frames** - Resumable planning inside the scheduler budget, and the plan tree in the debug view.
+- **v1.6: More choice models** - A sequence model that learns what the player does next after what they just did, Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
+- **v1.7: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
 - **Later** - GMNav input providers such as path cost and reachability, and a full debug view with overlays and a scheduler budget view.
+
 ---
  
 ## Documentation
