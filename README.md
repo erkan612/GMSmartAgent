@@ -1,4 +1,4 @@
-### STILL IN DEVELOPMENT FOR SOME TIME NOW. INITIAL FILES WILL BE UPLOADED SOON
+### STILL IN DEVELOPMENT, FIRST RELEASE WILL BE MADE SOON
 
 # GMSmartAgent
 
@@ -225,8 +225,8 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Documentation
  
-- **Getting Started** - In progress
-- **Full Documentation** - In progress
+- [**Getting Started**](GettingStarted.md) - From one small enemy to room full of goblins sharing one AI budget
+- [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
 ## References
