@@ -1,8 +1,6 @@
 <img width="1200" height="360" alt="GMSmartAgent_banner" src="https://github.com/user-attachments/assets/bdd70835-30b0-491e-a181-25ff6324d654" />
 
 
-**Decision-weighting AI engine for GameMaker**
-
 A pure GML utility AI framework. Your agents score every option they have, every time they think, and pick the best one. You describe what matters, GMSmartAgent does the math. No external DLLs or extensions.
 
 ---
