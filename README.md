@@ -1,6 +1,5 @@
-### STILL IN DEVELOPMENT, FIRST RELEASE WILL BE MADE SOON
+<img width="1200" height="360" alt="GMSmartAgent_banner" src="https://github.com/user-attachments/assets/bdd70835-30b0-491e-a181-25ff6324d654" />
 
-# GMSmartAgent
 
 **Decision-weighting AI engine for GameMaker**
 
@@ -219,7 +218,7 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 ## Roadmap
  
 - **Learn** - Tiered models behind one interface, from instant habit counting to pairwise ranking and boosted trees, learning both from an agent's own outcomes and from observed player choices. Designer scoring stays the base, learning is blended in under a cap you control.
-- **Link** - GMNav input providers.
+- **Link** - Input providers for other AI frameworks to connect them into GMSmartAgent.
 - **Full Debug** - Overlays, scheduler budget view, starved tier detection.
 ---
  
