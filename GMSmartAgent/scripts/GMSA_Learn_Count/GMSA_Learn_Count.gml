@@ -15,6 +15,7 @@ function gmsa_learn_count_create(_params = {}) {
         confidence_k : __gmsa_param(_params, "confidence_k", 5),
     });
     _model.count      = { bins : _bins, smoothing : _smoothing, names : _names };
+    _model.__bins     = []; // bins of the last key, written through the struct so array copy on write can't break it
     _model.observe    = method(_model, __gmsa_learn_count_observe);
     _model.predict    = method(_model, __gmsa_learn_count_predict);
     _model.explain    = method(_model, __gmsa_learn_count_explain);
@@ -31,8 +32,7 @@ function __gmsa_learn_count_reset() {
 }
 
 function __gmsa_learn_count_observe(_sample) {
-    static _bins = [];
-    var _key = __gmsa_learn_count_key(self, _sample, _bins);
+    var _key = __gmsa_learn_count_key(self, _sample);
     data.clock += 1;
     var _bucket = data.buckets[$ _key];
     if (_bucket == undefined) {
@@ -48,9 +48,8 @@ function __gmsa_learn_count_observe(_sample) {
 }
 
 function __gmsa_learn_count_predict(_sample, _out) {
-    static _bins = [];
     static _per = [];
-    var _key = __gmsa_learn_count_key(self, _sample, _bins);
+    var _key = __gmsa_learn_count_key(self, _sample);
     var _bucket = data.buckets[$ _key];
     if (_bucket != undefined) __gmsa_learn_count_age(self, _bucket);
 
@@ -68,8 +67,7 @@ function __gmsa_learn_count_predict(_sample, _out) {
 }
 
 function __gmsa_learn_count_explain(_sample, _index) {
-    static _bins = [];
-    var _key = __gmsa_learn_count_key(self, _sample, _bins);
+    var _key = __gmsa_learn_count_key(self, _sample);
     var _bucket = data.buckets[$ _key];
     if (_bucket != undefined) __gmsa_learn_count_age(self, _bucket);
 
@@ -77,7 +75,7 @@ function __gmsa_learn_count_explain(_sample, _index) {
     var _nb = count.bins;
     for (var _i = 0; _i < array_length(data.keys); _i++) {
         if (_i > 0) _where += ", ";
-        _where += data.keys[_i] + " " + string(round(_bins[_i] / _nb * 100)) + "-" + string(round((_bins[_i] + 1) / _nb * 100)) + "%";
+        _where += data.keys[_i] + " " + string(round(__bins[_i] / _nb * 100)) + "-" + string(round((__bins[_i] + 1) / _nb * 100)) + "%";
     }
     if (_where == "") _where = "any situation";
 
@@ -132,16 +130,16 @@ function __gmsa_learn_count_keys(_model) {
     return _data.keys;
 }
 
-function __gmsa_learn_count_key(_model, _sample, _bins_out) {
+function __gmsa_learn_count_key(_model, _sample) {
     var _keys = __gmsa_learn_count_keys(_model);
     var _nb = _model.count.bins;
     var _key = "";
-    array_resize(_bins_out, array_length(_keys));
+    array_resize(_model.__bins, array_length(_keys));
     for (var _i = 0; _i < array_length(_keys); _i++) {
         var _id = variable_struct_exists(_model.input_lookup, _keys[_i]) ? _model.input_lookup[$ _keys[_i]] : -1;
         var _v = (_id >= 0 && _id < array_length(_sample.situation)) ? _sample.situation[_id] : 0;
         var _b = min(_nb - 1, floor(clamp(_v, 0, 1) * _nb));
-        _bins_out[_i] = _b;
+        _model.__bins[_i] = _b;
         _key += ((_i > 0) ? "_" : "") + string(_b);
     }
     return _key;

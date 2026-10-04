@@ -10,5 +10,6 @@ function gmsa_tests_all(_verbose = false) {
     gmsa_tests_evaluate();
     gmsa_tests_learn_base();
     gmsa_tests_learn_count();
+    gmsa_tests_learn_linear();
     return gmsa_test_run(_verbose);
 }
