@@ -12,6 +12,8 @@ function gmsa_debug_lines(_decision, _max = 8, _namer = undefined) {
         var _line = ((_i == _decision.chosen) ? "> " : "  ")
             + string_format(_o.score, 1, 3) + "  p" + string_format(_o.probability, 1, 2) + "  " + _o.action.name;
         if (_o.target != undefined) _line += " @ " + __gmsa_debug_target_text(_o.target, _namer);
+        var _designer = __gmsa_param(_o, "designer", _o.score);
+        if (abs(_o.score - _designer) > 0.0005) _line += "  (designer " + string_format(_designer, 1, 3) + ")";
         var _cons = _o.action.considerations;
         if (array_length(_cons) > 0) {
             _line += "  [";

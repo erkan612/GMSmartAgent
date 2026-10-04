@@ -103,5 +103,16 @@ function gmsa_tests_learn_rerank() {
             var _o = gmsa_observe(_ag, ["a", "b"], 1, 0);
             gmsa_test_assert_near(_o.options[0].score, 0.8, GMSA_TEST_EPS, "observe keeps designer scores");
         });
+		
+		gmsa_test_case("debug shows the designer score", function() {
+            var _ag = gmsa_agent_create(__gmsa_tests_rerank_profile(__gmsa_tests_trained_favorite("b", 60), 1));
+            var _lines = gmsa_debug_lines(gmsa_agent_think(_ag, 0));
+            gmsa_test_assert_true(string_pos("designer", _lines[0]) == 0, "untouched option has no note: " + _lines[0]);
+            gmsa_test_assert_true(string_pos("(designer 0.800)", _lines[1]) > 0, "pushed-down option shows it: " + _lines[1]);
+
+            var _plain = gmsa_agent_create(__gmsa_tests_rerank_profile());
+            var _plain_lines = gmsa_debug_lines(gmsa_agent_think(_plain, 0));
+            gmsa_test_assert_true(string_pos("designer", _plain_lines[0] + _plain_lines[1]) == 0, "no model, no notes");
+        });
     });
 }
