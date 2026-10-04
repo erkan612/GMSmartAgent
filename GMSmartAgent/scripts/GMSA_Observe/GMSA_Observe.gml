@@ -29,6 +29,7 @@ function gmsa_observe(_agent, _options, _chosen, _now = get_timer()) {
         _option.target      = _target;
         var _slot = (_target != undefined) ? __gmsa_slots_alloc(_cache, 1, array_length(_profile.inputs)) : -1;
         _option.score       = __gmsa_score_option(_agent, _action, _target, _option, true, _slot);
+        if (_profile.features != undefined) __gmsa_option_fill_inputs(_agent, _option, _target, _slot);
         _option.order       = _i;
         _option.probability = (_i == _chosen) ? 1 : 0;
         array_push(_out, _option);

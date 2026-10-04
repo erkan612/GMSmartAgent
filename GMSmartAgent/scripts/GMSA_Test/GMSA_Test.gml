@@ -187,6 +187,8 @@ function gmsa_test_decision_problems(_decision) {
     var _observed = (__gmsa_param(_decision, "chooser", gmsa_chooser.AGENT) == gmsa_chooser.OBSERVED);
     var _options = _decision.options;
     var _count = array_length(_options);
+    var _owner_agent = __gmsa_param(_decision, "agent", undefined);
+    var _features = is_struct(_owner_agent) ? _owner_agent.profile.features : undefined;
     if (_count == 0) {
         if (_decision.chosen != -1) array_push(_problems, "no options but chosen is " + string(_decision.chosen));
         return _problems;
@@ -209,6 +211,15 @@ function gmsa_test_decision_problems(_decision) {
         if (array_length(_o.features) != array_length(_o.action.considerations)) array_push(_problems, _tag + "features length does not match considerations");
         for (var _f = 0; _f < array_length(_o.features); _f++) {
             if (_o.features[_f] < 0 || _o.features[_f] > 1) array_push(_problems, _tag + "feature " + string(_f) + " outside 0..1");
+        }
+        if (_features != undefined) {
+            if (!is_array(_o.inputs) || array_length(_o.inputs) != array_length(_features)) {
+                array_push(_problems, _tag + "inputs length does not match features");
+            } else {
+                for (var _f = 0; _f < array_length(_o.inputs); _f++) {
+                    if (_o.inputs[_f] < 0 || _o.inputs[_f] > 1) array_push(_problems, _tag + "input " + string(_f) + " outside 0..1");
+                }
+            }
         }
         if (_o.probability < 0 || _o.probability > 1) array_push(_problems, _tag + "probability outside 0..1");
         _sum += _o.probability;

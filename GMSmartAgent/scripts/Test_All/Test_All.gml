@@ -6,5 +6,6 @@ function gmsa_tests_all(_verbose = false) {
     gmsa_tests_scheduler();
     gmsa_tests_observe();
     gmsa_tests_debug();
+    gmsa_tests_features();
     return gmsa_test_run(_verbose);
 }

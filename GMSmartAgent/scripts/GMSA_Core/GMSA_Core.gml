@@ -78,6 +78,7 @@ function gmsa_profile_create(_name, _params = {}) {
         model        : undefined, // reserved for Learn
         influence    : 0,         // reserved for Learn
         model_inputs : undefined, // reserved for Learn
+        features     : undefined, // resolved feature input indices, set at build
         built        : false,
         input_index  : {},
         action_index : {},
@@ -88,6 +89,11 @@ function gmsa_profile_add_input(_profile, _input) {
     __gmsa_profile_assert_editable(_profile);
     array_push(_profile.inputs, _input);
     return _input;
+}
+
+function gmsa_profile_set_features(_profile, _names) {
+    __gmsa_profile_assert_editable(_profile);
+    _profile.model_inputs = _names;
 }
 
 function gmsa_profile_add_action(_profile, _name, _params = {}) {
@@ -129,6 +135,21 @@ function gmsa_profile_build(_profile) {
         if (variable_struct_exists(_input_index, _input_name)) throw _pname + " has duplicate input '" + _input_name + "'";
         _input_index[$ _input_name] = _i;
     }
+	
+    var _features = _profile.model_inputs;
+    var _feature_index = undefined;
+    if (_features != undefined) {
+        if (!is_array(_features) || array_length(_features) == 0) throw _pname + " features must be a non-empty array of input names";
+        _feature_index = array_create(array_length(_features), 0);
+        var _seen = {};
+        for (var _f = 0; _f < array_length(_features); _f++) {
+            var _fname = _features[_f];
+            if (!is_string(_fname) || !variable_struct_exists(_input_index, _fname)) throw _pname + " has unknown feature '" + string(_fname) + "'";
+            if (variable_struct_exists(_seen, _fname)) throw _pname + " has duplicate feature '" + _fname + "'";
+            _seen[$ _fname] = true;
+            _feature_index[_f] = _input_index[$ _fname];
+        }
+    }
 
     var _action_index = {};
     for (var _a = 0; _a < _action_count; _a++) {
@@ -165,6 +186,7 @@ function gmsa_profile_build(_profile) {
     _profile.input_index  = _input_index;
     _profile.action_index = _action_index;
     _profile.built        = true;
+    _profile.features     = _feature_index;
     return _profile;
 }
 

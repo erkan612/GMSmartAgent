@@ -38,6 +38,7 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
             if (_current != undefined && _current.action == _a && _current.target == _target) {
                 _score *= 1 + _profile.commitment;
             }
+            if (_profile.features != undefined) __gmsa_option_fill_inputs(_agent, _option, _target, (_base >= 0) ? _base + _t : -1);
             _option.action = _action;
             _option.target = _target;
             _option.score  = _score;
@@ -177,6 +178,33 @@ function __gmsa_score_option(_agent, _action, _target, _option, _full, _slot) {
         _score += (1 - _score) * _mod * _score;
     }
     return _score * _action.weight;
+}
+
+function __gmsa_read_input(_agent, _idx, _target, _slot) {
+    var _input = _agent.profile.inputs[_idx];
+    var _cache = _agent.__cache;
+    if (_input.source == gmsa_source.PUSH) return gmsa_input_normalize(_input, _agent.push[_idx]);
+    if (!_input.per_target) {
+        if (_cache.stamps[_idx] != _cache.stamp) {
+            _cache.values[_idx] = gmsa_input_normalize(_input, _input.callback(_agent, undefined));
+            _cache.stamps[_idx] = _cache.stamp;
+        }
+        return _cache.values[_idx];
+    }
+    if (_slot < 0) return 0;
+    if (_cache.target_stamps[_slot][_idx] != _cache.stamp) {
+        _cache.target_values[_slot][_idx] = gmsa_input_normalize(_input, _input.callback(_agent, _target));
+        _cache.target_stamps[_slot][_idx] = _cache.stamp;
+    }
+    return _cache.target_values[_slot][_idx];
+}
+
+function __gmsa_option_fill_inputs(_agent, _option, _target, _slot) {
+    var _features = _agent.profile.features;
+    var _n = array_length(_features);
+    if (_option.inputs == undefined) _option.inputs = array_create(_n, 0);
+    else array_resize(_option.inputs, _n);
+    for (var _i = 0; _i < _n; _i++) _option.inputs[_i] = __gmsa_read_input(_agent, _features[_i], _target, _slot);
 }
 
 function __gmsa_option_make() {
