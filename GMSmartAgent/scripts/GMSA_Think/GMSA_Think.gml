@@ -81,6 +81,71 @@ function gmsa_decision_get_chosen(_decision) {
     return (_decision.chosen >= 0) ? _decision.options[_decision.chosen] : undefined;
 }
 
+function gmsa_agent_evaluate(_agent, _now = get_timer()) {
+    var _eval = _agent.__eval;
+    if (_eval == undefined) {
+        _eval = {
+            pool      : [],
+            pool_used : 0,
+            decision  : { agent : _agent, chooser : gmsa_chooser.EVALUATED, time : 0, options : [], chosen : -1, fresh : false },
+        };
+        _agent.__eval = _eval;
+    }
+    var _profile  = _agent.profile;
+    var _decision = _eval.decision;
+    var _options  = _decision.options;
+    var _cache    = __gmsa_think_begin(_agent);
+    _eval.pool_used = 0;
+    array_resize(_options, 0);
+
+    var _actions      = _profile.actions;
+    var _action_count = array_length(_actions);
+    var _input_count  = array_length(_profile.inputs);
+    var _order        = 0;
+
+    for (var _a = 0; _a < _action_count; _a++) {
+        var _action = _actions[_a];
+        if (_now < _agent.cooldowns[_a]) continue;
+
+        var _targets = __gmsa_no_target();
+        var _base = -1;
+        if (_action.targets != undefined) {
+            _targets = _action.targets(_agent);
+            if (_targets == undefined) continue;
+            if (!is_array(_targets)) throw "GMSA: targets of action '" + _action.name + "' must return an array";
+            _base = __gmsa_slots_for_array(_cache, _targets, _input_count);
+        }
+
+        var _target_count = array_length(_targets);
+        for (var _t = 0; _t < _target_count; _t++) {
+            var _target = _targets[_t];
+            var _slot   = (_base >= 0) ? _base + _t : -1;
+            var _option = __gmsa_option_take(_eval);
+            var _score  = __gmsa_score_option(_agent, _action, _target, _option, true, _slot);
+            if (_profile.features != undefined) __gmsa_option_fill_inputs(_agent, _option, _target, _slot);
+            _option.action = _action;
+            _option.target = _target;
+            _option.score  = _score;
+            _option.order  = _order++;
+
+            // ranked, equal scores keep creation order, vetoed options end up last
+            var _lo = 0;
+            var _hi = array_length(_options);
+            while (_lo < _hi) {
+                var _mid = (_lo + _hi) >> 1;
+                if (_options[_mid].score >= _score) _lo = _mid + 1;
+                else _hi = _mid;
+            }
+            array_insert(_options, _lo, _option);
+        }
+    }
+
+    _decision.time   = _now;
+    _decision.chosen = -1;
+    _decision.fresh  = false;
+    return _decision;
+}
+
 // Internal
 function __gmsa_cache_create(_input_count, _pool_size) {
     var _cache = {

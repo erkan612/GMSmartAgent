@@ -51,6 +51,7 @@
     {"id":{"name":"Test_Core","path":"scripts/Test_Core/Test_Core.yy",},},
     {"id":{"name":"Test_Curves","path":"scripts/Test_Curves/Test_Curves.yy",},},
     {"id":{"name":"Test_Debug","path":"scripts/Test_Debug/Test_Debug.yy",},},
+    {"id":{"name":"Test_Evaluate","path":"scripts/Test_Evaluate/Test_Evaluate.yy",},},
     {"id":{"name":"Test_Features","path":"scripts/Test_Features/Test_Features.yy",},},
     {"id":{"name":"Test_Observe","path":"scripts/Test_Observe/Test_Observe.yy",},},
     {"id":{"name":"Test_Scheduler","path":"scripts/Test_Scheduler/Test_Scheduler.yy",},},

@@ -7,5 +7,6 @@ function gmsa_tests_all(_verbose = false) {
     gmsa_tests_observe();
     gmsa_tests_debug();
     gmsa_tests_features();
+    gmsa_tests_evaluate();
     return gmsa_test_run(_verbose);
 }

@@ -34,7 +34,7 @@
 
 enum gmsa_source  { PULL, PUSH }
 enum gmsa_select  { BEST, TOP_N_WEIGHTED }
-enum gmsa_chooser { AGENT, OBSERVED }
+enum gmsa_chooser { AGENT, OBSERVED, EVALUATED }
 
 // Inputs
 function gmsa_input_pull(_name, _callback, _min = 0, _max = 1, _per_target = false) {
@@ -227,6 +227,7 @@ function gmsa_agent_create(_profile, _owner = undefined, _params = {}) {
         decision   : undefined,
         __cache    : __gmsa_cache_create(_input_count, array_length(_profile.actions)),  // per-think input cache and option pool
         __scheduler: undefined,  // { scheduler, tier }, set by gmsa_scheduler_add
+        __eval      : undefined, // evaluation struct and its own option pool, created on first evaluate
     };
     _agent.decision = {
         agent   : _agent,

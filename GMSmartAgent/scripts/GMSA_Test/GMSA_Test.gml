@@ -183,18 +183,21 @@ function gmsa_test_stub(_value) {
 }
 
 function gmsa_test_decision_problems(_decision) {
-    var _problems = [];
-    var _observed = (__gmsa_param(_decision, "chooser", gmsa_chooser.AGENT) == gmsa_chooser.OBSERVED);
-    var _options = _decision.options;
-    var _count = array_length(_options);
+    var _problems  = [];
+    var _chooser   = __gmsa_param(_decision, "chooser", gmsa_chooser.AGENT);
+    var _observed  = (_chooser == gmsa_chooser.OBSERVED);
+    var _evaluated = (_chooser == gmsa_chooser.EVALUATED);
+    var _options   = _decision.options;
+    var _count     = array_length(_options);
     var _owner_agent = __gmsa_param(_decision, "agent", undefined);
-    var _features = is_struct(_owner_agent) ? _owner_agent.profile.features : undefined;
-    if (_count == 0) {
-        if (_decision.chosen != -1) array_push(_problems, "no options but chosen is " + string(_decision.chosen));
-        return _problems;
+    var _features  = is_struct(_owner_agent) ? _owner_agent.profile.features : undefined;
+
+    if (_count == 0 || _evaluated) {
+        if (_decision.chosen != -1) array_push(_problems, "chosen should be -1, got " + string(_decision.chosen));
+        if (_count == 0) return _problems;
     }
-    var _chosen_ok = (_decision.chosen >= 0 && _decision.chosen < _count);
-    if (!_chosen_ok) array_push(_problems, "chosen index " + string(_decision.chosen) + " out of range");
+    var _chosen_ok = !_evaluated && (_decision.chosen >= 0 && _decision.chosen < _count);
+    if (!_evaluated && !_chosen_ok) array_push(_problems, "chosen index " + string(_decision.chosen) + " out of range");
 
     var _sum = 0;
     for (var _i = 0; _i < _count; _i++) {
@@ -202,9 +205,9 @@ function gmsa_test_decision_problems(_decision) {
         var _tag = "option " + string(_i) + " (" + string(_o.action.name) + ") ";
         if (!is_numeric(_o.score) || is_nan(_o.score)) {
             array_push(_problems, _tag + "score is not a number");
-        } else if (_observed && _o.score < 0) {
+        } else if ((_observed || _evaluated) && _o.score < 0) {
             array_push(_problems, _tag + "score must be 0 or more, got " + string(_o.score));
-        } else if (!_observed && _o.score <= 0) {
+        } else if (!_observed && !_evaluated && _o.score <= 0) {
             array_push(_problems, _tag + "score must be positive, got " + string(_o.score));
         }
         if (!_observed && _i > 0 && _o.score > _options[_i - 1].score) array_push(_problems, _tag + "not ranked high to low");
@@ -221,10 +224,14 @@ function gmsa_test_decision_problems(_decision) {
                 }
             }
         }
-        if (_o.probability < 0 || _o.probability > 1) array_push(_problems, _tag + "probability outside 0..1");
+        if (_evaluated) {
+            if (_o.probability != 0) array_push(_problems, _tag + "evaluated option has a probability");
+        } else if (_o.probability < 0 || _o.probability > 1) {
+            array_push(_problems, _tag + "probability outside 0..1");
+        }
         _sum += _o.probability;
     }
-    if (abs(_sum - 1) > 0.0001) array_push(_problems, "probabilities sum to " + string(_sum));
+    if (!_evaluated && abs(_sum - 1) > 0.0001) array_push(_problems, "probabilities sum to " + string(_sum));
     if (_chosen_ok && _options[_decision.chosen].probability <= 0) array_push(_problems, "chosen option has zero probability");
     return _problems;
 }
