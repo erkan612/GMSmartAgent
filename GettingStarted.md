@@ -2,7 +2,7 @@
 
 This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
-For every function's full details, see the [API Reference](Documentation.md).
+For every function's full details, see the [API Reference](https://github.com/erkan612/GMSmartAgent/blob/main/ApiReference.md).
 
 ---
 
