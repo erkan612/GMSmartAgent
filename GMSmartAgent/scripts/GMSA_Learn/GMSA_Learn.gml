@@ -6,7 +6,7 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
     if (!is_numeric(_half) || _half <= 0) throw "GMSA: learn half_life must be above 0";
     var _k = __gmsa_param(_params, "confidence_k", 20);
     if (!is_numeric(_k) || _k <= 0) throw "GMSA: learn confidence_k must be above 0";
-    return {
+    var _model = {
         tier          : _tier,
         tier_name     : _tier_name,
         actions       : [],         // action names, the position is the action id
@@ -31,6 +31,8 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
         __pool        : [],
         __out         : { p : [], confidence : 0 },
     };
+    _model.__adjust = method(_model, __gmsa_learn_adjust); // called by Core's think when the model is attached
+    return _model;
 }
 
 function gmsa_learn_custom(_methods, _params = {}) {
@@ -139,6 +141,63 @@ function gmsa_learn_load(_model, _json) {
     if (_model.reset_data != undefined) _model.reset_data();
     if (_model.load_data != undefined) _model.load_data(_s.data);
     return true;
+}
+
+// Re-ranking
+function gmsa_profile_set_model(_profile, _model, _influence) {
+    __gmsa_profile_assert_editable(_profile);
+    __gmsa_learn_check_model(_model);
+    __gmsa_learn_check_influence(_influence);
+    _profile.model = _model;
+    _profile.influence = _influence;
+}
+
+function gmsa_agent_set_model(_agent, _model, _influence = 0) {
+    if (_model == undefined) {
+        _agent.model = undefined;
+        _agent.influence = 0;
+        return;
+    }
+    __gmsa_learn_check_model(_model);
+    __gmsa_learn_check_influence(_influence);
+    if (_agent.profile.features == undefined) {
+        throw "GMSA: profile '" + string(_agent.profile.name) + "' has no features, declare them or attach the model to the profile before build";
+    }
+    _agent.model = _model;
+    _agent.influence = _influence;
+}
+
+function gmsa_learn_set_influence(_target, _influence) {
+    __gmsa_learn_check_influence(_influence);
+    if (!is_struct(_target) || !variable_struct_exists(_target, "influence")) throw "GMSA: set influence needs a profile or an agent";
+    _target.influence = _influence;
+}
+
+function __gmsa_learn_adjust(_decision, _influence) {
+    static _compare = function(_a, _b) {
+        if (_a.score != _b.score) return (_b.score > _a.score) ? 1 : -1;
+        return _a.order - _b.order;
+    };
+    var _out = gmsa_learn_predict(self, _decision);
+    var _w = _influence * _out.confidence;
+    if (_w <= 0) return;
+    var _options = _decision.options;
+    var _n = array_length(_options);
+    var _best = 0;
+    for (var _i = 0; _i < _n; _i++) _best = max(_best, _out.p[_i]);
+    if (_best <= 0) return;
+    for (var _i = 0; _i < _n; _i++) {
+        _options[_i].score *= max(0.0001, lerp(1, _out.p[_i] / _best, _w));
+    }
+    array_sort(_options, _compare);
+}
+
+function __gmsa_learn_check_model(_model) {
+    if (!is_struct(_model) || !variable_struct_exists(_model, "__adjust")) throw "GMSA: expected a model from gmsa_learn_*_create or gmsa_learn_custom";
+}
+
+function __gmsa_learn_check_influence(_influence) {
+    if (!is_numeric(_influence) || _influence < 0 || _influence > 1) throw "GMSA: influence must be between 0 and 1";
 }
 
 // Internal

@@ -60,6 +60,7 @@
     {"id":{"name":"Test_Learn_Base","path":"scripts/Test_Learn_Base/Test_Learn_Base.yy",},},
     {"id":{"name":"Test_Learn_Count","path":"scripts/Test_Learn_Count/Test_Learn_Count.yy",},},
     {"id":{"name":"Test_Learn_Linear","path":"scripts/Test_Learn_Linear/Test_Learn_Linear.yy",},},
+    {"id":{"name":"Test_Learn_Rerank","path":"scripts/Test_Learn_Rerank/Test_Learn_Rerank.yy",},},
     {"id":{"name":"Test_Observe","path":"scripts/Test_Observe/Test_Observe.yy",},},
     {"id":{"name":"Test_Scheduler","path":"scripts/Test_Scheduler/Test_Scheduler.yy",},},
     {"id":{"name":"Test_Selfcheck","path":"scripts/Test_Selfcheck/Test_Selfcheck.yy",},},

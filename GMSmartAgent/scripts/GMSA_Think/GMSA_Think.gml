@@ -39,10 +39,11 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
                 _score *= 1 + _profile.commitment;
             }
             if (_profile.features != undefined) __gmsa_option_fill_inputs(_agent, _option, _target, (_base >= 0) ? _base + _t : -1);
-            _option.action = _action;
-            _option.target = _target;
-            _option.score  = _score;
-            _option.order  = _order++;
+            _option.designer = _score;
+            _option.action   = _action;
+            _option.target   = _target;
+            _option.score    = _score;
+            _option.order    = _order++;
 
             // binary search for the ranked position, equal scores keep insertion order
             var _lo = 0;
@@ -57,6 +58,13 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
     }
 
     var _count  = array_length(_options);
+    var _model = _agent.model;
+    var _influence = _agent.influence;
+    if (_model == undefined) {
+        _model = _profile.model;
+        _influence = _profile.influence;
+    }
+    if (_model != undefined && _influence > 0 && _count > 1) _model.__adjust(_decision, _influence);
     var _chosen = -1;
     if (_count > 0) {
         if (_profile.select == gmsa_select.TOP_N_WEIGHTED && _count > 1) {
@@ -123,10 +131,11 @@ function gmsa_agent_evaluate(_agent, _now = get_timer()) {
             var _option = __gmsa_option_take(_eval);
             var _score  = __gmsa_score_option(_agent, _action, _target, _option, true, _slot);
             if (_profile.features != undefined) __gmsa_option_fill_inputs(_agent, _option, _target, _slot);
-            _option.action = _action;
-            _option.target = _target;
-            _option.score  = _score;
-            _option.order  = _order++;
+            _option.action   = _action;
+            _option.target   = _target;
+            _option.score    = _score;
+            _option.designer = _score;
+            _option.order    = _order++;
 
             // ranked, equal scores keep creation order, vetoed options end up last
             var _lo = 0;
@@ -277,6 +286,7 @@ function __gmsa_option_make() {
         action      : undefined,
         target      : undefined,
         score       : 0,
+        designer    : 0,
         features    : [],
         probability : 0,
         order       : 0,

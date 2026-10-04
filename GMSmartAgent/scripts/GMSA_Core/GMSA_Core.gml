@@ -25,7 +25,7 @@
 *        │║ ══╗│║ ║ ║│╚═══╗│║ ║ ║││╟───╢│├╬══╦╝  │║│  │╟───╢││║ ══╗│╠══  │║╚╗║│  │║│         *
 *        └╩═══╝└╩ ╩ ╩┘╚═══╝└╩ ╩ ╩┘└╩   ╩┘└╩  ╩┘  ╧╩╧  └╩   ╩┘└╩═══╝└╩═══┘└╩ ╚╩┘  ╧╩╧         *
 *   						Decision-Weighting AI for GameMaker								 *
-*   						          Version 1.0.0											 *
+*   						          Version 1.1.9											 *
 *   																                         *
 *   						           by erkan612											 *
 *   	 *****************************************************************************       *
@@ -128,6 +128,7 @@ function gmsa_profile_build(_profile) {
     if (_profile.select != gmsa_select.BEST && _profile.select != gmsa_select.TOP_N_WEIGHTED) throw _pname + " has an unknown select policy";
     if (!is_numeric(_profile.top_n) || _profile.top_n < 1) throw _pname + " top_n must be at least 1";
     if (!is_numeric(_profile.commitment) || _profile.commitment < 0) throw _pname + " commitment must be 0 or more";
+    if (!is_numeric(_profile.influence) || _profile.influence < 0 || _profile.influence > 1) throw _pname + " influence must be between 0 and 1";
 
     var _input_index = {};
     for (var _i = 0; _i < _input_count; _i++) {
@@ -137,6 +138,10 @@ function gmsa_profile_build(_profile) {
     }
 	
     var _features = _profile.model_inputs;
+    if (_features == undefined && _profile.model != undefined) {
+        _features = [];
+        for (var _i = 0; _i < _input_count; _i++) array_push(_features, _profile.inputs[_i].name);
+    }
     var _feature_index = undefined;
     if (_features != undefined) {
         if (!is_array(_features) || array_length(_features) == 0) throw _pname + " features must be a non-empty array of input names";
@@ -224,6 +229,7 @@ function gmsa_agent_create(_profile, _owner = undefined, _params = {}) {
         last_think : undefined,
         rng        : undefined,  // set by the scheduler, falls back to the default generator
         model      : undefined,  // reserved for Learn
+        influence  : 0,          // used with the agent's own model
         decision   : undefined,
         __cache    : __gmsa_cache_create(_input_count, array_length(_profile.actions)),  // per-think input cache and option pool
         __scheduler: undefined,  // { scheduler, tier }, set by gmsa_scheduler_add
