@@ -227,10 +227,43 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 ---
  
 ## References
- 
+
 **Utility theory for game AI** Mark, D. (2009) "[Behavioral Mathematics for Game AI](https://books.google.com/books/about/Behavioral_Mathematics_for_Game_AI.html?id=iJ2pOgAACAAJ)", Charles River Media
+
 Mark, D. and Dill, K. (2010) "[Improving AI Decision Modeling Through Utility Theory](https://www.gdcvault.com/play/1012410/Improving-AI-Decision-Modeling-Through)", Game Developers Conference ([slides](https://media.gdcvault.com/gdc10/slides/MarkDill_ImprovingAIUtilityTheory.pdf))
+
 Mark, D. and Lewis, M. (2015) "[Building a Better Centaur: AI at Massive Scale](https://www.gdcvault.com/play/1021848/Building-a-Better-Centaur-AI)", Game Developers Conference
+
 Mark, D. "[Infinite Axis Utility System](https://www.gameai.com/iaus.php)", Intrinsic Algorithm
 
 **Random number generation** Marsaglia, G. (2003) "[Xorshift RNGs](https://www.jstatsoft.org/article/view/v008i14)", Journal of Statistical Software, 8(14)
+
+**Choice modeling, Linear model** McFadden, D. (1974) "[Conditional Logit Analysis of Qualitative Choice Behavior](https://escholarship.org/uc/item/61s3q2xr)", in Zarembka, P. (ed.) Frontiers in Econometrics, Academic Press
+
+Cao, Z., Qin, T., Liu, T-Y., Tsai, M-F. and Li, H. (2007) "[Learning to Rank: From Pairwise Approach to Listwise Approach](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-2007-40.pdf)", ICML '07
+
+**Learning to rank** Liu, T-Y. (2009) "[Learning to Rank for Information Retrieval](https://www.nowpublishers.com/article/Details/INR-016)", Foundations and Trends in Information Retrieval, 3(3), 225-331
+
+**RankNet** Burges, C., Shaked, T., Renshaw, E., Lazier, A., Deeds, M., Hamilton, N. and Hullender, G. (2005) "[Learning to Rank using Gradient Descent](https://icml.cc/Conferences/2015/wp-content/uploads/2015/06/icml_ranking.pdf)", ICML '05, 89-96
+
+**LambdaRank and LambdaMART** Burges, C. J. C., Ragno, R. and Le, Q. V. (2006) "[Learning to Rank with Nonsmooth Cost Functions](https://papers.nips.cc/paper/2971-learning-to-rank-with-nonsmooth-cost-functions)", NIPS 2006
+
+Burges, C. J. C. (2010) "[From RankNet to LambdaRank to LambdaMART: An Overview](https://www.microsoft.com/en-us/research/publication/from-ranknet-to-lambdarank-to-lambdamart-an-overview/)", Microsoft Research Technical Report MSR-TR-2010-82
+
+Wu, Q., Burges, C. J. C., Svore, K. M. and Gao, J. (2010) "[Adapting Boosting for Information Retrieval Measures](https://www.microsoft.com/en-us/research/publication/adapting-boosting-information-retrieval-measures/)", Information Retrieval, 13(3), 254-270
+
+**Gradient boosting and regression trees** Breiman, L., Friedman, J. H., Olshen, R. A. and Stone, C. J. (1984) "[Classification and Regression Trees](https://doi.org/10.1201/9781315139470)", Wadsworth
+
+Friedman, J. H. (2001) "[Greedy Function Approximation: A Gradient Boosting Machine](https://www.jstor.org/stable/2699986)", The Annals of Statistics, 29(5), 1189-1232
+
+**Ranking measures (NDCG)** Järvelin, K. and Kekäläinen, J. (2002) "[Cumulated Gain-Based Evaluation of IR Techniques](https://dl.acm.org/doi/10.1145/582415.582418)", ACM Transactions on Information Systems, 20(4), 422-446
+
+**Contextual bandits, outcome learning** Langford, J. and Zhang, T. (2007) "[The Epoch-Greedy Algorithm for Contextual Multi-armed Bandits](https://proceedings.neurips.cc/paper_files/paper/2007/file/4b04a686b0ad13dce35fa99fa4161c65-Paper.pdf)", NIPS 2007
+
+Li, L., Chu, W., Langford, J. and Schapire, R. E. (2010) "[A Contextual-Bandit Approach to Personalized News Article Recommendation](https://arxiv.org/abs/1003.0146)", WWW '10
+
+**Propensity weighting** Horvitz, D. G. and Thompson, D. J. (1952) "[A Generalization of Sampling Without Replacement From a Finite Universe](https://doi.org/10.1080/01621459.1952.10483446)", Journal of the American Statistical Association, 47(260), 663-685
+
+Dudík, M., Langford, J. and Li, L. (2011) "[Doubly Robust Policy Evaluation and Learning](https://arxiv.org/abs/1103.4601)", ICML '11
+
+**Credit assignment and exploration** Sutton, R. S. and Barto, A. G. (2018) "[Reinforcement Learning: An Introduction](http://incompleteideas.net/book/the-book-2nd.html)", 2nd edition, MIT Press
