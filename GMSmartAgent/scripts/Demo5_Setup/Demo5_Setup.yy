@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"Demo5_Setup",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"Demo5_Setup",
+  "parent":{
+    "name":"5",
+    "path":"folders/demos/5.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}
