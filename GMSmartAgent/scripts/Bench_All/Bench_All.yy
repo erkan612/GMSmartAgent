@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"Bench_All",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"Bench_All",
+  "parent":{
+    "name":"GMSA_Tests",
+    "path":"folders/GMSA_Tests.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

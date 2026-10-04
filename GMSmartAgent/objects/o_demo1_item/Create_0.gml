@@ -1,0 +1,1 @@
+if (!variable_instance_exists(id, "kind")) kind = demo1_item.KEY;

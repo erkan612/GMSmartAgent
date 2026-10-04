@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Test",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Test",
+  "parent":{
+    "name":"Test",
+    "path":"folders/GMSmartAgent/Test.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

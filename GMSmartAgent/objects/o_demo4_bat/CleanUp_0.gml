@@ -1,0 +1,1 @@
+gmsa_scheduler_remove(global.demo4_ai, agent);

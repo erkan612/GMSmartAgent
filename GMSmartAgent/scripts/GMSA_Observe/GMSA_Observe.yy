@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Observe",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Observe",
+  "parent":{
+    "name":"Core",
+    "path":"folders/GMSmartAgent/Core.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}
