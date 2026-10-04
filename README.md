@@ -1,7 +1,7 @@
 <img width="1200" height="360" alt="GMSmartAgent_banner" src="https://github.com/user-attachments/assets/bdd70835-30b0-491e-a181-25ff6324d654" />
 
 
-A pure GML utility AI framework. Your agents score every option they have, every time they think, and pick the best one. You describe what matters, GMSmartAgent does the math. No external DLLs or extensions.
+A pure GML utility AI framework. Your agents score every option they have, every time they think, and pick the best one. State machines answer *what am I doing*. GMSmartAgent answers *what should I be doing*, and works alongside the state machine you already have. You describe what matters, GMSmartAgent does the math. No external DLLs or extensions.
 
 ---
 
@@ -35,9 +35,20 @@ GMSmartAgent is a **scoring engine only**. It never moves anything, never querie
 - **Per-agent intervals** - Slow-witted enemies think less often, sharp ones more often
 - **Shared profiles** - One profile, thousands of agents, only per-agent state is duplicated
 ### Observation
-- **Record choices made by others** - Log what the player picked out of the options on offer, in the same shape as an agent's own decision. The foundation for the upcoming learning module.
+- **Record choices made by others** - Log what the player picked out of the options on offer, in the same shape as an agent's own decision
+- **Features** - Choose which inputs are recorded with every option, for learning models
+- **Evaluate** - Score an agent's current options without deciding anything, no side effects
+### Learning
+- **Learning from the player** - Models learn habits and preferences from the player's recorded choices
+- **Count model** - Habits per situation, learns from a handful of choices and explains itself in plain words
+- **Linear model** - Preferences across actions and targets, learns which item the player prefers, not just which action
+- **Re-ranking** - Companions and enemies drift toward what a model learned, under an influence cap, never above the designer's score
+- **Prediction as input** - "How likely is the player to drink right now" becomes an ordinary input any profile can use
+- **Confidence** - A model only gets a say once it has data, so there is no cold-start tuning
+- **Decay, freeze, reset, save and load** - Old habits fade, learning pauses on demand, and models persist with the save game
+- **Custom models** - Plug in your own model with five methods
 ### Developer Tools
-- **Debug view** - Ranked options with scores, probabilities and every consideration's value, drawn or as text
+- **Debug view** - Ranked options with scores, probabilities and every consideration's value, drawn or as text, with the designer's score shown wherever learning changed it
 - **Test module** - Assertions, a runner, stubs, a fake clock, and scenario tests to lock in your profile tuning
 - **Invariant checks** - Catch broken decisions while you tune
 - **Deterministic** - Own seedable random generator, never touches GameMaker's global random sequence
@@ -178,6 +189,33 @@ gmsa_test_suite("Enemy tuning", function() {
 });
 gmsa_test_run(true);
 ```
+
+---
+
+## Learning From the Player
+
+Record what the player chooses, together with what they passed up:
+
+```gml
+var _offered = [];
+for (var _i = 0; _i < array_length(loot_in_reach); _i++) {
+    array_push(_offered, { action : "take", target : loot_in_reach[_i] });
+}
+gmsa_learn_observe(global.taste, gmsa_observe(player_agent, _offered, _picked_index));
+```
+
+Let a companion drift toward the player's taste. The model only reorders what the designer's profile allows:
+
+```gml
+global.taste = gmsa_learn_linear_create();
+gmsa_profile_set_model(companion_profile, global.taste, 1);   // before gmsa_profile_build
+```
+
+Or let any profile read what the player is likely to do next:
+
+```gml
+gmsa_profile_add_input(_p, gmsa_input_pull("will_drink", gmsa_learn_input(global.habits, player_agent, "drink")));
+```
  
 ---
  
@@ -211,13 +249,16 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 - **No hidden globals.** You create schedulers yourself, and can run several with separate budgets.
 - **Deterministic.** Same seed and same inputs give the same decisions, so tests and replays are repeatable.
 - **Allocation-free thinking.** Decisions and options are reused, so many agents don't churn the garbage collector.
+- **Learning stays under the designer.** Models reorder options within what the designer's scoring allows. They can't bring back a vetoed option or lift a score above the designer's.
 ---
  
 ## Roadmap
- 
-- **Learn** - Tiered models behind one interface, from instant habit counting to pairwise ranking and boosted trees, learning both from an agent's own outcomes and from observed player choices. Designer scoring stays the base, learning is blended in under a cap you control.
-- **Link** - Input providers for other AI frameworks to connect them into GMSmartAgent.
-- **Full Debug** - Overlays, scheduler budget view, starved tier detection.
+
+- **v1.2: RankNet and LambdaMART** - The pairwise and boosted-tree learning-to-rank models, joining Count and Linear and trained from the same recorded choices.
+- **v1.3: Learning from outcomes** - Agents that learn from how their own choices turn out: rewards, credit over time, and exploration limited to plausible options.
+- **v1.4: Planning** - A Plan module where utility scoring picks the goal and a hierarchical task network planner works out the steps.
+- **v1.5: Planning across frames** - Resumable planning inside the scheduler budget, and the plan tree in the debug view.
+- **Later** - GMNav input providers such as path cost and reachability, and a full debug view with overlays and a scheduler budget view.
 ---
  
 ## Documentation
