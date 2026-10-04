@@ -30,6 +30,7 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
         __sample      : { situation : [], options : [], chosen : -1, weight : 1 },
         __pool        : [],
         __out         : { p : [], confidence : 0 },
+        __predictions : [],         // cached predictions for gmsa_learn_input, one per observed agent
     };
     _model.__adjust = method(_model, __gmsa_learn_adjust); // called by Core's think when the model is attached
     return _model;
@@ -57,6 +58,7 @@ function gmsa_learn_observe(_model, _decision) {
     var _sample = __gmsa_learn_sample(_model, _decision, _decision.chosen);
     _model.samples = _model.samples * _model.decay + 1;
     _model.observe(_sample);
+    __gmsa_learn_invalidate(_model);
     return true;
 }
 
@@ -106,6 +108,7 @@ function gmsa_learn_freeze(_model, _frozen = true) {
 function gmsa_learn_reset(_model) {
     _model.samples = 0;
     if (_model.reset_data != undefined) _model.reset_data();
+	__gmsa_learn_invalidate(_model);
 }
 
 // Persistence
@@ -140,6 +143,7 @@ function gmsa_learn_load(_model, _json) {
     _model.__bindings = [];
     if (_model.reset_data != undefined) _model.reset_data();
     if (_model.load_data != undefined) _model.load_data(_s.data);
+	__gmsa_learn_invalidate(_model);
     return true;
 }
 
@@ -198,6 +202,64 @@ function __gmsa_learn_check_model(_model) {
 
 function __gmsa_learn_check_influence(_influence) {
     if (!is_numeric(_influence) || _influence < 0 || _influence > 1) throw "GMSA: influence must be between 0 and 1";
+}
+
+// Prediction as an input
+function gmsa_learn_input(_model, _observed, _action, _params = {}) {
+    __gmsa_learn_check_model(_model);
+    if (!is_struct(_observed) || !variable_struct_exists(_observed, "profile")) throw "GMSA: learn input needs the observed agent";
+    if (_observed.profile.features == undefined) {
+        throw "GMSA: profile '" + string(_observed.profile.name) + "' has no features, declare them with gmsa_profile_set_features before build";
+    }
+    if (gmsa_profile_action_index(_observed.profile, _action) < 0) {
+        throw "GMSA: profile '" + string(_observed.profile.name) + "' has no action '" + string(_action) + "'";
+    }
+    var _fallback = __gmsa_param(_params, "fallback", 0);
+    if (!is_numeric(_fallback) || _fallback < 0 || _fallback > 1) throw "GMSA: learn input fallback must be between 0 and 1";
+    var _refresh = __gmsa_param(_params, "refresh", 1000000 / game_get_speed(gamespeed_fps));
+    if (!is_numeric(_refresh) || _refresh < 0) throw "GMSA: learn input refresh must be 0 or more";
+    var _clock = __gmsa_param(_params, "clock", get_timer);
+    if (!is_callable(_clock)) throw "GMSA: learn input clock must be callable";
+
+    var _ctx = { model : _model, observed : _observed, action : _action, fallback : _fallback, refresh : _refresh, clock : _clock };
+    return method(_ctx, function(_agent, _target) {
+        if (_agent == observed) throw "GMSA: a learn input can't be read by the agent it observes";
+        var _entry = __gmsa_learn_prediction(model, observed, clock, refresh);
+        if (!variable_struct_exists(_entry.actions, action)) return 0;
+        return _entry.actions[$ action] * _entry.confidence + fallback * (1 - _entry.confidence);
+    });
+}
+
+function __gmsa_learn_prediction(_model, _observed, _clock, _refresh) {
+    var _now = _clock();
+    var _cache = _model.__predictions;
+    var _entry = undefined;
+    for (var _i = 0; _i < array_length(_cache); _i++) {
+        if (_cache[_i].agent == _observed) { _entry = _cache[_i]; break; }
+    }
+    if (_entry == undefined) {
+        _entry = { agent : _observed, time : 0, fresh : false, actions : {}, confidence : 0 };
+        array_push(_cache, _entry);
+    }
+    if (_entry.fresh && _now - _entry.time < _refresh) return _entry;
+
+    var _e = gmsa_agent_evaluate(_observed, _now);
+    var _out = gmsa_learn_predict(_model, _e);
+    _entry.actions = {};
+    for (var _i = 0; _i < array_length(_e.options); _i++) {
+        var _name = _e.options[_i].action.name;
+        var _sum = variable_struct_exists(_entry.actions, _name) ? _entry.actions[$ _name] : 0;
+        _entry.actions[$ _name] = _sum + _out.p[_i];
+    }
+    _entry.confidence = _out.confidence;
+    _entry.time = _now;
+    _entry.fresh = true;
+    return _entry;
+}
+
+function __gmsa_learn_invalidate(_model) {
+    var _cache = _model.__predictions;
+    for (var _i = 0; _i < array_length(_cache); _i++) _cache[_i].fresh = false;
 }
 
 // Internal
