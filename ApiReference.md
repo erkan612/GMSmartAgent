@@ -1,6 +1,6 @@
 # GMSmartAgent API Reference
 
-Complete reference for every public function, enum and data structure in GMSmartAgent v1.0.
+Complete reference for every public function, enum and data structure in GMSmartAgent.
 
 ---
 
@@ -17,6 +17,7 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [Scheduler](#scheduler)
 - [Random Generator](#random-generator)
 - [Debug](#debug)
+- [Learn](#learn)
 - [Test](#test)
 - [Data Structures](#data-structures)
 - [Callback Signatures](#callback-signatures)
@@ -71,6 +72,16 @@ Who made a decision.
 | --- | --- |
 | `gmsa_chooser.AGENT` | The agent's own think |
 | `gmsa_chooser.OBSERVED` | A choice recorded with `gmsa_observe` |
+| `gmsa_chooser.EVALUATED` | A ranking made with `gmsa_agent_evaluate`, nothing chosen |
+
+### gmsa_learn_tier
+The kind of a learning model, see [Learn](#learn).
+
+| Element | Meaning |
+| --- | --- |
+| `gmsa_learn_tier.CUSTOM` | Your own model, made with `gmsa_learn_custom` |
+| `gmsa_learn_tier.COUNT` | Habit counting, made with `gmsa_learn_count_create` |
+| `gmsa_learn_tier.LINEAR` | Weighted preferences, made with `gmsa_learn_linear_create` |
 
 ### gmsa_test_status
 Result of a test case, see [Test](#test).
@@ -236,6 +247,25 @@ Adds an input made with `gmsa_input_pull` or `gmsa_input_push`. Its position is 
 
 **Throws** if the profile is already built.
 
+### gmsa_profile_set_features
+
+```gml
+gmsa_profile_set_features(profile, names) -> profile
+```
+
+Declares which inputs describe an option to a learning model. Every option of this profile then carries their normalized values in `option.inputs`, read in the order of `profile.features`.
+
+```gml
+gmsa_profile_set_features(_p, ["hp", "danger", "dist"]);
+```
+
+- **Needed on any profile whose decisions are learned from or predicted**, see [Learn](#learn).
+- Profiles without features skip the work entirely, so they cost nothing extra.
+- Pick inputs that explain the choice. An input every option shares (the agent's health) describes the situation, a per-target input (distance to the target) tells options apart.
+- Attaching a model to a profile with no features declared makes every input a feature.
+
+**Throws** if the profile is already built.
+
 ### gmsa_profile_add_action
 
 ```gml
@@ -281,6 +311,8 @@ Validates the profile, resolves names to indices and locks it. Nothing is change
 - a per-target input is used by an action without a `targets` callback
 - an action's weight or cooldown is negative, or `targets` isn't callable
 - `select` is unknown, `top_n` is below 1, or `commitment` is negative
+- the features are empty, name an unknown input, or name one twice
+- the model's influence is outside 0..1
 - the profile is already built
 
 ### gmsa_profile_input_index
@@ -413,6 +445,21 @@ Runs one think immediately and returns the agent's decision. Schedulers call thi
 - Without `rng`, the agent's scheduler generator is used, or an internal default generator for agents outside a scheduler. GameMaker's own `random` is never touched.
 - `on_decide` is **not** called here, only by schedulers.
 - The decision is marked fresh.
+- When the agent or its profile has a model attached, the surviving options are re-ranked before selection, see [How re-ranking works](#how-re-ranking-works).
+
+### gmsa_agent_evaluate
+
+```gml
+gmsa_agent_evaluate(agent, [now]) -> decision
+```
+
+Ranks the agent's current options without choosing one and without side effects. Use it to ask "what's on offer right now", usually for an observed agent like the player, then pass the result to `gmsa_learn_predict`.
+
+- Every option is scored in full, including vetoed ones, so nothing is hidden from you.
+- Cooldowns are respected, so an action on cooldown isn't on offer.
+- No model re-ranks it: scores are the designer's.
+- Nothing is chosen (`chosen` is -1), the decision isn't fresh, and the agent's own decision, cooldowns and think time are untouched.
+- The result lives in its own reused struct, separate from the agent's decision, so evaluating never disturbs thinking. The next evaluate overwrites it.
 
 ### gmsa_decision_get_chosen
 
@@ -420,7 +467,7 @@ Runs one think immediately and returns the agent's decision. Schedulers call thi
 gmsa_decision_get_chosen(decision) -> option or undefined
 ```
 
-**Returns** the chosen option, or `undefined` when nothing was selectable (every option was vetoed, on cooldown, or had no targets).
+**Returns** the chosen option, or `undefined` when nothing was selectable (every option was vetoed, on cooldown, or had no targets) or the decision came from `gmsa_agent_evaluate`.
 
 ### Decisions are reused
 
@@ -436,7 +483,7 @@ Each agent owns **one** decision struct, overwritten by every think, and its opt
 gmsa_observe(agent, options, chosen, [now]) -> decision
 ```
 
-Records a decision someone else made, usually the player, in the same shape as an agent's own decision. This is the foundation for learning from player choices.
+Records a decision someone else made, usually the player, in the same shape as an agent's own decision. Pass it to `gmsa_learn_observe` to learn from it.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -452,6 +499,7 @@ Differences from a think:
 - **The order you passed is kept**, so `chosen` means exactly what you passed.
 - **Cooldowns, commitment and the agent's think time are untouched.**
 - The chosen option's probability is 1, the others 0.
+- **No model re-ranks it.** Scores are the designer's, and when the profile declares features each option carries them in `inputs`, ready for `gmsa_learn_observe`.
 
 It writes into the agent's decision, so give each observed decision-maker its own agent rather than reusing one that also thinks.
 
@@ -625,6 +673,13 @@ One line per option, up to `max` (default 8), plus a line counting the rest. Eac
   0.580  p0.00  pick_up @ ref instance 100002  [distance 0.97]
 ```
 
+When a learning model changed an option's score, the line ends with the designer's score, so you can see how far learning moved it:
+
+```
+> 0.512  p1.00  loot @ chest  [value 0.80, dist 0.64]
+  0.301  p0.00  fight @ goblin  [threat 0.70]  (designer 0.540)
+```
+
 `namer` is an optional `function(target)` returning text for a target. Without it, struct targets show as `struct` and anything else through `string()`.
 
 ### gmsa_debug_explain
@@ -644,6 +699,299 @@ gmsa_debug_draw(decision, x, y, [max], [namer]) -> real
 Draws the lines at `x, y`, the chosen option in green, followed by any invariant violations in red. Restores the draw colour afterwards. Call it in a Draw or Draw GUI event.
 
 **Returns** the height drawn, so several agents can be stacked.
+
+---
+
+## Learn
+
+Learning from observed choices. A model watches what a decision-maker (usually the player) picks out of the options on offer, and learns their habits and preferences. A trained model is used in two ways:
+
+- **Re-ranker:** attached to a profile or an agent, it nudges that agent's options toward what it learned, under an influence cap.
+- **Predictor:** read through `gmsa_learn_input`, it turns "what is the player likely to do right now" into an input any profile can use.
+
+The Learn module depends on Core. Core never depends on it: an attached model is called through the model itself, so removing the Learn folder breaks nothing else.
+
+### The workflow
+
+1. Declare features on the profile whose choices you record, with `gmsa_profile_set_features`.
+2. Record each choice with `gmsa_observe` and train on it with `gmsa_learn_observe`.
+3. Use the model: attach it with `gmsa_profile_set_model` or `gmsa_agent_set_model`, or read it with `gmsa_learn_input` or `gmsa_learn_predict`.
+
+```gml
+// the player's agent records choices, its profile declares the features
+gmsa_learn_observe(global.taste, gmsa_observe(player_agent, _offered, _picked));
+
+// a companion drifts toward the player's taste
+gmsa_profile_set_model(companion_profile, global.taste, 1);   // before gmsa_profile_build
+
+// any profile can read what the player is likely to do
+gmsa_profile_add_input(_p, gmsa_input_pull("will_drink", gmsa_learn_input(global.habits, player_agent, "drink")));
+```
+
+### Choosing a model
+
+| Model | Learns | Needs | Good at | Limits |
+| --- | --- | --- | --- | --- |
+| Count | How often each action is chosen in each situation | A handful of choices | Habits, explains itself in plain words | Actions only, not targets; situational inputs only |
+| Linear | Weights per action and input | Dozens of choices | Preferences, including which target | Needs more data before it's confident |
+| Custom | Whatever you write | | Game-specific patterns | |
+
+### Names, not indices
+
+Models bind to profiles by **action and input names**, cached per profile. A model trained on one profile (the player's) can be used by another (a companion's) as long as they share names. New names extend the model's vocabulary, so adding an action to a profile doesn't break a trained or saved model.
+
+### gmsa_learn_count_create
+
+```gml
+gmsa_learn_count_create([params]) -> model
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `bins` | integer | 4 | Bins per input: 4 splits each input into quarters |
+| `inputs` | array | all situational | Names of the inputs that define a situation |
+| `smoothing` | real | 1 | Added to every count, so one observation never reads as certainty |
+| `half_life` | real | 50 | Observations after which an old choice counts half |
+| `confidence_k` | real | 5 | Data in a situation needed for 50% confidence |
+
+How it works:
+- Each situational input (one that doesn't depend on the target) is cut into bins, and the combination of bins is the **situation**. Per-target inputs are ignored.
+- Per situation, it counts how often each action was chosen, with older choices fading by `half_life`.
+- A prediction is each action's smoothed share of its situation. Options with the same action split that action's share.
+- **Confidence is per situation:** `n / (n + confidence_k)`, where `n` is the amount of data for this situation. A model with plenty of data overall but none for the current situation says it doesn't know.
+- The inputs it buckets on are fixed the first time it's used.
+
+Explain reads like:
+
+```
+hp 0-25%, danger 75-100%: drink 7.0 of 9.0 (0.73)
+```
+
+**Throws** when `bins` isn't a whole number of 1 or more, `smoothing` isn't above 0, `inputs` is empty, or the situations would exceed 4096 (`bins` to the power of the number of inputs). That last check runs at creation when you pass `inputs`, otherwise the first time the model is used.
+
+### gmsa_learn_linear_create
+
+```gml
+gmsa_learn_linear_create([params]) -> model
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `learn_rate` | real | 0.3 | How far one observation moves the weights |
+| `half_life` | real | 50 | Observations after which old evidence counts half |
+| `confidence_k` | real | 20 | Observations needed for 50% confidence |
+
+How it works:
+- Each action has a weight per input and a bias. An option's preference is its action's bias plus each input times its weight, so per-target inputs let it prefer one target over another.
+- The offered options compete through a softmax, so their probabilities sum to 1.
+- Each observation moves the chosen option's weights toward its inputs and the others' away, in proportion to how surprised the model was. An expected choice changes little, a surprising one changes a lot.
+- Every observation shrinks all weights slightly, so old preferences fade unless they keep being reinforced.
+- **Confidence is model-wide:** `samples / (samples + confidence_k)`.
+
+Explain reads like:
+
+```
+loot: value +0.42, dist -0.18, bias +0.10 (p 0.62)
+```
+
+**Throws** when `learn_rate` isn't above 0.
+
+### gmsa_learn_custom
+
+```gml
+gmsa_learn_custom(methods, [params]) -> model
+```
+
+Wraps your own model so it works everywhere a built-in one does.
+
+| Method | Required | Description |
+| --- | --- | --- |
+| `observe(sample)` | Yes | Learn from one choice, `sample.chosen` is the chosen option |
+| `predict(sample, out)` | Yes | Fill `out.p[i]` for every option and `out.confidence` |
+| `explain(sample, i)` | No | Return an array of lines about option `i` |
+| `save_data()` | No | Return a JSON-ready struct of what was learned |
+| `load_data(data)` | No | Restore what `save_data` returned |
+| `reset_data()` | No | Forget everything, also called once at creation to initialize `data` |
+
+Methods run with the model as `self`, so they can read `actions`, `inputs`, `situational`, `decay`, `samples` and their own `data`.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | `"custom"` | Stored in saves, a save only loads into a model with the same name |
+| `half_life` | real | 50 | Sets `decay` for your own use |
+| `confidence_k` | real | 20 | Used by `gmsa_learn_confidence` |
+
+The **sample** a method receives, in the model's own id space:
+
+```gml
+sample = {
+    situation : [0.35, 0, 0.80],     // situational inputs, 0 for per-target ones
+    options   : [                    // one per offered option
+        { action : 0, inputs : [0.35, 0.62, 0.80] },
+        { action : 1, inputs : [0.35, 0.10, 0.80] },
+    ],
+    chosen    : 0,                   // -1 when predicting
+    weight    : 1,
+};
+```
+
+`action` indexes `actions`, and each `inputs` entry indexes `inputs`. An input the decision's profile doesn't have reads 0.
+
+Predictions are cleaned before anyone uses them: negative or NaN values become 0, the values are scaled to sum to 1 (or made even if they're all 0), and confidence is clamped to 0..1. A broken custom model can't break scoring.
+
+**Throws** when `observe` or `predict` is missing, or a method isn't callable.
+
+### gmsa_learn_observe
+
+```gml
+gmsa_learn_observe(model, decision) -> bool
+```
+
+Trains the model on a decision with a chosen option, usually from `gmsa_observe`. Nothing trains automatically: one observation can train several models, and choices you don't want learned (tutorials, cutscenes) are simply not passed in.
+
+**Returns** false when the model is frozen.
+
+**Throws** when the decision's profile declares no features, or nothing was chosen.
+
+### gmsa_learn_predict
+
+```gml
+gmsa_learn_predict(model, decision) -> { p, confidence }
+```
+
+How likely the observed decision-maker is to pick each option of a decision, usually from `gmsa_agent_evaluate`. `p[i]` matches `decision.options[i]` and the values sum to 1. `confidence` is 0..1.
+
+The result struct is reused by the model, so copy what you keep.
+
+### gmsa_learn_explain
+
+```gml
+gmsa_learn_explain(model, decision, index) -> array of strings
+```
+
+Lines explaining how the model rates option `index`.
+
+### gmsa_learn_confidence
+
+```gml
+gmsa_learn_confidence(model, [n]) -> real
+```
+
+`n / (n + confidence_k)`, using the model's decayed amount of data when `n` is left out.
+
+### gmsa_profile_set_model
+
+```gml
+gmsa_profile_set_model(profile, model, influence)
+```
+
+Attaches a model to a profile as a re-ranker, before build. `influence` (0..1) is how much say the model gets. If the profile declares no features, every input becomes one.
+
+**Throws** when the profile is built, the model isn't a model, or `influence` is outside 0..1.
+
+### gmsa_agent_set_model
+
+```gml
+gmsa_agent_set_model(agent, model, [influence])
+```
+
+Gives one agent its own model, overriding the profile's. Pass `undefined` to remove it.
+
+**Throws** when the agent's profile declares no features, the model isn't a model, or `influence` is outside 0..1.
+
+### gmsa_learn_set_influence
+
+```gml
+gmsa_learn_set_influence(target, influence)
+```
+
+Changes influence at runtime on a profile or an agent, for example with a difficulty setting. On an agent it applies to the agent's own model only. Influence is the one profile setting that can change after build.
+
+### How re-ranking works
+
+When a model is attached, every think adjusts the surviving options before ranking:
+
+`score = designer * max(0.0001, lerp(1, p / best p, influence * confidence))`
+
+- **The option the model likes most keeps its full score,** the others are pushed down by how much less it likes them.
+- **Vetoed options stay vetoed:** they're gone before the model sees the list.
+- **No score ever rises above the designer's score,** and no option is pushed all the way to 0.
+- **No confidence, no change:** a fresh model has no effect until it has learned something.
+- Each option keeps its designer score in `option.designer`, and the debug view shows it wherever learning changed a score.
+- Only thinks re-rank. `gmsa_agent_evaluate` and `gmsa_observe` always show designer scores.
+
+### gmsa_learn_input
+
+```gml
+gmsa_learn_input(model, observed, action, [params]) -> callback
+```
+
+A pull input callback reading the model's prediction about an observed agent: how likely it is to pick `action` right now.
+
+```gml
+gmsa_profile_add_input(_p, gmsa_input_pull("will_drink", gmsa_learn_input(global.habits, player_agent, "drink")));
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `fallback` | real | 0 | What it reads when the model has no confidence |
+| `refresh` | real | one frame | Microseconds a prediction is reused |
+| `clock` | function | `get_timer` | Time source, the same one as the observed agent's cooldowns |
+
+- It reads `p(action) x confidence + fallback x (1 - confidence)`, so an untrained model reads the fallback, not a misleading even split.
+- It reads 0 when the action isn't on offer right now (on cooldown, no targets).
+- Predictions are cached per model and observed agent within `refresh`, so many agents reading it in one frame cost one evaluation. Learning, reset and load make the cache stale at once.
+- The cache holds a reference to the observed agent.
+
+**Throws** when the observed agent's profile declares no features or has no such action, or a parameter is out of range. Reading it from the observed agent itself throws too, since that would evaluate the agent in the middle of its own think.
+
+### gmsa_learn_freeze
+
+```gml
+gmsa_learn_freeze(model, [frozen])
+```
+
+Stops learning (`true`, the default) or resumes it. A frozen model still predicts and re-ranks.
+
+### gmsa_learn_reset
+
+```gml
+gmsa_learn_reset(model)
+```
+
+Forgets everything learned. Names seen so far are kept.
+
+### gmsa_learn_save
+
+```gml
+gmsa_learn_save(model) -> string
+```
+
+The model's learned state as a JSON string, to store with your save game.
+
+### gmsa_learn_load
+
+```gml
+gmsa_learn_load(model, json) -> bool
+```
+
+Loads a save into a model you created. The model keeps its own settings (`half_life`, `confidence_k`, tier parameters), so tuning still applies to loaded models.
+
+**Throws** when the save is malformed, from a newer version, or from a different kind of model. A Count save also throws when the model uses a different number of bins.
+
+### Model fields
+
+| Field | Description |
+| --- | --- |
+| `tier` | `gmsa_learn_tier` |
+| `tier_name` | `"count"`, `"linear"` or the custom name |
+| `actions` | Action names, the position is the action id |
+| `inputs` | Input names, the position is the input id |
+| `situational` | Per input id, true when it doesn't depend on the target |
+| `samples` | Decayed amount of observed data |
+| `half_life`, `decay`, `confidence_k` | Settings |
+| `frozen` | True while frozen |
+| `data` | What the model learned, its own shape per tier |
 
 ---
 
@@ -741,11 +1089,12 @@ gmsa_test_decision_problems(decision) -> array of strings
 ```
 
 Checks a decision's invariants and returns every violation, an empty array when valid:
-- `chosen` is a valid index, or -1 when there are no options
-- scores are positive (0 or more for observed decisions)
-- agent decisions are ranked high to low
+- `chosen` is a valid index, or -1 when there are no options, and always -1 for evaluated decisions
+- scores are positive (0 or more for observed and evaluated decisions)
+- agent and evaluated decisions are ranked high to low
 - every option has one feature per consideration, each in 0..1
-- probabilities are in 0..1 and sum to 1
+- when the profile declares features, every option has one value per feature in `inputs`, each in 0..1
+- probabilities are in 0..1 and sum to 1 when something was chosen
 - the chosen option has a probability above 0
 
 The Debug module uses this to show violations in red.
@@ -787,7 +1136,8 @@ Fields you can read. Fields starting with `__` are internal.
 | `actions` | Array of actions, in index order |
 | `select`, `top_n`, `commitment` | Selection settings |
 | `built` | True once built |
-| `model`, `influence`, `model_inputs` | Reserved for the Learn module |
+| `features` | Input indices declared with `gmsa_profile_set_features`, undefined when none |
+| `model`, `influence` | The attached model and its influence, see [Learn](#learn) |
 
 ### Input
 
@@ -822,16 +1172,16 @@ Fields you can read. Fields starting with `__` are internal.
 | `last_think` | Time of the last think, undefined before the first |
 | `rng` | The generator in use, undefined outside a scheduler |
 | `decision` | The agent's decision |
-| `model` | Reserved for the Learn module |
+| `model`, `influence` | The agent's own model and influence, undefined when it uses the profile's |
 
 ### Decision
 
 | Field | Description |
 | --- | --- |
 | `agent` | The agent that owns it |
-| `chooser` | `gmsa_chooser.AGENT` or `gmsa_chooser.OBSERVED` |
+| `chooser` | `gmsa_chooser` |
 | `time` | Time of the think or observation |
-| `options` | Array of options. Ranked high to low for agent decisions, in your order for observed ones |
+| `options` | Array of options. Ranked high to low for agent and evaluated decisions, in your order for observed ones |
 | `chosen` | Index into `options`, -1 when nothing was selectable |
 | `fresh` | True until consumed with `gmsa_agent_consume` |
 
@@ -842,10 +1192,15 @@ Fields you can read. Fields starting with `__` are internal.
 | `action` | The action struct |
 | `target` | The target, undefined for targetless actions |
 | `score` | Final score |
+| `designer` | Score before any learning model adjusted it |
 | `features` | Each consideration's curved value, in consideration order |
 | `probability` | Chance this option was picked under the selection policy |
 | `order` | Creation order within the think |
-| `inputs` | Reserved for the Learn module |
+| `inputs` | Normalized value of each feature, in the order of `profile.features`. Only filled when the profile declares features |
+
+### Model
+
+See [Model fields](#model-fields) in Learn.
 
 ---
 
@@ -859,6 +1214,14 @@ Fields you can read. Fields starting with `__` are internal.
 | Custom curve | `function(x)` | y, clamped to 0..1 |
 | Clock | `function()` | Microseconds |
 | Target namer | `function(target)` | Text |
+| Custom model `observe` | `function(sample)` | Nothing |
+| Custom model `predict` | `function(sample, out)` | Nothing, fills `out.p` and `out.confidence` |
+| Custom model `explain` | `function(sample, index)` | Array of strings |
+| Custom model `save_data` | `function()` | JSON-ready struct |
+| Custom model `load_data` | `function(data)` | Nothing |
+| Custom model `reset_data` | `function()` | Nothing |
+
+Custom model methods run with the model as `self`, see [gmsa_learn_custom](#gmsa_learn_custom).
 
 Callbacks can be anonymous functions, methods or script functions. Bind data to them with `method(struct, function)` when they need more than the agent.
 
@@ -878,9 +1241,10 @@ What happens in one think, in order:
 5. **Weight**: multiply by the action's weight.
 6. **Commit**: if the option matches the agent's current action and target, multiply by `1 + commitment`.
 7. **Rank** high to low. Equal scores keep their creation order.
-8. **Select**: `BEST` takes the top option. `TOP_N_WEIGHTED` picks among the top `top_n` with probability proportional to score.
-9. **Cooldown** of the chosen action starts.
-10. **Write** the decision and mark it fresh.
+8. **Re-rank**, only when a model is attached and there are at least two options: each score is multiplied by `lerp(1, p / best p, influence * confidence)`, never below 0.0001 of itself, and the options are ranked again. The score before this step stays in `option.designer`.
+9. **Select**: `BEST` takes the top option. `TOP_N_WEIGHTED` picks among the top `top_n` with probability proportional to score.
+10. **Cooldown** of the chosen action starts.
+11. **Write** the decision and mark it fresh.
 
 Worked example, the heal option from the README at 20 hp with a heart 10 px away:
 
