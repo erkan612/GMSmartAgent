@@ -1,8 +1,8 @@
 # Getting Started with GMSmartAgent
 
-This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
+This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
-For every function's full details, see the [API Reference](https://github.com/erkan612/GMSmartAgent/blob/main/ApiReference.md).
+For every function's full details, see the [API Reference](ApiReference.md).
 
 ---
 
@@ -18,7 +18,8 @@ For every function's full details, see the [API Reference](https://github.com/er
 8. [Tuning](#8-tuning)
 9. [Locking In Your Tuning with Tests](#9-locking-in-your-tuning-with-tests)
 10. [Many Agents: the Scheduler](#10-many-agents-the-scheduler)
-11. [Troubleshooting](#11-troubleshooting)
+11. [Learning From the Player](#11-learning-from-the-player)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
@@ -33,6 +34,7 @@ For every function's full details, see the [API Reference](https://github.com/er
 | Core | Always | The engine |
 | Test | Recommended | Testing your profiles. Required by Debug |
 | Debug | Recommended | Seeing why an agent chose what it chose |
+| Learn | Optional | Learning from the player's choices |
 
 GMSmartAgent is pure GML, so there are no extensions or DLLs, and it runs on every platform GameMaker exports to. It needs a GameMaker version with structs and methods (2.3 or newer).
 
@@ -555,7 +557,137 @@ Callbacks run after the scheduler's timed loop, so your code never eats into the
 
 ---
 
-## 11. Troubleshooting
+## 11. Learning From the Player
+
+Everything so far is your design: you wrote the curves, the goblins follow them. The Learn module adds a second voice. A **model** watches the choices the player makes, learns their habits, and nudges a goblin toward them. In this chapter one goblin becomes a copycat that plays the way you do.
+
+Learning needs three things: something to describe each option, choices to learn from, and a goblin that listens.
+
+**1. Describe the options.** A model learns from inputs, so tell the profile which ones describe a choice. Add one line before the build:
+
+```gml
+// __goblin_profile_build(), before gmsa_profile_build
+gmsa_profile_set_features(_p, ["hp", "distance"]);
+```
+
+`hp` describes the situation, `distance` tells one coin from another. Together they let a model learn things like "loots even when hurt" or "doesn't mind walking for a coin".
+
+**2. Record the player's choices.** The player picks coins and potions too, by clicking them. Give the player the same `hp`, `find` and `wander_point` the goblin has, and an agent on the goblin profile. This agent never thinks, it only records:
+
+```gml
+// o_player > Create
+hp = 100;
+find = function(_object) {
+    var _found = [];
+    var _x = x, _y = y;
+    with (_object) {
+        if (point_distance(x, y, _x, _y) <= 300) array_push(_found, id);
+    }
+    return _found;
+};
+wander_point = { x : x, y : y };  // the goblin profile asks for one, the player never wanders
+agent = gmsa_agent_create(goblin_profile(), id);  // records the player's choices, never thinks
+```
+
+The model lives in the controller, so it outlives any one instance:
+
+```gml
+// o_controller > Create
+global.taste = gmsa_learn_linear_create({ confidence_k : 10 });
+```
+
+When the player clicks an item, record it together with everything else they could have picked at that moment. A choice only means something next to the options that lost:
+
+```gml
+// o_player > Global Left Pressed
+var _item = instance_position(mouse_x, mouse_y, o_coin);
+if (_item == noone) _item = instance_position(mouse_x, mouse_y, o_potion);
+if (_item == noone) exit;
+
+var _offered = [];
+var _chosen = -1;
+var _coins = find(o_coin);
+for (var _i = 0; _i < array_length(_coins); _i++) {
+    if (_coins[_i] == _item) _chosen = array_length(_offered);
+    array_push(_offered, { action : "loot", target : _coins[_i] });
+}
+var _potions = find(o_potion);
+for (var _i = 0; _i < array_length(_potions); _i++) {
+    if (_potions[_i] == _item) _chosen = array_length(_offered);
+    array_push(_offered, { action : "drink", target : _potions[_i] });
+}
+
+// an item out of range wasn't a fair comparison, so it isn't recorded
+if (_chosen >= 0) gmsa_learn_observe(global.taste, gmsa_observe(agent, _offered, _chosen));
+
+goal = _item;  // walking there is your code
+```
+
+`gmsa_observe` scores the options exactly like a goblin would and records which one won. `gmsa_learn_observe` trains the model on it. They're separate on purpose: choices you don't want learned, like a tutorial telling the player what to click, are simply never passed in.
+
+**3. A goblin that listens.** Pick one goblin in the room and give it the model, in its Instance Creation Code:
+
+```gml
+// one goblin > Creation Code
+gmsa_agent_set_model(agent, global.taste, 1);
+```
+
+Every other goblin keeps playing by your design. The `1` is the **influence**: how much say the model gets, from 0 (none) to 1.
+
+Play for a while. Grab coins while you're hurt and ignore the potions. At first the copycat behaves like any goblin, since a model that has seen nothing has no confidence and changes nothing. As your choices pile up, it starts looting when it should be drinking, because that's what you do.
+
+**Seeing it.** The debug list shows where learning changed a score:
+
+```
+> 0.274  p1.00  loot @ ref instance 100007  [distance 0.82, hp 0.52]
+  0.180  p0.00  drink @ ref instance 100009  [distance 0.71, hp 0.86]  (designer 0.730)
+```
+
+Your curves rated the potion at 0.730. The model, having watched you skip potions, pushed it down to 0.180, and the coin won.
+
+**The model can only push down.** This is the rule that keeps you in charge:
+
+- The option the model likes most keeps your score. Every other option is pushed down by how much less the model likes it.
+- No option ever scores above what your curves gave it.
+- An option your curves vetoed stays vetoed, and one you scored near zero stays near zero. The model never makes a goblin do something you ruled out.
+
+So leave room where you want learning to have a say. A full-health goblin scores a potion at almost nothing (the `hp` curve from [Tuning](#8-tuning)), so no amount of potion-loving players will make the copycat drink at full health. That's often exactly right. If you want it to be able to pick that up from the player, soften the curve so it doesn't drop all the way. Hard rules get hard curves, matters of taste get soft ones.
+
+**Turning it up and down.** Influence can change at runtime, which makes it a natural difficulty or personality setting:
+
+```gml
+gmsa_learn_set_influence(agent, 0.5);  // half as much say
+```
+
+**Keeping what it learned.** A model can be saved with your game and loaded back:
+
+```gml
+// saving
+var _file = file_text_open_write("taste.json");
+file_text_write_string(_file, gmsa_learn_save(global.taste));
+file_text_close(_file);
+```
+
+```gml
+// o_controller > Create, after creating the model
+if (file_exists("taste.json")) {
+    var _file = file_text_open_read("taste.json");
+    gmsa_learn_load(global.taste, file_text_read_string(_file));
+    file_text_close(_file);
+}
+```
+
+**Reading the player.** A model can also answer "what is the player likely to do right now?" as an ordinary input, for a profile other than the one the player's agent uses. A shopkeeper could stock up when the player is likely to drink:
+
+```gml
+gmsa_profile_add_input(_shop, gmsa_input_pull("player_drinks", gmsa_learn_input(global.taste, o_player.agent, "drink")));
+```
+
+The [API Reference](ApiReference.md#learn) covers this, the second built-in model (Count, faster to learn, for habits), and writing your own.
+
+---
+
+## 12. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -581,6 +713,15 @@ That's intentional: configuration mistakes are caught at build time, not in the 
 **The agent keeps deciding after its instance is gone.**
 It's still in a scheduler. Call `gmsa_scheduler_remove` in the instance's Clean Up event.
 
+**The copycat behaves like every other goblin.**
+Either the model isn't confident yet (it needs a few dozen choices), the influence is 0, or there was only one option on offer, which learning can't reorder. Check that your choices are actually recorded: `global.taste.samples` should grow with every click.
+
+**`gmsa_learn_observe` throws about features.**
+The profile of the agent you observed through doesn't declare features. Add `gmsa_profile_set_features` before its build.
+
+**The model never makes the agent do something.**
+That's the rule: it can only push options down. If your curves score that option at or near zero, see [Learning From the Player](#11-learning-from-the-player) on leaving room.
+
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.
 
@@ -591,5 +732,5 @@ Check `scheduler.stats.time`. If it stays at or under the budget, GMSmartAgent i
 
 ## Next Steps
 
-- The [API Reference](Documentation.md) covers every function, parameter and data structure.
+- The [API Reference](ApiReference.md) covers every function, parameter and data structure.
 - The scoring pipeline section there shows exactly how each score is calculated, step by step.
