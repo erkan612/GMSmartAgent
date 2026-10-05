@@ -17,6 +17,7 @@ function gmsa_net_create(_inputs, _layers, _params = undefined) {
     var _beta2     = __gmsa_param(_params, "beta2", 0.999);
     var _epsilon   = __gmsa_param(_params, "epsilon", 0.00000001);
     var _seed      = __gmsa_param(_params, "seed", 1);
+    var _sparse    = __gmsa_param(_params, "sparse", false);
 
     if (!__gmsa_net_valid_activation(_hidden)) throw "GMSA: net activation is unknown";
     if (!__gmsa_net_valid_activation(_output)) throw "GMSA: net output activation is unknown";
@@ -58,10 +59,13 @@ function gmsa_net_create(_inputs, _layers, _params = undefined) {
         beta2        : _beta2,
         epsilon      : _epsilon,
         seed         : _seed,
+        sparse       : (_sparse == true), // first layer skips zero inputs: faster for one-hot, slower for dense
         steps        : 0,
         rng          : gmsa_rng_create(_seed),
         __x          : array_create(_inputs, 0),
         __g          : array_create(_sizes[_count - 1], 0),
+        __nz         : array_create(_inputs, 0), // nonzero inputs of the last forward
+        __nzn        : 0,
         __pending    : false,
     };
 
@@ -79,7 +83,23 @@ function gmsa_net_forward(_net, _input) {
     var _n = _net.inputs;
     var _len = array_length(_input);
     if (_len > _n) throw "GMSA: net input has " + string(_len) + " values, the net takes " + string(_n) + ", grow it with gmsa_net_grow_inputs";
-    for (var _i = 0; _i < _n; _i++) _net.__x[_i] = (_i < _len) ? _input[_i] : 0;
+
+    var _sparse = _net.sparse;
+    var _nzn = 0;
+    if (_sparse) {
+        for (var _i = 0; _i < _n; _i++) {
+            var _v = (_i < _len) ? _input[_i] : 0;
+            _net.__x[_i] = _v;
+            if (_v * 1000000000000 != 0) {
+                _net.__nz[_nzn] = _i;
+                _nzn += 1;
+            }
+        }
+    } else {
+        for (var _i = 0; _i < _n; _i++) _net.__x[_i] = (_i < _len) ? _input[_i] : 0;
+    }
+    _net.__nzn = _nzn;
+    var _nz = _net.__nz;
 
     var _prev = _net.__x;
     var _layers = _net.layers;
@@ -94,7 +114,14 @@ function gmsa_net_forward(_net, _input) {
         for (var _o = 0; _o < _size; _o++) {
             var _s = _b[_o];
             var _k = _o * _in;
-            for (var _i = 0; _i < _in; _i++) _s += _w[_k + _i] * _prev[_i];
+            if (_l == 0 && _sparse) {
+                for (var _t = 0; _t < _nzn; _t++) {
+                    var _i = _nz[_t];
+                    _s += _w[_k + _i] * _prev[_i];
+                }
+            } else {
+                for (var _i = 0; _i < _in; _i++) _s += _w[_k + _i] * _prev[_i];
+            }
             _layer.z[_o] = _s;
             switch (_act) {
                 case gmsa_net_activation.TANH:
@@ -136,29 +163,43 @@ function gmsa_net_backward(_net, _gradient) {
         var _size = _layer.size;
         var _w = _layer.w;
         var _d = _layer.d;
-        var _prev = (_l == 0) ? _net.__x : _layers[_l - 1].a;
-        var _below = (_l > 0) ? _layers[_l - 1] : undefined;
 
-        if (_below != undefined) for (var _i = 0; _i < _in; _i++) _below.d[_i] = 0;
-
-        for (var _o = 0; _o < _size; _o++) {
-            var _do = _d[_o];
-            //if (_do == 0) continue;
-            _layer.gb[_o] += _do;
-            var _k = _o * _in;
-            if (_below != undefined) {
+        if (_l > 0) {
+            var _prev = _layers[_l - 1].a;
+            var _below = _layers[_l - 1];
+            for (var _i = 0; _i < _in; _i++) _below.d[_i] = 0;
+            for (var _o = 0; _o < _size; _o++) {
+                var _do = _d[_o];
+                _layer.gb[_o] += _do;
+                var _k = _o * _in;
                 for (var _i = 0; _i < _in; _i++) {
                     _layer.gw[_k + _i] += _do * _prev[_i];
                     _below.d[_i] += _w[_k + _i] * _do;
                 }
-            } else {
-                for (var _i = 0; _i < _in; _i++) _layer.gw[_k + _i] += _do * _prev[_i];
             }
-        }
-
-        if (_below != undefined) {
             var _bact = _below.activation;
             for (var _i = 0; _i < _in; _i++) _below.d[_i] *= __gmsa_net_slope(_bact, _below.z[_i], _below.a[_i]);
+        } else if (_net.sparse) {
+            var _x = _net.__x;
+            var _nz = _net.__nz;
+            var _nzn = _net.__nzn;
+            for (var _o = 0; _o < _size; _o++) {
+                var _do = _d[_o];
+                _layer.gb[_o] += _do;
+                var _k = _o * _in;
+                for (var _t = 0; _t < _nzn; _t++) {
+                    var _i = _nz[_t];
+                    _layer.gw[_k + _i] += _do * _x[_i];
+                }
+            }
+        } else {
+            var _x = _net.__x;
+            for (var _o = 0; _o < _size; _o++) {
+                var _do = _d[_o];
+                _layer.gb[_o] += _do;
+                var _k = _o * _in;
+                for (var _i = 0; _i < _in; _i++) _layer.gw[_k + _i] += _do * _x[_i];
+            }
         }
     }
     _net.__pending = true;
@@ -282,6 +323,7 @@ function gmsa_net_grow_inputs(_net, _count) {
     _layer.inputs = _new;
     _net.inputs = _new;
     _net.__x = array_create(_new, 0);
+    _net.__nz = array_create(_new, 0);
 }
 
 function gmsa_net_save(_net) {

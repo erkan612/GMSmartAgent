@@ -288,12 +288,20 @@ function __gmsa_learn_slots_grow(_model) {
 function __gmsa_learn_slots_encode(_model, _option) {
     var _d = _model.data;
     var _slots = _d.slots;
-    if (array_length(_model.__x) != _slots) array_resize(_model.__x, _slots);
-    for (var _s = 0; _s < _slots; _s++) _model.__x[_s] = 0;
+    if (array_length(_model.__x) != _slots) {
+        array_resize(_model.__x, _slots);
+        for (var _s = 0; _s < _slots; _s++) _model.__x[_s] = 0;
+        _model.__x_action = -1;
+    }
+    if (_model.__x_action >= 0) _model.__x[_model.__x_action] = 0;
     var _inputs = _option.inputs;
-    var _m = min(array_length(_d.input_slot), array_length(_inputs));
+    var _k = array_length(_d.input_slot);
+    var _m = min(_k, array_length(_inputs));
     for (var _j = 0; _j < _m; _j++) _model.__x[_d.input_slot[_j]] = _inputs[_j];
-    _model.__x[_d.action_slot[_option.action]] = 1;
+    for (var _j = _m; _j < _k; _j++) _model.__x[_d.input_slot[_j]] = 0;
+    var _slot = _d.action_slot[_option.action];
+    _model.__x[_slot] = 1;
+    _model.__x_action = _slot;
 }
 
 function __gmsa_learn_softmax_scores(_model, _n) {

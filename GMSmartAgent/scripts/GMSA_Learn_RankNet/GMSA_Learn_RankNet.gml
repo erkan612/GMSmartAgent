@@ -23,6 +23,7 @@ function gmsa_learn_ranknet_create(_params = {}) {
     __gmsa_learn_ranknet_net(_model, 1); // validates the network settings now, not on first use
 
     _model.__x = [];  // encoded option, written through the struct
+    _model.__x_action = -1; // slot set by the last encode
     _model.__s = [];  // scores of the last sample
     _model.__g = [];  // score gradients of the last observation
     _model.__p = [];  // softmax of the last sample
@@ -116,6 +117,7 @@ function __gmsa_learn_ranknet_net(_model, _inputs) {
         momentum     : _r.momentum,
         weight_decay : (1 - _model.decay) / _r.learn_rate, // weights shrink by decay every step
         seed         : _r.seed,
+        sparse       : true, // one-hot actions: only the option's own action column is used
     });
 }
 

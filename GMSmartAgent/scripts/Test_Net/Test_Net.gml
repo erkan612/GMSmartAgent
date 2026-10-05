@@ -189,6 +189,24 @@ function test_net() {
             gmsa_test_assert_throws(function() { gmsa_net_load(gmsa_net_create(3, [4, 2]), "{ broken"); }, "malformed");
             gmsa_test_assert_throws(function() { gmsa_net_load(gmsa_net_create(3, [4, 2]), { version : 99, inputs : 3, layers : [] }); }, "newer version");
         });
+		
+        gmsa_test_case("sparse matches dense", function() {
+            var _dense = gmsa_net_create(6, [5, 2], { seed : 9 });
+            var _sparse = gmsa_net_create(6, [5, 2], { seed : 9, sparse : true });
+            var _x = [0.4, 0, 0, 1, 0, -0.3];
+            var _od = gmsa_net_forward(_dense, _x);
+            var _d0 = _od[0], _d1 = _od[1];
+            var _os = gmsa_net_forward(_sparse, _x);
+            gmsa_test_assert_near(_os[0], _d0, 0.000001, "output 0");
+            gmsa_test_assert_near(_os[1], _d1, 0.000001, "output 1");
+            gmsa_net_backward(_dense, [0.5, -0.2]);
+            gmsa_net_backward(_sparse, [0.5, -0.2]);
+            var _worst = 0;
+            for (var _k = 0; _k < array_length(_dense.layers[0].gw); _k++) {
+                _worst = max(_worst, abs(_dense.layers[0].gw[_k] - _sparse.layers[0].gw[_k]));
+            }
+            gmsa_test_assert_near(_worst, 0, 0.000001, "first layer gradients");
+        });
     });
 }
 
