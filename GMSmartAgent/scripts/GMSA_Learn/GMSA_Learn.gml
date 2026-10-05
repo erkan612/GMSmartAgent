@@ -40,11 +40,11 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
 function gmsa_learn_custom(_methods, _params = {}) {
     if (!is_struct(_methods)) throw "GMSA: learn custom needs a struct of methods";
     var _model = __gmsa_learn_model_create(gmsa_learn_tier.CUSTOM, __gmsa_param(_params, "name", "custom"), _params);
-    var _names = ["observe", "predict", "explain", "save_data", "load_data", "reset_data"];
+    var _names = ["observe", "predict", "explain", "save_data", "load_data", "reset_data", "train"];
     for (var _i = 0; _i < array_length(_names); _i++) {
         var _fn = __gmsa_param(_methods, _names[_i], undefined);
         if (_fn == undefined) continue;
-        if (!is_callable(_fn)) throw "GMSA: learn custom " + _names[_i] + " must be callable";
+        if (!__gmsa_callable(_fn)) throw "GMSA: learn custom " + _names[_i] + " must be callable";
         _model[$ _names[_i]] = method(_model, _fn);
     }
     if (_model.observe == undefined || _model.predict == undefined) throw "GMSA: learn custom needs observe and predict";
@@ -268,7 +268,7 @@ function gmsa_learn_train(_model, _budget = undefined) {
     if (!is_struct(_model) || _model[$ "tier"] == undefined) throw "GMSA: learn train needs a model";
     if (_budget != undefined && (!is_numeric(_budget) || _budget < 0)) throw "GMSA: learn train budget must be 0 or more";
     if (_model.frozen || _model.train == undefined) return true;
-    var _done = _model.train(_budget);
+    var _done = (_model.train(_budget) != false); // anything but false finishes, a missing return can't loop forever
     if (_done) __gmsa_learn_invalidate(_model);
     return _done;
 }

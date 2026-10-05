@@ -153,5 +153,32 @@ function test_learn_lambdamart() {
             gmsa_test_assert_equal(array_length(_m.data.buffer), 0, "reset empties the buffer");
             gmsa_test_assert_true(gmsa_learn_train(gmsa_learn_linear_create()), "online tiers return true");
         });
+		
+        gmsa_test_case("custom models can train", function() {
+            var _m = gmsa_learn_custom({
+                observe : function(_sample) {},
+                predict : function(_sample, _out) {
+                    var _n = array_length(_sample.options);
+                    for (var _i = 0; _i < _n; _i++) _out.p[_i] = 1 / _n;
+                    _out.confidence = 0;
+                },
+                reset_data : function() { data = { calls : 0 }; },
+                train : function(_budget) {
+                    data.calls += 1;
+                    return data.calls >= 3; // finishes on the third call
+                },
+            });
+            gmsa_test_assert_false(gmsa_learn_train(_m, 100), "first call");
+            gmsa_test_assert_false(gmsa_learn_train(_m, 100), "second call");
+            gmsa_test_assert_true(gmsa_learn_train(_m, 100), "third call finishes");
+
+            var _lazy = gmsa_learn_custom({
+                observe : function(_sample) {},
+                predict : function(_sample, _out) { _out.confidence = 0; },
+                train : function(_budget) {}, // no return
+            });
+            gmsa_test_assert_true(gmsa_learn_train(_lazy), "no return counts as finished");
+            gmsa_test_assert_throws(function() { gmsa_learn_custom({ observe : function(_s) {}, predict : function(_s, _o) {}, train : "later" }); }, "train must be callable");
+        });
     });
 }

@@ -307,6 +307,12 @@ function __gmsa_param(_params, _name, _default) {
     return _default;
 }
 
+function __gmsa_callable(_fn) {
+    if (is_method(_fn)) return true;
+    if (is_numeric(_fn)) return script_exists(_fn);
+    return is_callable(_fn);
+}
+
 function __gmsa_resolve_index(_map, _key, _count, _kind) {
     if (is_string(_key)) {
         if (!variable_struct_exists(_map, _key)) throw "GMSA: unknown " + _kind + " '" + _key + "'";
