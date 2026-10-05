@@ -13,5 +13,6 @@ function gmsa_tests_all(_verbose = false) {
     gmsa_tests_learn_linear();
     gmsa_tests_learn_rerank();
     gmsa_tests_learn_predict();
+    test_net();
     return gmsa_test_run(_verbose);
 }

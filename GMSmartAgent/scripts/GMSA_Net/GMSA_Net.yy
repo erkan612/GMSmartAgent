@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Net",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Net",
+  "parent":{
+    "name":"Net",
+    "path":"folders/GMSmartAgent/Net.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}
