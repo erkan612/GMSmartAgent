@@ -39,7 +39,7 @@ function __gmsa_learn_linear_observe(_sample) {
     for (var _i = 0; _i < array_length(_sample.options); _i++) {
         var _o = _sample.options[_i];
         var _g = (((_i == _sample.chosen) ? 1 : 0) - __p[_i]) * _step;
-        if (_g == 0) continue;
+        //if (_g == 0) continue;
         var _a = _o.action;
         data.b[_a] += _g;
         for (var _j = 0; _j < _k; _j++) data.w[_a][_j] += _g * _o.inputs[_j];

@@ -1,4 +1,4 @@
-enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR }
+enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET }
 
 // Creation
 function __gmsa_learn_model_create(_tier, _tier_name, _params) {
