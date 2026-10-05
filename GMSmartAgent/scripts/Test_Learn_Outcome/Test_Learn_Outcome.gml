@@ -128,6 +128,21 @@ function test_learn_outcome() {
             gmsa_test_assert_true(__test_outcome_p(_m, _a, 0.25, 0.5, "a0") > __test_outcome_p(_m, _a, 0.25, 0.5, "a1"), "a0 when x1 is low");
             gmsa_test_assert_true(_r.late > _r.early, "earns more after learning");
         });
+		
+        gmsa_test_case("Count learns what works", function() {
+            var _m = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
+            var _r = __test_outcome_run(_m, 300, 0);
+            var _a = _r.agent;
+            gmsa_test_assert_true(__test_outcome_p(_m, _a, 0.75, 0.5, "a1") > __test_outcome_p(_m, _a, 0.75, 0.5, "a0"), "a1 when x1 is high");
+            gmsa_test_assert_true(__test_outcome_p(_m, _a, 0.25, 0.5, "a0") > __test_outcome_p(_m, _a, 0.25, 0.5, "a1"), "a0 when x1 is low");
+            gmsa_test_assert_true(_r.late > _r.early, "earns more after learning");
+
+            gmsa_agent_set_input(_a, "x1", 0.75);
+            gmsa_agent_set_input(_a, "x2", 0.5);
+            var _d = gmsa_agent_evaluate(_a);
+            var _lines = gmsa_learn_explain(_m, _d, 0);
+            gmsa_test_assert_true(string_pos("averages", _lines[0]) > 0 || string_pos("not tried", _lines[0]) > 0, "explains averages");
+        });
     });
 }
 
