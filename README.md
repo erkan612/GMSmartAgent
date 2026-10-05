@@ -50,6 +50,12 @@ GMSmartAgent is a **scoring engine only**. It never moves anything, never querie
 - **Confidence** - A model only gets a say once it has data, so there is no cold-start tuning
 - **Decay, freeze, reset, save and load** - Old habits fade, learning pauses on demand, and models persist with the save game
 - **Custom models** - Plug in your own model with a handful of methods, batch training included
+### Learning From Outcomes
+- **Agents that discover what works** - Any model can learn from how an agent's own decisions turn out, instead of copying someone. You define what counts as good, never which action is right
+- **Precise or ambient results** - Report a result for one exact decision with a ticket, or reward an agent and let its recent decisions share the credit, fading with age
+- **Shared experience** - One model per squad, colony or village: every result any member gets teaches all of them
+- **Fair learning** - Rarely tried options aren't misjudged from too little data, and exploring only happens among the options your scoring ranks highest
+- **Every model** - Count, Linear, RankNet, LambdaMART and custom models all learn from outcomes through one setting
 ### Neural Networks
 - **Small feed-forward networks** - Dense layers, backpropagation, SGD or Adam, the building block under RankNet and usable on their own
 - **Sparse inputs** - One-hot codes cost only the values that aren't zero
@@ -233,7 +239,35 @@ global.taste = gmsa_learn_ranknet_create();     // habits that depend on combina
 global.taste = gmsa_learn_lambdamart_create();  // the most detailed, trained in batches:
 gmsa_learn_train(global.taste, 2000);           // a little each step until done, or once at a checkpoint
 ```
- 
+
+---
+
+## Learning What Works
+
+Learning from the player copies them. Learning from outcomes discovers what works, for the things you can't know while writing the profile: a shuffled world, rules the player changes, systems that interact. If you know the rule, write it as a consideration. If you can't, let the agents find out:
+
+```gml
+// one model shared by the whole squad, learning from results instead of choices
+global.tactics = gmsa_learn_linear_create({ learns : gmsa_learn_target.OUTCOMES });
+
+// each soldier keeps a history of its decisions and uses the shared model
+gmsa_learn_track(agent);
+gmsa_agent_set_model(agent, global.tactics, 1);
+
+// acting on a decision gives a ticket for it
+gmsa_agent_set_current_option(agent, _option);
+shot = gmsa_learn_remember(agent);
+
+// when the arrow lands, the ticket gets the result
+gmsa_learn_outcome(global.tactics, shot, _hit ? 1 : -0.2);
+```
+
+When you can't point to the one decision that caused something, reward the agent instead, and its recent decisions share the credit:
+
+```gml
+gmsa_learn_reward(global.tactics, agent, -0.5);  // took damage just now
+```
+
 ---
  
 ## Performance
@@ -263,7 +297,7 @@ Learning models add their own cost to every re-ranked think, at 3 options:
 | RankNet | ~100 us | A few agents, a boss or a companion |
 | LambdaMART | ~500 us | A few agents, or a shared predictor input read once per frame |
 
-LambdaMART trains inside a budget you set, with a measured overshoot under 130 us at 2 ms. The [API Reference](ApiReference.md#what-models-cost) has the full table.
+LambdaMART trains inside a budget you set, with a measured overshoot under 130 us at 2 ms. Learning from outcomes costs about 25 us per reported result with Count, Linear or LambdaMART, and about 180 us with RankNet. The [API Reference](ApiReference.md#what-models-cost) has the full table.
 
 Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents or heavier models slows how often each one re-decides, never the game.
  
@@ -276,12 +310,11 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 - **No hidden globals.** You create schedulers yourself, and can run several with separate budgets.
 - **Deterministic.** Same seed and same inputs give the same decisions, so tests and replays are repeatable.
 - **Allocation-free thinking.** Decisions and options are reused, so many agents don't churn the garbage collector.
-- **Learning stays under the designer.** Models reorder options within what the designer's scoring allows. They can't bring back a vetoed option or lift a score above the designer's.
+- **Learning stays under the designer.** Models reorder options within what the designer's scoring allows. They can't bring back a vetoed option or lift a score above the designer's, and agents only experiment among the options your scoring ranks highest.
 ---
  
 ## Roadmap
 
-- **v1.3: Learning from outcomes** - Agents that learn from how their own choices turn out: rewards, credit over time, and exploration limited to plausible options.
 - **v1.4: Planning** - A Plan module where utility scoring picks the goal and a hierarchical task network planner works out the steps.
 - **v1.5: Planning across frames** - Resumable planning inside the scheduler budget, and the plan tree in the debug view.
 - **v1.6: More choice models** - A sequence model that learns what the player does next after what they just did, Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
@@ -292,7 +325,7 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, and one that learns to play like you
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, and a crowd that learns which coins bite
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  

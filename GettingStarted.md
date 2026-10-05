@@ -20,7 +20,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 10. [Many Agents: the Scheduler](#10-many-agents-the-scheduler)
 11. [Learning From the Player](#11-learning-from-the-player)
 12. [Choosing a Model](#12-choosing-a-model)
-13. [Troubleshooting](#13-troubleshooting)
+13. [Learning What Works](#13-learning-what-works)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -743,7 +744,94 @@ They also differ a lot in cost. Count and Linear are cheap enough for every gobl
 
 ---
 
-## 13. Troubleshooting
+## 13. Learning What Works
+
+The copycat learns from **your choices**: you pick, it copies your taste. A model can also learn from **what happens**: a goblin acts, your game says how it went, and the model learns which actions pay off. One copies someone, the other discovers what works.
+
+You decide what counts as good. You never tell it which action is right.
+
+**When it's worth it:** only when you can't know the answer while writing the profile. If coins near the swamp are always cursed, write that as a consideration. That's instant and exact. But if *which* coins are cursed changes every game, no curve you write can know it. That's what outcome learning is for.
+
+So let's curse some coins. There are three kinds of coin, and each game one kind, chosen at random, bites whoever picks it up.
+
+```gml
+// o_coin > Create
+source = irandom(2);  // three kinds of coin
+var _tint = [c_yellow, c_orange, c_silver];
+image_blend = _tint[source];  // you can tell them apart, so can the goblins
+```
+
+```gml
+// o_controller > Create (add)
+global.cursed = irandom(2);  // a secret: no profile ever reads it
+global.loot_sense = gmsa_learn_linear_create({ learns : gmsa_learn_target.OUTCOMES });
+```
+
+**Give the goblins the cause.** A model can only learn what its inputs can tell apart. Here that's the kind of coin, so it becomes three inputs, one per kind:
+
+```gml
+// __goblin_profile_build, with the other inputs
+for (var _k = 0; _k < 3; _k++) {
+    gmsa_profile_add_input(_p, gmsa_input_pull("kind_" + string(_k), method({ k : _k }, function(_agent, _target) {
+        if (is_struct(_target)) return 0;  // wander points aren't coins
+        return (_target.object_index == o_coin && _target.source == k) ? 1 : 0;
+    }), 0, 1, true));
+}
+```
+
+and add them to the features:
+
+```gml
+gmsa_profile_set_features(_p, ["hp", "distance", "kind_0", "kind_1", "kind_2"]);
+```
+
+**Keep a history, and report what happened.** Each goblin keeps a history of its decisions, and uses the shared model:
+
+```gml
+// o_goblin > Create (add, after the agent is created)
+gmsa_learn_track(agent);
+gmsa_agent_set_model(agent, global.loot_sense, 1);
+ticket = undefined;
+```
+
+When it acts on a decision, it takes a **ticket** for it:
+
+```gml
+// o_goblin > Step, where it acts on a fresh decision
+gmsa_agent_set_current_option(agent, _option);
+ticket = gmsa_learn_remember(agent);
+```
+
+When it picks something up, the ticket gets the result:
+
+```gml
+// o_goblin > Step, on arrival, before instance_destroy(goal)
+var _reward = 0.5;  // a potion is always fine
+if (goal.object_index == o_coin) {
+    var _bitten = (goal.source == global.cursed);
+    if (_bitten) hp = max(0, hp - 20);
+    _reward = _bitten ? -1 : 1;
+}
+if (ticket != undefined) gmsa_learn_outcome(global.loot_sense, ticket, _reward);
+```
+
+The arrival code already calls `gmsa_agent_clear_current` after a pickup. That matters here: it ends the decision, so the next coin, even of the same kind, is a new decision with its own ticket.
+
+Run it. At first the goblins grab whatever is nearest and some get bitten. Every goblin shares one model, so every bite teaches all of them. After a few dozen pickups, the cursed kind sits untouched while the others are collected. The debug list shows `(designer ...)` next to the cursed coins, your scoring pushed down by what was learned. Restart the room and a different kind is cursed. They learn again from scratch, because nothing in the profile ever knew.
+
+The copycat keeps its own model from [chapter 11](#11-learning-from-the-player). An agent uses one model at a time, and its Creation Code runs after Create, so its choice model wins.
+
+Three things to remember:
+
+- **Rewards are events.** Report them when something happens, roughly between -1 and 1. For damage over time, add it up and report it every half second or so. When you can't point to one decision, use `gmsa_learn_reward(model, agent, reward)`, and the goblin's recent decisions share the credit.
+- **Agents learn about what they try.** These goblins use `BEST` selection, so they only learn about coins they'd pick anyway. That's enough here because the nearest coin keeps changing. To make agents experiment more, use `TOP_N_WEIGHTED` in the profile.
+- **Give it the cause.** Without the `kind_` inputs, the goblins could only learn "coins are sometimes bad", never which ones.
+
+The [API Reference](ApiReference.md#learning-from-outcomes) has ambient rewards, every model's outcome behavior and the costs.
+
+---
+
+## 14. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -774,6 +862,12 @@ Either the model isn't confident yet (it needs a few dozen choices), the influen
 
 **`gmsa_learn_observe` throws about features.**
 The profile of the agent you observed through doesn't declare features. Add `gmsa_profile_set_features` before its build.
+
+**An outcome model learns nothing.**
+Check three things: the agent is tracked with `gmsa_learn_track`, it acts through `gmsa_agent_set_current_option` (that's what records a decision), and you report with `gmsa_learn_outcome` or `gmsa_learn_reward`, not `gmsa_learn_observe`.
+
+**Every result lands on the same old decision.**
+Clear the current option after a one-shot action (a pickup, a shot). Otherwise choosing the same action again continues the previous decision instead of starting a new one.
 
 **A LambdaMART model has no effect.**
 It hasn't trained yet. It only stores picks until `gmsa_learn_train` finishes, see [Choosing a Model](#12-choosing-a-model).

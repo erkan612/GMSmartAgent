@@ -18,6 +18,7 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [Random Generator](#random-generator)
 - [Debug](#debug)
 - [Learn](#learn)
+- [Learning From Outcomes](#learning-from-outcomes)
 - [Net](#net)
 - [Test](#test)
 - [Data Structures](#data-structures)
@@ -85,6 +86,14 @@ The kind of a learning model, see [Learn](#learn).
 | `gmsa_learn_tier.LINEAR` | Weighted preferences, made with `gmsa_learn_linear_create` |
 | `gmsa_learn_tier.RANKNET` | Neural ranking, made with `gmsa_learn_ranknet_create` |
 | `gmsa_learn_tier.LAMBDAMART` | Boosted ranking trees, made with `gmsa_learn_lambdamart_create` |
+
+### gmsa_learn_target
+What a learning model learns from, see [Learning From Outcomes](#learning-from-outcomes).
+
+| Element | Meaning |
+| --- | --- |
+| `gmsa_learn_target.CHOICES` | Choices someone made, recorded with `gmsa_observe` and `gmsa_learn_observe`. The default |
+| `gmsa_learn_target.OUTCOMES` | How an agent's own decisions turned out, reported with `gmsa_learn_outcome` and `gmsa_learn_reward` |
 
 ### gmsa_net_activation
 Activation of a network layer, see [Net](#net).
@@ -414,6 +423,8 @@ gmsa_agent_set_current_option(agent, gmsa_decision_get_chosen(decision));
 
 The action and target are copied, so later thinks reusing the option struct don't affect it. Passing `undefined` clears the current option.
 
+On a tracked agent, switching to a different option also records the decision for outcome learning, see [gmsa_learn_track](#gmsa_learn_track).
+
 **Throws** when the option comes from a different profile.
 
 ### gmsa_agent_clear_current
@@ -422,7 +433,7 @@ The action and target are copied, so later thinks reusing the option struct don'
 gmsa_agent_clear_current(agent)
 ```
 
-Clears the current option, for example when the agent finished or abandoned what it was doing.
+Clears the current option, for example when the agent finished or abandoned what it was doing. On a tracked agent, this ends the current decision in its history.
 
 ### gmsa_agent_consume
 
@@ -726,7 +737,7 @@ Draws the lines at `x, y`, the chosen option in green, followed by any invariant
 
 ## Learn
 
-Learning from observed choices. A model watches what a decision-maker (usually the player) picks out of the options on offer, and learns their habits and preferences. A trained model is used in two ways:
+Learning from observed choices. A model watches what a decision-maker (usually the player) picks out of the options on offer, and learns their habits and preferences. A model can also learn from how an agent's own decisions turn out instead, see [Learning From Outcomes](#learning-from-outcomes). A trained model is used in two ways:
 
 - **Re-ranker:** attached to a profile or an agent, it nudges that agent's options toward what it learned, under an influence cap.
 - **Predictor:** read through `gmsa_learn_input`, it turns "what is the player likely to do right now" into an input any profile can use.
@@ -796,6 +807,7 @@ gmsa_learn_count_create([params]) -> model
 | `smoothing` | real | 1 | Added to every count, so one observation never reads as certainty |
 | `half_life` | real | 50 | Observations after which an old choice counts half |
 | `confidence_k` | real | 5 | Data in a situation needed for 50% confidence |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
 
 How it works:
 - Each situational input (one that doesn't depend on the target) is cut into bins, and the combination of bins is the **situation**. Per-target inputs are ignored.
@@ -820,9 +832,10 @@ gmsa_learn_linear_create([params]) -> model
 
 | Param | Type | Default | Description |
 | --- | --- | --- | --- |
-| `learn_rate` | real | 0.3 | How far one observation moves the weights |
+| `learn_rate` | real | 0.3, or 0.1 when learning outcomes | How far one observation moves the weights |
 | `half_life` | real | 50 | Observations after which old evidence counts half |
 | `confidence_k` | real | 20 | Observations needed for 50% confidence |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
 
 How it works:
 - Each action has a weight per input and a bias. An option's preference is its action's bias plus each input times its weight, so per-target inputs let it prefer one target over another.
@@ -855,6 +868,7 @@ gmsa_learn_ranknet_create([params]) -> model
 | `seed` | integer | 1 | Starting weights, same seed and same choices give the same model |
 | `half_life` | real | 200 | Observations after which old evidence counts half |
 | `confidence_k` | real | 40 | Observations needed for 50% confidence |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
 
 How it works:
 - A small neural network ([Net](#net)) scores each option from its features and which action it is. Combinations of inputs are learnable, which Linear can't do.
@@ -892,6 +906,7 @@ gmsa_learn_lambdamart_create([params]) -> model
 | `buffer` | integer | 500 | Most recent choices kept to train on |
 | `half_life` | real | 200 | Observations after which a stored choice counts half |
 | `confidence_k` | real | 40 | Observations needed for 50% confidence |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
 
 How it works:
 - `gmsa_learn_observe` stores the choice in a buffer of the most recent `buffer` choices. Nothing is learned yet.
@@ -932,6 +947,7 @@ Methods run with the model as `self`, so they can read `actions`, `inputs`, `sit
 | `name` | string | `"custom"` | Stored in saves, a save only loads into a model with the same name |
 | `half_life` | real | 50 | Sets `decay` for your own use |
 | `confidence_k` | real | 20 | Used by `gmsa_learn_confidence` |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | What the model learns from, see [Learning From Outcomes](#learning-from-outcomes) |
 
 The **sample** a method receives, in the model's own id space:
 
@@ -943,7 +959,8 @@ sample = {
         { action : 1, inputs : [0.35, 0.10, 0.80] },
     ],
     chosen    : 0,                   // -1 when predicting
-    weight    : 1,
+    weight    : 1,                   // outcomes: the credit times the odds correction
+    reward    : undefined,           // outcomes: the reported reward
 };
 ```
 
@@ -951,7 +968,7 @@ sample = {
 
 Predictions are cleaned before anyone uses them: negative or NaN values become 0, the values are scaled to sum to 1 (or made even if they're all 0), and confidence is clamped to 0..1. A broken custom model can't break scoring.
 
-**Throws** when `observe` or `predict` is missing, or a method isn't callable. GML can't tell a plain number from a script index, so a number that happens to be one of your scripts' indices passes.
+**Throws** when `observe` or `predict` is missing, or a method isn't callable. In GML a function reference can be a plain number, so a number passed by mistake isn't always caught.
 
 ### gmsa_learn_observe
 
@@ -963,7 +980,7 @@ Trains the model on a decision with a chosen option, usually from `gmsa_observe`
 
 **Returns** false when the model is frozen.
 
-**Throws** when the decision's profile declares no features, or nothing was chosen.
+**Throws** when the model learns from outcomes, the decision's profile declares no features, or nothing was chosen.
 
 ### gmsa_learn_train
 
@@ -1104,7 +1121,7 @@ Forgets everything learned. Names seen so far are kept.
 gmsa_learn_save(model) -> string
 ```
 
-The model's learned state as a JSON string, to store with your save game.
+The model's learned state as a JSON string, to store with your save game. It records whether the model learns from choices or outcomes.
 
 ### gmsa_learn_load
 
@@ -1114,7 +1131,9 @@ gmsa_learn_load(model, json) -> bool
 
 Loads a save into a model you created. The model keeps its own settings (`half_life`, `confidence_k`, tier parameters), so tuning still applies to loaded models.
 
-**Throws** when the save is malformed, from a newer version, or from a different kind of model. A Count save also throws when the model uses a different number of bins.
+If loading fails partway, the model is left exactly as it was. Saves from before outcome learning load as choice saves.
+
+**Throws** when the save is malformed, from a newer version, from a different kind of model, or from a model learning from the other target. A Count save also throws when the model uses a different number of bins.
 
 ### Model fields
 
@@ -1122,6 +1141,7 @@ Loads a save into a model you created. The model keeps its own settings (`half_l
 | --- | --- |
 | `tier` | `gmsa_learn_tier` |
 | `tier_name` | `"count"`, `"linear"`, `"ranknet"`, `"lambdamart"` or the custom name |
+| `learns`, `temperature` | What it learns from, and how sharply outcome values become preferences |
 | `actions` | Action names, the position is the action id |
 | `inputs` | Input names, the position is the input id |
 | `situational` | Per input id, true when it doesn't depend on the target |
@@ -1129,6 +1149,212 @@ Loads a save into a model you created. The model keeps its own settings (`half_l
 | `half_life`, `decay`, `confidence_k` | Settings |
 | `frozen` | True while frozen |
 | `data` | What the model learned, its own shape per tier |
+
+---
+
+## Learning From Outcomes
+
+Everything above learns from **choices**: the player picks, a model learns their taste. A model can instead learn from **outcomes**: an agent acts, your game reports how it went, and the model learns which actions pay off in which situations.
+
+- **Choices copy someone.** The model learns what the player would pick.
+- **Outcomes discover what works.** The model learns what turns out well. You define what good means through the reward, never which action is right.
+
+**Use it for consequences you can't know while writing the profile:** a generated or shuffled world, rules the player changes, systems that interact in ways nobody predicted, or a specific player's play. If you know the rule ("wolves are dangerous"), write it as a consideration. That's instant, exact and free.
+
+**Inputs decide what a model can understand.** If the cause of a bad outcome is one of the decision's inputs, such as the distance to a wolf, the model learns the rule and recovers the moment the cause goes away. If the cause isn't an input, it can only learn "this option is bad" and unlearns it slowly. Give your models the causes.
+
+### The workflow
+
+```gml
+// a model that learns from outcomes, shared by a whole squad
+global.tactics = gmsa_learn_linear_create({ learns : gmsa_learn_target.OUTCOMES });
+
+// each soldier: keep a history of its decisions, and let the shared model re-rank its options
+gmsa_learn_track(agent);
+gmsa_agent_set_model(agent, global.tactics, 1);
+
+// acting on a decision records it
+gmsa_agent_set_current_option(agent, _option);
+shot = gmsa_learn_remember(agent);  // a ticket for this decision
+
+// later, when you know how it went
+gmsa_learn_outcome(global.tactics, shot, _hit ? 1 : 0);
+gmsa_agent_clear_current(agent);    // a shot is over once it lands
+```
+
+1. Create the model with `learns : gmsa_learn_target.OUTCOMES`. Every built-in model and custom models support it.
+2. Track the agents whose decisions you'll report on, with `gmsa_learn_track`.
+3. Attach the model as usual, to the agents or their profile, so what it learns changes their choices.
+4. Act through `gmsa_agent_set_current_option`. That's what records a decision.
+5. Report results: precisely with a ticket, or as an ambient reward for whatever the agent did recently.
+
+### gmsa_learn_track
+
+```gml
+gmsa_learn_track(agent, [params]) -> agent
+```
+
+Starts keeping the agent's history: the decisions it acted on, so outcomes can be reported for them. Untracked agents pay nothing.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `size` | integer | 8 | Most decisions kept, oldest dropped first |
+| `window` | real | 3000000 | Microseconds an ended decision can still receive ambient rewards |
+| `clock` | function | `get_timer` | Time source in microseconds |
+
+- **A decision enters the history when the agent switches to it** with `gmsa_agent_set_current_option`. Confirming the option it's already doing only refreshes the entry: "kept flanking for four seconds" is one decision, not forty.
+- **When each choice is its own episode,** like a shot or a sale, call `gmsa_agent_clear_current` once its outcome is reported. Otherwise choosing the same action again counts as continuing the previous decision.
+- Only options from the agent's own decision are recorded. An option from `gmsa_agent_evaluate` becomes current but has no history entry.
+
+**Throws** when the agent's profile declares no features, or a parameter is out of range.
+
+### gmsa_learn_untrack
+
+```gml
+gmsa_learn_untrack(agent)
+```
+
+Stops tracking and forgets the history. Tickets you kept stay usable.
+
+### gmsa_learn_remember
+
+```gml
+gmsa_learn_remember(agent) -> ticket or undefined
+```
+
+The decision the agent is acting on right now, or `undefined`. A ticket holds everything needed to learn from that decision, so it stays valid as long as you keep it, even after it has left the history.
+
+**Throws** when the agent isn't tracked.
+
+### gmsa_learn_outcome
+
+```gml
+gmsa_learn_outcome(model, ticket, reward) -> bool
+```
+
+Teaches an outcome model how the decision behind a ticket turned out. Use it when you know exactly which decision caused the result: this shot hit, this sale happened.
+
+**Returns** false when the model is frozen.
+
+**Throws** when the model learns from choices, the ticket isn't one, or the reward isn't a number.
+
+### gmsa_learn_reward
+
+```gml
+gmsa_learn_reward(model, agent, reward) -> real
+```
+
+Something good or bad just happened to a tracked agent, and you don't know which decision caused it: it took damage, it found gold. The credit is spread over its recent decisions:
+
+- The decision it's acting on now gets the full reward.
+- An ended decision gets less the longer ago it ended, fading to nothing at the `window`.
+
+**Returns** how many decisions were credited.
+
+**Throws** when the model learns from choices, the agent isn't tracked, or the reward isn't a number.
+
+### Rewards
+
+- **Rewards are numbers you choose,** negative for bad. Keep them roughly between -1 and 1, the scale the defaults (`temperature`, learn rates) are tuned for. They aren't clamped.
+- **Report events, not a per-frame trickle.** One `gmsa_learn_reward` over a full history is 8 updates. For damage over time, add it up and report it every half second or so.
+- **One history can teach several models.** Report the same ticket to each.
+
+### Fair learning and exploration
+
+- **Rarely chosen options count more when they are chosen:** each update is weighted by 1 over the probability the agent had of picking it, at most `GMSA_LEARN_ODDS_CLIP` (10). Without this, an option the agent seldom tries would be judged from too little data.
+- **Agents only learn about what they try.** With `TOP_N_WEIGHTED` selection, the variety among the top options is the exploration, and `top_n` is how adventurous the agent is. A `BEST` agent learns from what it does but never experiments.
+- **Options your scoring keeps out of the top N are never tried.** Learning stays under the designer, exploration included.
+- **Exploiting is partial by design.** The re-ranker never pushes an option below a share of your score, and weighted selection picks in proportion. So a learning agent keeps trying alternatives often. Raise `influence` or lower `top_n` for more exploitation.
+
+### How each model learns outcomes
+
+Every built-in model takes `learns` and `temperature`:
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `learns` | `gmsa_learn_target` | `CHOICES` | What the model learns from |
+| `temperature` | real | 0.1 | Outcome models: how sharply differences in expected reward become preferences. Lower is sharper |
+
+An outcome model estimates the reward of each option, and turns the estimates into probabilities with `softmax(value / temperature)`. So re-ranking, `gmsa_learn_predict`, `gmsa_learn_input`, explain and the debug view all work as with choices. On an outcome model, `gmsa_learn_input` reads how good an action looks right now.
+
+| Model | Estimates the reward with | Learns in |
+| --- | --- | --- |
+| Count | The average reward per situation and action. Untried actions start at 0 | Dozens of outcomes per situation |
+| Linear | A linear estimate per action, nudged toward each reward. Learn rate 0.1 by default for outcomes | Dozens of outcomes |
+| RankNet | The network's output, trained toward each reward | Thousands: the shape of the payoffs shows in about 600, the right levels across actions take longer |
+| LambdaMART | Boosted regression trees on the stored rewards, trained with `gmsa_learn_train` | Hundreds |
+
+For outcomes from a few hundred episodes, use Count, Linear or LambdaMART. RankNet suits long-running learning on complex patterns.
+
+### What outcome learning costs
+
+Measured on the VM target:
+
+| | 3 options | 10 options |
+| --- | --- | --- |
+| Tracking, per decision switch | 10 us | 20 us |
+| `gmsa_learn_outcome`: Count, Linear, LambdaMART | 21 to 29 us | 39 to 47 us |
+| `gmsa_learn_outcome`: RankNet | 181 us | 275 us |
+| `gmsa_learn_reward` over a full history of 8 | about 8 outcomes | |
+
+LambdaMART stores one row per outcome, so training on 500 outcomes takes about 0.5 s, a third of training on choices.
+
+### History entries and tickets
+
+| Field | Description |
+| --- | --- |
+| `agent` | The agent that decided |
+| `options` | Copies of the options on offer, with their feature values |
+| `chosen` | Index of the option acted on |
+| `probability` | The chance the agent had of picking it |
+| `start`, `last` | When the agent switched to it, and when it last acted on it |
+| `active` | True while it's the agent's current decision |
+
+### Bring your own network
+
+A custom model with `learns : gmsa_learn_target.OUTCOMES` works with tracking, tickets and rewards unchanged. Outcome samples carry `reward`, and `weight` already includes the credit and the odds correction. Here, a [Net](#net) of your own shape learns rewards:
+
+```gml
+// a value network of your own shape: 5 inputs and 3 actions, encoded as 8 values
+global.value = gmsa_learn_custom({
+    reset_data : function() {
+        data = {
+            net : gmsa_net_create(8, [16, 8, 1], { optimizer : gmsa_net_optimizer.ADAM, learn_rate : 0.01, sparse : true }),
+            x   : array_create(8, 0),
+        };
+    },
+    observe : function(_sample) {
+        // the chosen option's estimated reward moves toward the reward it got
+        var _out = gmsa_net_forward(data.net, my_encode(data.x, _sample.options[_sample.chosen]));
+        gmsa_net_backward(data.net, _sample.weight * (_out[0] - _sample.reward));
+        gmsa_net_step(data.net);
+    },
+    predict : function(_sample, _out) {
+        // estimated reward per option, turned into preferences through the temperature
+        var _n = array_length(_sample.options);
+        var _max = -infinity;
+        for (var _i = 0; _i < _n; _i++) {
+            var _v = gmsa_net_forward(data.net, my_encode(data.x, _sample.options[_i]));
+            _out.p[_i] = _v[0];
+            _max = max(_max, _v[0]);
+        }
+        var _sum = 0;
+        for (var _i = 0; _i < _n; _i++) {
+            _out.p[_i] = exp((_out.p[_i] - _max) / temperature);
+            _sum += _out.p[_i];
+        }
+        for (var _i = 0; _i < _n; _i++) _out.p[_i] /= _sum;
+        _out.confidence = gmsa_learn_confidence(self);
+    },
+}, { name : "value net", learns : gmsa_learn_target.OUTCOMES, temperature : 0.1 });
+
+// your encoding: the option's inputs, then 1 in its action's slot
+function my_encode(_x, _option) {
+    for (var _j = 0; _j < 5; _j++) _x[@ _j] = _option.inputs[_j];
+    for (var _a = 0; _a < 3; _a++) _x[@ 5 + _a] = (_option.action == _a) ? 1 : 0;
+    return _x;
+}
+```
 
 ---
 
@@ -1506,7 +1732,7 @@ See [Model fields](#model-fields) in Learn.
 
 Custom model methods run with the model as `self`, see [gmsa_learn_custom](#gmsa_learn_custom).
 
-Callbacks can be anonymous functions, methods or script functions. They're checked when you configure, but GML can't tell a plain number from a script index: a number passed by mistake is only caught when it isn't one of your scripts. Bind data to them with `method(struct, function)` when they need more than the agent.
+Callbacks can be anonymous functions, methods or script functions, including built-in functions such as `get_timer`. They're checked when you configure, but in GML a function reference can be a plain number, so a number passed by mistake isn't always caught. Bind data to them with `method(struct, function)` when they need more than the agent.
 
 **Sharing per-target values.** When two actions return the **same array** from their targets callbacks in one think, their per-target inputs are evaluated once per target and shared. Different arrays holding the same target still work correctly, the value is just evaluated once per array.
 
