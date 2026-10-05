@@ -107,6 +107,27 @@ function test_learn_outcome() {
             gmsa_test_assert_true(__test_outcome_p(_m, _agent, 0.25, 0.5, "a0") > __test_outcome_p(_m, _agent, 0.25, 0.5, "a1"), "a0 when x1 is low");
             gmsa_test_assert_true(_late > _early, "earns more after learning");
         });
+		
+        gmsa_test_case("RankNet learns what works", function() {
+            var _m = gmsa_learn_ranknet_create({ learns : gmsa_learn_target.OUTCOMES });
+            var _r = __test_outcome_run(_m, 600, 0);
+            var _a = _r.agent;
+            var _p0h = __test_outcome_p(_m, _a, 0.75, 0.5, "a0"), _p1h = __test_outcome_p(_m, _a, 0.75, 0.5, "a1"), _p2h = __test_outcome_p(_m, _a, 0.75, 0.5, "a2");
+            var _p0l = __test_outcome_p(_m, _a, 0.25, 0.5, "a0"), _p1l = __test_outcome_p(_m, _a, 0.25, 0.5, "a1"), _p2l = __test_outcome_p(_m, _a, 0.25, 0.5, "a2");
+            gmsa_test_assert_true(ln(_p1h / _p0h) > ln(_p1l / _p0l), "a1 gains more from high x1 than a0");
+            gmsa_test_assert_true(_p1h > _p2h, "a1 beats a2 when x1 is high");
+            gmsa_test_assert_true(_p0l > _p2l, "a0 beats a2 when x1 is low");
+            gmsa_test_assert_true(_r.late > _r.early, "earns more after learning");
+        });
+
+        gmsa_test_case("LambdaMART learns what works", function() {
+            var _m = gmsa_learn_lambdamart_create({ learns : gmsa_learn_target.OUTCOMES, trees : 30 });
+            var _r = __test_outcome_run(_m, 300, 50);
+            var _a = _r.agent;
+            gmsa_test_assert_true(__test_outcome_p(_m, _a, 0.75, 0.5, "a1") > __test_outcome_p(_m, _a, 0.75, 0.5, "a0"), "a1 when x1 is high");
+            gmsa_test_assert_true(__test_outcome_p(_m, _a, 0.25, 0.5, "a0") > __test_outcome_p(_m, _a, 0.25, 0.5, "a1"), "a0 when x1 is low");
+            gmsa_test_assert_true(_r.late > _r.early, "earns more after learning");
+        });
     });
 }
 
@@ -136,4 +157,25 @@ function __test_outcome_p(_model, _agent, _x1, _x2, _action) {
         if (_d.options[_i].action.name == _action) return _r.p[_i];
     }
     return -1;
+}
+
+function __test_outcome_run(_model, _episodes, _train_every) {
+    var _agent = __test_outcome_agent();
+    gmsa_learn_track(_agent);
+    gmsa_agent_set_model(_agent, _model, 1);
+    var _rng = gmsa_rng_create(7);
+    var _early = 0, _late = 0;
+    for (var _e = 0; _e < _episodes; _e++) {
+        var _x1 = gmsa_rng_next(_rng), _x2 = gmsa_rng_next(_rng);
+        __test_outcome_act(_agent, _x1, _x2, _rng);
+        var _t = gmsa_learn_remember(_agent);
+        var _name = _t.options[_t.chosen].action.name;
+        var _pay = (_name == "a0") ? 0.6 : ((_name == "a1") ? ((_x1 > 0.5) ? 0.9 : 0.2) : 0.3);
+        gmsa_learn_outcome(_model, _t, _pay + gmsa_rng_next(_rng) * 0.2 - 0.1);
+        gmsa_agent_clear_current(_agent);
+        if (_train_every > 0 && (_e + 1) mod _train_every == 0) gmsa_learn_train(_model);
+        if (_e < 50) _early += _pay / 50;
+        if (_e >= _episodes - 100) _late += _pay / 100;
+    }
+    return { agent : _agent, early : _early, late : _late };
 }

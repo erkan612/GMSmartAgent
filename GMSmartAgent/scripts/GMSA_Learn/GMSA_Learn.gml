@@ -317,12 +317,13 @@ function __gmsa_learn_slots_encode(_model, _option) {
 }
 
 function __gmsa_learn_softmax_scores(_model, _n) {
+    var _t = (_model.learns == gmsa_learn_target.OUTCOMES) ? _model.temperature : 1;
     array_resize(_model.__p, _n);
     var _max = -infinity;
     for (var _i = 0; _i < _n; _i++) if (_model.__s[_i] > _max) _max = _model.__s[_i];
     var _sum = 0;
     for (var _i = 0; _i < _n; _i++) {
-        _model.__p[_i] = exp(_model.__s[_i] - _max);
+        _model.__p[_i] = exp((_model.__s[_i] - _max) / _t);
         _sum += _model.__p[_i];
     }
     for (var _i = 0; _i < _n; _i++) _model.__p[_i] /= _sum;

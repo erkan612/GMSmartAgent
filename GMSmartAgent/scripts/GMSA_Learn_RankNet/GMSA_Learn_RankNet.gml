@@ -7,6 +7,8 @@ function gmsa_learn_ranknet_create(_params = {}) {
     var _model = __gmsa_learn_model_create(gmsa_learn_tier.RANKNET, "ranknet", {
         half_life    : __gmsa_param(_params, "half_life", 200),
         confidence_k : __gmsa_param(_params, "confidence_k", 40),
+        learns       : __gmsa_param(_params, "learns", gmsa_learn_target.CHOICES),
+        temperature  : __gmsa_param(_params, "temperature", 0.1),
     });
 
     var _layers = [];
@@ -43,6 +45,10 @@ function __gmsa_learn_ranknet_reset() {
 }
 
 function __gmsa_learn_ranknet_observe(_sample) {
+    if (learns == gmsa_learn_target.OUTCOMES) {
+        __gmsa_learn_ranknet_observe_outcome(self, _sample);
+        return;
+    }
     var _n = array_length(_sample.options);
     var _c = _sample.chosen;
     if (_n < 2 || _c < 0) return; // a single option teaches no preference
@@ -67,6 +73,15 @@ function __gmsa_learn_ranknet_observe(_sample) {
         gmsa_net_backward(_net, __g[_i]);
     }
     gmsa_net_step(_net); // one update per observation, weight decay applies the half-life
+}
+
+function __gmsa_learn_ranknet_observe_outcome(_model, _sample) {
+    __gmsa_learn_ranknet_grow(_model);
+    var _net = _model.data.net;
+    __gmsa_learn_slots_encode(_model, _sample.options[_sample.chosen]);
+    var _out = gmsa_net_forward(_net, _model.__x);
+    gmsa_net_backward(_net, _sample.weight * (_out[0] - _sample.reward));
+    gmsa_net_step(_net);
 }
 
 function __gmsa_learn_ranknet_predict(_sample, _out) {
@@ -115,7 +130,7 @@ function __gmsa_learn_ranknet_net(_model, _inputs) {
         optimizer    : _r.optimizer,
         learn_rate   : _r.learn_rate,
         momentum     : _r.momentum,
-        weight_decay : (1 - _model.decay) / _r.learn_rate, // weights shrink by decay every step
+        weight_decay : (_model.learns == gmsa_learn_target.CHOICES) ? (1 - _model.decay) / _r.learn_rate : 0,
         seed         : _r.seed,
         sparse       : true, // one-hot actions: only the option's own action column is used
     });

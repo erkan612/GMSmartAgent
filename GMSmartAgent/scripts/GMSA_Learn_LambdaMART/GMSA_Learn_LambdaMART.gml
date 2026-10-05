@@ -21,6 +21,8 @@ function gmsa_learn_lambdamart_create(_params = {}) {
     var _model = __gmsa_learn_model_create(gmsa_learn_tier.LAMBDAMART, "lambdamart", {
         half_life    : __gmsa_param(_params, "half_life", 200),
         confidence_k : __gmsa_param(_params, "confidence_k", 40),
+        learns       : __gmsa_param(_params, "learns", gmsa_learn_target.CHOICES),
+        temperature  : __gmsa_param(_params, "temperature", 0.1),
     });
     _model.lambdamart = {
         trees : _trees, depth : _depth, learn_rate : _rate, reg : _reg,
@@ -56,18 +58,28 @@ function __gmsa_learn_lambdamart_reset() {
 }
 
 function __gmsa_learn_lambdamart_observe(_sample) {
+    var _outcome = (learns == gmsa_learn_target.OUTCOMES);
     var _n = array_length(_sample.options);
-    if (_n < 2 || _sample.chosen < 0) return; // a single option teaches no preference
+    if (_sample.chosen < 0 || (!_outcome && _n < 2)) return; // a single option teaches no preference
+
+    var _first = _outcome ? _sample.chosen : 0;
+    var _count = _outcome ? 1 : _n;
     var _k = array_length(inputs);
-    var _actions = array_create(_n, 0);
-    var _values = array_create(_n * _k, 0);
-    for (var _i = 0; _i < _n; _i++) {
-        var _o = _sample.options[_i];
+    var _actions = array_create(_count, 0);
+    var _values = array_create(_count * _k, 0);
+    for (var _i = 0; _i < _count; _i++) {
+        var _o = _sample.options[_first + _i];
         _actions[_i] = _o.action;
         var _m = min(_k, array_length(_o.inputs));
         for (var _j = 0; _j < _m; _j++) _values[_i * _k + _j] = _o.inputs[_j];
     }
-    var _record = { k : _k, actions : _actions, inputs : _values, chosen : _sample.chosen, weight : _sample.weight, stamp : data.count };
+    var _record = {
+        k : _k, actions : _actions, inputs : _values,
+        chosen : _outcome ? 0 : _sample.chosen,
+        weight : _sample.weight,
+        reward : _outcome ? _sample.reward : 0,
+        stamp  : data.count,
+    };
     data.count += 1;
     if (array_length(data.buffer) < lambdamart.buffer) {
         array_push(data.buffer, _record);
@@ -208,6 +220,7 @@ function __gmsa_learn_lambdamart_job(_model) {
         phase : __gmsa_lambdamart_phase.ROWS, cursor : 0, row : 0, tree : 0, level : 0, any : false,
         lists : _lists, list_count : _count, rows : _rows,
         inputs : _k, actions : _a, stride : _stride, nodes : _nodes,
+        outcome : (_model.learns == gmsa_learn_target.OUTCOMES),
         input_slot : _d.input_slot, action_slot : _d.action_slot, // only ever grow, the job reads its own range
         newest      : _d.count - 1,
         list_start  : array_create(_count, 0),
@@ -402,6 +415,11 @@ function __gmsa_learn_lambdamart_lambdas(_job, _l) {
         _job.lambda[_st + _i] = 0;
         _job.hess[_st + _i] = 0;
         _job.node[_st + _i] = 0;
+    }
+    if (_job.outcome) {
+        _job.lambda[_st] = _w * (_record.reward - _job.score[_st]);
+        _job.hess[_st] = _w;
+        return;
     }
     var _sc = _job.score[_st + _c];
     var _gain_c = 1 / log2(1 + __gmsa_learn_lambdamart_rank(_job, _st, _n, _c));
