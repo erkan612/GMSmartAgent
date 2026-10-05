@@ -79,6 +79,7 @@
     {"id":{"name":"Test_Learn_Count","path":"scripts/Test_Learn_Count/Test_Learn_Count.yy",},},
     {"id":{"name":"Test_Learn_LambdaMART","path":"scripts/Test_Learn_LambdaMART/Test_Learn_LambdaMART.yy",},},
     {"id":{"name":"Test_Learn_Linear","path":"scripts/Test_Learn_Linear/Test_Learn_Linear.yy",},},
+    {"id":{"name":"Test_Learn_Outcome","path":"scripts/Test_Learn_Outcome/Test_Learn_Outcome.yy",},},
     {"id":{"name":"Test_Learn_Predict","path":"scripts/Test_Learn_Predict/Test_Learn_Predict.yy",},},
     {"id":{"name":"Test_Learn_Rerank","path":"scripts/Test_Learn_Rerank/Test_Learn_Rerank.yy",},},
     {"id":{"name":"Test_Learn_Track","path":"scripts/Test_Learn_Track/Test_Learn_Track.yy",},},

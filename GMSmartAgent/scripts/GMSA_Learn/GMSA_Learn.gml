@@ -1,4 +1,7 @@
 enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET, LAMBDAMART }
+enum gmsa_learn_target { CHOICES, OUTCOMES }
+
+#macro GMSA_LEARN_ODDS_CLIP 10 // largest correction for rarely chosen options
 
 // Creation
 function __gmsa_learn_model_create(_tier, _tier_name, _params) {
@@ -6,32 +9,38 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
     if (!is_numeric(_half) || _half <= 0) throw "GMSA: learn half_life must be above 0";
     var _k = __gmsa_param(_params, "confidence_k", 20);
     if (!is_numeric(_k) || _k <= 0) throw "GMSA: learn confidence_k must be above 0";
+    var _learns = __gmsa_param(_params, "learns", gmsa_learn_target.CHOICES);
+    if (_learns != gmsa_learn_target.CHOICES && _learns != gmsa_learn_target.OUTCOMES) throw "GMSA: learn learns must be a gmsa_learn_target";
+    var _temperature = __gmsa_param(_params, "temperature", 0.1);
+    if (!__gmsa_net_above_zero(_temperature)) throw "GMSA: learn temperature must be above 0";
     var _model = {
         tier          : _tier,
         tier_name     : _tier_name,
-        actions       : [],         // action names, the position is the action id
-        action_lookup : {},		    
-        inputs        : [],         // feature names, the position is the input id
-        input_lookup  : {},		    
-        situational   : [],         // per input id: true when the input doesn't depend on the target
-        samples       : 0,          // decayed amount of observed data
+        learns        : _learns,       // gmsa_learn_target: who is learned from, the player's choices or the agent's outcomes
+        temperature   : _temperature,  // outcome models: how sharply value differences become preferences
+        actions       : [],            // action names, the position is the action id
+        action_lookup : {},
+        inputs        : [],            // feature names, the position is the input id
+        input_lookup  : {},
+        situational   : [],            // per input id: true when the input doesn't depend on the target
+        samples       : 0,             // decayed amount of observed data
         half_life     : _half,
         decay         : power(0.5, 1 / _half),
         confidence_k  : _k,
         frozen        : false,
         data          : {},
-        observe       : undefined,  // function(sample)
-        predict       : undefined,  // function(sample, out), fills out.p and out.confidence
-        explain       : undefined,  // function(sample, i), returns an array of lines
-        save_data     : undefined,  // function(), returns a JSON-ready struct
-        load_data     : undefined,  // function(data)
-        reset_data    : undefined,  // function(), also called once at creation
-        train         : undefined,  // function(budget), returns true when finished, batch tiers only
+        observe       : undefined,     // function(sample)
+        predict       : undefined,     // function(sample, out), fills out.p and out.confidence
+        explain       : undefined,     // function(sample, i), returns an array of lines
+        save_data     : undefined,     // function(), returns a JSON-ready struct
+        load_data     : undefined,     // function(data)
+        reset_data    : undefined,     // function(), also called once at creation
+        train         : undefined,     // function(budget), returns true when finished, batch tiers only
         __bindings    : [],
-        __sample      : { situation : [], options : [], chosen : -1, weight : 1 },
+        __sample      : { situation : [], options : [], chosen : -1, weight : 1, reward : undefined },
         __pool        : [],
         __out         : { p : [], confidence : 0 },
-        __predictions : [],         // cached predictions for gmsa_learn_input, one per observed agent
+        __predictions : [],            // cached predictions for gmsa_learn_input, one per observed agent
     };
     _model.__adjust = method(_model, __gmsa_learn_adjust); // called by Core's think when the model is attached
     return _model;
@@ -54,6 +63,9 @@ function gmsa_learn_custom(_methods, _params = {}) {
 
 // Training and prediction
 function gmsa_learn_observe(_model, _decision) {
+    if (_model.learns != gmsa_learn_target.CHOICES) {
+        throw "GMSA: this model learns from outcomes, report them with gmsa_learn_outcome or gmsa_learn_reward";
+    }
     if (_model.frozen) return false;
     if (_decision.chosen < 0) throw "GMSA: learn observe needs a decision with a chosen option";
     var _sample = __gmsa_learn_sample(_model, _decision, _decision.chosen);
@@ -420,5 +432,6 @@ function __gmsa_learn_sample(_model, _decision, _chosen) {
     }
     _sample.chosen = _chosen;
     _sample.weight = 1;
+    _sample.reward = undefined;
     return _sample;
 }

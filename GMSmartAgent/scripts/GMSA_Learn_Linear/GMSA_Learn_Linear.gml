@@ -1,10 +1,12 @@
-
 function gmsa_learn_linear_create(_params = {}) {
-    var _lr = __gmsa_param(_params, "learn_rate", 0.3);
+    var _learns = __gmsa_param(_params, "learns", gmsa_learn_target.CHOICES);
+    var _lr = __gmsa_param(_params, "learn_rate", (_learns == gmsa_learn_target.OUTCOMES) ? 0.1 : 0.3);
     if (!is_numeric(_lr) || _lr <= 0) throw "GMSA: linear learn_rate must be above 0";
     var _model = __gmsa_learn_model_create(gmsa_learn_tier.LINEAR, "linear", {
         half_life    : __gmsa_param(_params, "half_life", 50),
         confidence_k : __gmsa_param(_params, "confidence_k", 20),
+        learns       : _learns,
+        temperature  : __gmsa_param(_params, "temperature", 0.1),
     });
     _model.linear     = { learn_rate : _lr };
     _model.__p        = []; // softmax of the last sample, written through the struct
@@ -25,6 +27,10 @@ function __gmsa_learn_linear_reset() {
 
 function __gmsa_learn_linear_observe(_sample) {
     __gmsa_learn_linear_grow(self);
+    if (learns == gmsa_learn_target.OUTCOMES) {
+        __gmsa_learn_linear_observe_outcome(self, _sample);
+        return;
+    }
     var _k = array_length(inputs);
 
     // old evidence fades
@@ -44,6 +50,21 @@ function __gmsa_learn_linear_observe(_sample) {
         data.b[_a] += _g;
         for (var _j = 0; _j < _k; _j++) data.w[_a][_j] += _g * _o.inputs[_j];
     }
+}
+
+function __gmsa_learn_linear_observe_outcome(_model, _sample) {
+    var _o = _sample.options[_sample.chosen];
+    var _a = _o.action;
+    var _k = array_length(_model.inputs);
+    var _value = _model.data.b[_a];
+    var _size = 1;
+    for (var _j = 0; _j < _k; _j++) {
+        _value += _model.data.w[_a][_j] * _o.inputs[_j];
+        _size += _o.inputs[_j] * _o.inputs[_j];
+    }
+    var _step = _model.linear.learn_rate * _sample.weight * (_sample.reward - _value) / _size;
+    _model.data.b[_a] += _step;
+    for (var _j = 0; _j < _k; _j++) _model.data.w[_a][_j] += _step * _o.inputs[_j];
 }
 
 function __gmsa_learn_linear_predict(_sample, _out) {
@@ -104,6 +125,7 @@ function __gmsa_learn_linear_grow(_model) {
 function __gmsa_learn_linear_softmax(_model, _sample) {
     var _n = array_length(_sample.options);
     var _k = array_length(_model.inputs);
+    var _t = (_model.learns == gmsa_learn_target.OUTCOMES) ? _model.temperature : 1;
     array_resize(_model.__p, _n);
     var _max = -infinity;
     for (var _i = 0; _i < _n; _i++) {
@@ -116,7 +138,7 @@ function __gmsa_learn_linear_softmax(_model, _sample) {
     }
     var _sum = 0;
     for (var _i = 0; _i < _n; _i++) {
-        _model.__p[_i] = exp(_model.__p[_i] - _max);
+        _model.__p[_i] = exp((_model.__p[_i] - _max) / _t);
         _sum += _model.__p[_i];
     }
     for (var _i = 0; _i < _n; _i++) _model.__p[_i] /= _sum;
