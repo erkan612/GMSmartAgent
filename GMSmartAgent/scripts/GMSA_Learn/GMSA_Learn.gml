@@ -131,6 +131,7 @@ function gmsa_learn_save(_model) {
         format      : "gmsa_learn",
         version     : 1,
         tier        : _model.tier_name,
+        learns      : (_model.learns == gmsa_learn_target.OUTCOMES) ? "outcomes" : "choices",
         actions     : _model.actions,
         inputs      : _model.inputs,
         situational : _model.situational,
@@ -144,19 +145,39 @@ function gmsa_learn_load(_model, _json) {
     if (!is_struct(_s) || __gmsa_param(_s, "format", "") != "gmsa_learn") throw "GMSA: not a GMSA learn save";
     if (_s.version > 1) throw "GMSA: learn save version " + string(_s.version) + " is newer than this GMSmartAgent";
     if (_s.tier != _model.tier_name) throw "GMSA: learn save is for tier '" + string(_s.tier) + "', the model is '" + _model.tier_name + "'";
+    var _learns = __gmsa_param(_s, "learns", "choices");
+    var _mine = (_model.learns == gmsa_learn_target.OUTCOMES) ? "outcomes" : "choices";
+    if (_learns != _mine) throw "GMSA: learn save is from a model that learns from " + string(_learns) + ", this model learns from " + _mine;
 
-    _model.actions       = _s.actions;
-    _model.inputs        = _s.inputs;
-    _model.situational   = _s.situational;
-    _model.action_lookup = {};
-    _model.input_lookup  = {};
-    for (var _i = 0; _i < array_length(_model.actions); _i++) _model.action_lookup[$ _model.actions[_i]] = _i;
-    for (var _i = 0; _i < array_length(_model.inputs); _i++)  _model.input_lookup[$ _model.inputs[_i]] = _i;
-    _model.samples    = _s.samples;
-    _model.__bindings = [];
-    if (_model.reset_data != undefined) _model.reset_data();
-    if (_model.load_data != undefined) _model.load_data(_s.data);
-	__gmsa_learn_invalidate(_model);
+    var _old = {
+        actions : _model.actions, inputs : _model.inputs, situational : _model.situational,
+        action_lookup : _model.action_lookup, input_lookup : _model.input_lookup,
+        samples : _model.samples, bindings : _model.__bindings, data : _model.data,
+    };
+    try {
+        _model.actions       = _s.actions;
+        _model.inputs        = _s.inputs;
+        _model.situational   = _s.situational;
+        _model.action_lookup = {};
+        _model.input_lookup  = {};
+        for (var _i = 0; _i < array_length(_model.actions); _i++) _model.action_lookup[$ _model.actions[_i]] = _i;
+        for (var _i = 0; _i < array_length(_model.inputs); _i++)  _model.input_lookup[$ _model.inputs[_i]] = _i;
+        _model.samples    = _s.samples;
+        _model.__bindings = [];
+        if (_model.reset_data != undefined) _model.reset_data();
+        if (_model.load_data != undefined) _model.load_data(_s.data);
+    } catch (_e) {
+        _model.actions       = _old.actions;
+        _model.inputs        = _old.inputs;
+        _model.situational   = _old.situational;
+        _model.action_lookup = _old.action_lookup;
+        _model.input_lookup  = _old.input_lookup;
+        _model.samples       = _old.samples;
+        _model.__bindings    = _old.bindings;
+        _model.data          = _old.data;
+        throw _e;
+    }
+    __gmsa_learn_invalidate(_model);
     return true;
 }
 

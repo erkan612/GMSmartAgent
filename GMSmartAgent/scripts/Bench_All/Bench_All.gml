@@ -8,6 +8,7 @@ function gmsa_bench_all() {
     __gmsa_bench_net();
     __gmsa_bench_learn_tiers([3, 10, 30]);
     __gmsa_bench_lambdamart_train([100, 500], 2000);
+    __gmsa_bench_outcomes([3, 10]);
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -339,5 +340,61 @@ function __gmsa_bench_lambdamart_train(_sizes, _budget) {
         __gmsa_bench_line("   unbudgeted " + string_format(_full_ms, 1, 1) + " ms");
         __gmsa_bench_line("   budget " + string(_budget) + " us: " + string(_calls) + " calls, worst call " + string(_worst)
             + " us (overshoot " + string(max(0, _worst - _budget)) + " us)");
+    }
+}
+
+function __gmsa_bench_outcomes(_option_counts) {
+    var _tiers = ["count", "linear", "ranknet", "lambdamart"];
+    for (var _o = 0; _o < array_length(_option_counts); _o++) {
+        var _count = _option_counts[_o];
+
+        var _plain = __gmsa_bench_learn_agent(_count);
+        var _tracked = __gmsa_bench_learn_agent(_count);
+        gmsa_learn_track(_tracked);
+        var _rng = gmsa_rng_create(3);
+        __gmsa_bench_learn_feed(_plain, _rng);
+        __gmsa_bench_learn_feed(_tracked, _rng);
+        var _dp = gmsa_agent_think(_plain, 1);
+        var _dt = gmsa_agent_think(_tracked, 1);
+        var _n = 2000;
+        var _t = get_timer();
+        for (var _i = 0; _i < _n; _i++) gmsa_agent_set_current_option(_plain, _dp.options[_i mod 2]);
+        var _base = (get_timer() - _t) / _n;
+        _t = get_timer();
+        for (var _i = 0; _i < _n; _i++) gmsa_agent_set_current_option(_tracked, _dt.options[_i mod 2]);
+        var _switch = (get_timer() - _t) / _n - _base;
+        __gmsa_bench_line("track, " + string(_count) + " options: a switch adds " + string_format(_switch, 1, 1)
+            + " us (untracked " + string_format(_base, 1, 1) + " us)");
+
+        for (var _m = 0; _m < array_length(_tiers); _m++) {
+            var _model;
+            switch (_tiers[_m]) {
+                case "count":      _model = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES }); break;
+                case "linear":     _model = gmsa_learn_linear_create({ learns : gmsa_learn_target.OUTCOMES }); break;
+                case "ranknet":    _model = gmsa_learn_ranknet_create({ learns : gmsa_learn_target.OUTCOMES }); break;
+                case "lambdamart": _model = gmsa_learn_lambdamart_create({ learns : gmsa_learn_target.OUTCOMES }); break;
+            }
+            var _ticket = gmsa_learn_remember(_tracked);
+
+            var _no = 300;
+            _t = get_timer();
+            for (var _i = 0; _i < _no; _i++) gmsa_learn_outcome(_model, _ticket, 0.5);
+            var _outcome = (get_timer() - _t) / _no;
+
+            var _nr = 100, _credited = 0;
+            _t = get_timer();
+            for (var _i = 0; _i < _nr; _i++) _credited = gmsa_learn_reward(_model, _tracked, 0.5);
+            var _reward = (get_timer() - _t) / _nr;
+
+            var _line = "outcome " + _tiers[_m] + ", " + string(_count) + " options: outcome " + string_format(_outcome, 1, 1)
+                + " us, reward over " + string(_credited) + " decisions " + string_format(_reward, 1, 1) + " us";
+            if (_tiers[_m] == "lambdamart") {
+                _t = get_timer();
+                gmsa_learn_train(_model);
+                _line += ", train " + string_format((get_timer() - _t) / 1000, 1, 1) + " ms ("
+                    + string(array_length(_model.data.buffer)) + " outcomes)";
+            }
+            __gmsa_bench_line(_line);
+        }
     }
 }

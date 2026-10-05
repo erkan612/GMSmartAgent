@@ -143,6 +143,41 @@ function test_learn_outcome() {
             var _lines = gmsa_learn_explain(_m, _d, 0);
             gmsa_test_assert_true(string_pos("averages", _lines[0]) > 0 || string_pos("not tried", _lines[0]) > 0, "explains averages");
         });
+		
+        gmsa_test_case("saves keep what they learned from", function() {
+            var _choice = gmsa_learn_linear_create();
+            var _outcome = gmsa_learn_linear_create({ learns : gmsa_learn_target.OUTCOMES });
+            var _ctx = { choice_json : gmsa_learn_save(_choice), outcome_json : gmsa_learn_save(_outcome) };
+
+            gmsa_test_assert_throws(method(_ctx, function() {
+                gmsa_learn_load(gmsa_learn_linear_create({ learns : gmsa_learn_target.OUTCOMES }), choice_json);
+            }), "choice save into an outcome model");
+            gmsa_test_assert_throws(method(_ctx, function() {
+                gmsa_learn_load(gmsa_learn_linear_create(), outcome_json);
+            }), "outcome save into a choice model");
+            gmsa_test_assert_true(gmsa_learn_load(gmsa_learn_linear_create({ learns : gmsa_learn_target.OUTCOMES }), _ctx.outcome_json), "outcome into outcome");
+
+            // a save from before outcome learning has no learns field, it's a choice save
+            var _old = json_parse(_ctx.choice_json);
+            variable_struct_remove(_old, "learns");
+            gmsa_test_assert_true(gmsa_learn_load(gmsa_learn_linear_create(), json_stringify(_old)), "old saves load as choices");
+        });
+
+        gmsa_test_case("a failed load leaves the model as it was", function() {
+            var _m = gmsa_learn_count_create();
+            var _agent = __test_rn_agent(["drink", "loot", "flee"]);
+            repeat (10) __test_rn_observe(_m, _agent, 0.2, 0.8, 0);
+            var _before = __test_rn_p(_m, _agent, 0.2, 0.8, "drink");
+            var _samples = _m.samples;
+
+            var _other = gmsa_learn_count_create({ bins : 2 });
+            repeat (5) __test_rn_observe(_other, _agent, 0.9, 0.1, 1);
+            var _ctx = { m : _m, json : gmsa_learn_save(_other) };
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_learn_load(m, json); }), "bins differ");
+
+            gmsa_test_assert_near(__test_rn_p(_m, _agent, 0.2, 0.8, "drink"), _before, 0.000001, "same predictions");
+            gmsa_test_assert_near(_m.samples, _samples, 0.000001, "same amount of data");
+        });
     });
 }
 
