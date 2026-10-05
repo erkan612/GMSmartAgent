@@ -15,6 +15,7 @@
     {"$GMFolder":"","%Name":"4","folderPath":"folders/demos/4.yy","name":"4","resourceType":"GMFolder","resourceVersion":"2.0",},
     {"$GMFolder":"","%Name":"5","folderPath":"folders/demos/5.yy","name":"5","resourceType":"GMFolder","resourceVersion":"2.0",},
     {"$GMFolder":"","%Name":"6","folderPath":"folders/demos/6.yy","name":"6","resourceType":"GMFolder","resourceVersion":"2.0",},
+    {"$GMFolder":"","%Name":"7","folderPath":"folders/demos/7.yy","name":"7","resourceType":"GMFolder","resourceVersion":"2.0",},
     {"$GMFolder":"","%Name":"GMSA_Tests","folderPath":"folders/GMSA_Tests.yy","name":"GMSA_Tests","resourceType":"GMFolder","resourceVersion":"2.0",},
     {"$GMFolder":"","%Name":"GMSmartAgent","folderPath":"folders/GMSmartAgent.yy","name":"GMSmartAgent","resourceType":"GMFolder","resourceVersion":"2.0",},
     {"$GMFolder":"","%Name":"Core","folderPath":"folders/GMSmartAgent/Core.yy","name":"Core","resourceType":"GMFolder","resourceVersion":"2.0",},
@@ -32,6 +33,7 @@
   },
   "name":"GMSmartAgent",
   "resources":[
+    {"id":{"name":"o_demo_7","path":"objects/o_demo_7/o_demo_7.yy",},},
     {"id":{"name":"o_demo1_agent","path":"objects/o_demo1_agent/o_demo1_agent.yy",},},
     {"id":{"name":"o_demo1_controller","path":"objects/o_demo1_controller/o_demo1_controller.yy",},},
     {"id":{"name":"o_demo1_item","path":"objects/o_demo1_item/o_demo1_item.yy",},},
@@ -47,6 +49,7 @@
     {"id":{"name":"rm_demo4","path":"rooms/rm_demo4/rm_demo4.yy",},},
     {"id":{"name":"rm_demo5","path":"rooms/rm_demo5/rm_demo5.yy",},},
     {"id":{"name":"rm_demo6","path":"rooms/rm_demo6/rm_demo6.yy",},},
+    {"id":{"name":"rm_demo7","path":"rooms/rm_demo7/rm_demo7.yy",},},
     {"id":{"name":"rm_test","path":"rooms/rm_test/rm_test.yy",},},
     {"id":{"name":"Bench_All","path":"scripts/Bench_All/Bench_All.yy",},},
     {"id":{"name":"Demo1_Profile","path":"scripts/Demo1_Profile/Demo1_Profile.yy",},},
@@ -87,6 +90,7 @@
   "resourceType":"GMProject",
   "resourceVersion":"2.0",
   "RoomOrderNodes":[
+    {"roomId":{"name":"rm_demo7","path":"rooms/rm_demo7/rm_demo7.yy",},},
     {"roomId":{"name":"rm_demo6","path":"rooms/rm_demo6/rm_demo6.yy",},},
     {"roomId":{"name":"rm_test","path":"rooms/rm_test/rm_test.yy",},},
     {"roomId":{"name":"rm_demo5","path":"rooms/rm_demo5/rm_demo5.yy",},},
