@@ -25,7 +25,7 @@
 *        │║ ══╗│║ ║ ║│╚═══╗│║ ║ ║││╟───╢│├╬══╦╝  │║│  │╟───╢││║ ══╗│╠══  │║╚╗║│  │║│         *
 *        └╩═══╝└╩ ╩ ╩┘╚═══╝└╩ ╩ ╩┘└╩   ╩┘└╩  ╩┘  ╧╩╧  └╩   ╩┘└╩═══╝└╩═══┘└╩ ╚╩┘  ╧╩╧         *
 *   						Decision-Weighting AI for GameMaker								 *
-*   						          Version 1.2.6											 *
+*   						          Version 1.2.9											 *
 *   																                         *
 *   						           by erkan612											 *
 *   	 *****************************************************************************       *
@@ -234,6 +234,7 @@ function gmsa_agent_create(_profile, _owner = undefined, _params = {}) {
         __cache    : __gmsa_cache_create(_input_count, array_length(_profile.actions)),  // per-think input cache and option pool
         __scheduler: undefined,  // { scheduler, tier }, set by gmsa_scheduler_add
         __eval      : undefined, // evaluation struct and its own option pool, created on first evaluate
+        __track     : undefined, // outcome tracking hook, set by Learn's gmsa_learn_track
     };
     _agent.decision = {
         agent   : _agent,
@@ -265,6 +266,7 @@ function gmsa_agent_set_current(_agent, _action, _target = undefined) {
 
 function gmsa_agent_clear_current(_agent) {
     _agent.current = undefined;
+    if (_agent.__track != undefined) _agent.__track(undefined, false);
 }
 
 function gmsa_agent_consume(_agent) {
@@ -308,9 +310,7 @@ function __gmsa_param(_params, _name, _default) {
 }
 
 function __gmsa_callable(_fn) {
-    if (is_method(_fn)) return true;
-    if (is_numeric(_fn)) return script_exists(_fn);
-    return is_callable(_fn);
+    return is_method(_fn) || is_callable(_fn);
 }
 
 function __gmsa_resolve_index(_map, _key, _count, _kind) {
@@ -324,7 +324,7 @@ function __gmsa_resolve_index(_map, _key, _count, _kind) {
 
 function gmsa_agent_set_current_option(_agent, _option) {
     if (_option == undefined) {
-        _agent.current = undefined;
+        gmsa_agent_clear_current(_agent);
         return;
     }
     var _actions = _agent.profile.actions;
@@ -332,5 +332,8 @@ function gmsa_agent_set_current_option(_agent, _option) {
     if (_idx < 0 || _idx >= array_length(_actions) || _actions[_idx] != _option.action) {
         throw "GMSA: option '" + string(_option.action.name) + "' belongs to another profile";
     }
+    var _cur = _agent.current;
+    var _same = (_cur != undefined && _cur.action == _idx && _cur.target == _option.target);
     gmsa_agent_set_current(_agent, _idx, _option.target);
+    if (_agent.__track != undefined) _agent.__track(_option, _same);
 }

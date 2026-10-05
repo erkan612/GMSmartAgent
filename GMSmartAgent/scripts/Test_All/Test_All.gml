@@ -16,5 +16,6 @@ function gmsa_tests_all(_verbose = false) {
     test_net();
     test_learn_ranknet();
     test_learn_lambdamart();
+    test_learn_track();
     return gmsa_test_run(_verbose);
 }
