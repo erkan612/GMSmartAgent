@@ -42,11 +42,18 @@ GMSmartAgent is a **scoring engine only**. It never moves anything, never querie
 - **Learning from the player** - Models learn habits and preferences from the player's recorded choices
 - **Count model** - Habits per situation, learns from a handful of choices and explains itself in plain words
 - **Linear model** - Preferences across actions and targets, learns which item the player prefers, not just which action
+- **RankNet model** - A small neural network that learns habits depending on combinations of inputs, like "walks far for coins only when healthy"
+- **LambdaMART model** - Boosted decision trees for the most detailed rankings and sharp thresholds, trained in batches from the recent choices
+- **Background training** - Batch models train a little each step inside a time budget you set, and the old model keeps working until the new one is ready
 - **Re-ranking** - Companions and enemies drift toward what a model learned, under an influence cap, never above the designer's score
 - **Prediction as input** - "How likely is the player to drink right now" becomes an ordinary input any profile can use
 - **Confidence** - A model only gets a say once it has data, so there is no cold-start tuning
 - **Decay, freeze, reset, save and load** - Old habits fade, learning pauses on demand, and models persist with the save game
-- **Custom models** - Plug in your own model with five methods
+- **Custom models** - Plug in your own model with a handful of methods, batch training included
+### Neural Networks
+- **Small feed-forward networks** - Dense layers, backpropagation, SGD or Adam, the building block under RankNet and usable on their own
+- **Sparse inputs** - One-hot codes cost only the values that aren't zero
+- **Deterministic and allocation-free** - Seeded starting weights, every buffer allocated once at creation
 ### Developer Tools
 - **Debug view** - Ranked options with scores, probabilities and every consideration's value, drawn or as text, with the designer's score shown wherever learning changed it
 - **Test module** - Assertions, a runner, stubs, a fake clock, and scenario tests to lock in your profile tuning
@@ -216,6 +223,16 @@ Or let any profile read what the player is likely to do next:
 ```gml
 gmsa_profile_add_input(_p, gmsa_input_pull("will_drink", gmsa_learn_input(global.habits, player_agent, "drink")));
 ```
+
+Pick the model by what the player's habits look like. Everything else stays the same:
+
+```gml
+global.taste = gmsa_learn_count_create();       // habits per situation, learns from a handful of choices
+global.taste = gmsa_learn_linear_create();      // clear preferences, the default
+global.taste = gmsa_learn_ranknet_create();     // habits that depend on combinations of inputs
+global.taste = gmsa_learn_lambdamart_create();  // the most detailed, trained in batches:
+gmsa_learn_train(global.taste, 2000);           // a little each step until done, or once at a checkpoint
+```
  
 ---
  
@@ -238,7 +255,17 @@ What that means at 60 fps with a 2 ms budget:
 | 500 | ~6 frames | ~40 frames |
 | 1,000 | ~12 frames | ~85 frames |
  
-Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents slows how often each one re-decides, never the game.
+Learning models add their own cost to every re-ranked think, at 3 options:
+
+| Model | Added per think | Best for |
+| --- | --- | --- |
+| Count, Linear | ~40 us | Every agent in the room |
+| RankNet | ~100 us | A few agents, a boss or a companion |
+| LambdaMART | ~500 us | A few agents, or a shared predictor input read once per frame |
+
+LambdaMART trains inside a budget you set, with a measured overshoot under 130 us at 2 ms. The [API Reference](ApiReference.md#what-models-cost) has the full table.
+
+Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents or heavier models slows how often each one re-decides, never the game.
  
 ---
  
@@ -254,7 +281,6 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Roadmap
 
-- **v1.2: RankNet and LambdaMART** - The pairwise and boosted-tree learning-to-rank models, joining Count and Linear and trained from the same recorded choices.
 - **v1.3: Learning from outcomes** - Agents that learn from how their own choices turn out: rewards, credit over time, and exploration limited to plausible options.
 - **v1.4: Planning** - A Plan module where utility scoring picks the goal and a hierarchical task network planner works out the steps.
 - **v1.5: Planning across frames** - Resumable planning inside the scheduler budget, and the plan tree in the debug view.
@@ -266,7 +292,7 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to room full of goblins sharing one AI budget
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, and one that learns to play like you
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
@@ -296,9 +322,21 @@ Burges, C. J. C. (2010) "[From RankNet to LambdaRank to LambdaMART: An Overview]
 
 Wu, Q., Burges, C. J. C., Svore, K. M. and Gao, J. (2010) "[Adapting Boosting for Information Retrieval Measures](https://www.microsoft.com/en-us/research/publication/adapting-boosting-information-retrieval-measures/)", Information Retrieval, 13(3), 254-270
 
+**Neural networks** Rumelhart, D. E., Hinton, G. E. and Williams, R. J. (1986) "[Learning Representations by Back-Propagating Errors](https://doi.org/10.1038/323533a0)", Nature, 323, 533-536
+
+Glorot, X. and Bengio, Y. (2010) "[Understanding the Difficulty of Training Deep Feedforward Neural Networks](https://proceedings.mlr.press/v9/glorot10a.html)", AISTATS 2010, 249-256
+
+He, K., Zhang, X., Ren, S. and Sun, J. (2015) "[Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification](https://arxiv.org/abs/1502.01852)", ICCV 2015
+
+Kingma, D. P. and Ba, J. (2015) "[Adam: A Method for Stochastic Optimization](https://arxiv.org/abs/1412.6980)", ICLR 2015
+
+Loshchilov, I. and Hutter, F. (2019) "[Decoupled Weight Decay Regularization](https://arxiv.org/abs/1711.05101)", ICLR 2019
+
 **Gradient boosting and regression trees** Breiman, L., Friedman, J. H., Olshen, R. A. and Stone, C. J. (1984) "[Classification and Regression Trees](https://doi.org/10.1201/9781315139470)", Wadsworth
 
 Friedman, J. H. (2001) "[Greedy Function Approximation: A Gradient Boosting Machine](https://www.jstor.org/stable/2699986)", The Annals of Statistics, 29(5), 1189-1232
+
+Ke, G., Meng, Q., Finley, T., Wang, T., Chen, W., Ma, W., Ye, Q. and Liu, T-Y. (2017) "[LightGBM: A Highly Efficient Gradient Boosting Decision Tree](https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)", NIPS 2017
 
 **Ranking measures (NDCG)** Järvelin, K. and Kekäläinen, J. (2002) "[Cumulated Gain-Based Evaluation of IR Techniques](https://dl.acm.org/doi/10.1145/582415.582418)", ACM Transactions on Information Systems, 20(4), 422-446
 

@@ -19,7 +19,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 9. [Locking In Your Tuning with Tests](#9-locking-in-your-tuning-with-tests)
 10. [Many Agents: the Scheduler](#10-many-agents-the-scheduler)
 11. [Learning From the Player](#11-learning-from-the-player)
-12. [Troubleshooting](#12-troubleshooting)
+12. [Choosing a Model](#12-choosing-a-model)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -34,7 +35,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 | Core | Always | The engine |
 | Test | Recommended | Testing your profiles. Required by Debug |
 | Debug | Recommended | Seeing why an agent chose what it chose |
-| Learn | Optional | Learning from the player's choices |
+| Learn | Optional | Learning from the player's choices. Requires Net |
+| Net | With Learn | The small neural network Learn's RankNet model is built on, usable on its own |
 
 GMSmartAgent is pure GML, so there are no extensions or DLLs, and it runs on every platform GameMaker exports to. It needs a GameMaker version with structs and methods (2.3 or newer).
 
@@ -687,7 +689,61 @@ The [API Reference](ApiReference.md#learn) covers this, the second built-in mode
 
 ---
 
-## 12. Troubleshooting
+## 12. Choosing a Model
+
+The copycat uses Linear, the model to start with: fast, cheap and quick to learn. But Linear weighs each input on its own, so some habits are invisible to it.
+
+Play like this: **when you're healthy, walk anywhere for a coin. When you're hurt, only grab coins close by.** Whether distance matters depends on your health. That's a combination of two inputs, and Linear can only learn "distance matters" or "distance doesn't", never "it depends". The copycat will settle somewhere in between and copy neither half of your habit.
+
+**RankNet** learns combinations. It's a small neural network, and switching to it is one line:
+
+```gml
+// o_controller > Create
+global.taste = gmsa_learn_ranknet_create();
+```
+
+Nothing else changes: the same observe calls, the same `gmsa_agent_set_model`, the same debug view. Expect it to need more picks than Linear before it settles, dozens rather than a handful.
+
+**LambdaMART** learns the most detailed rankings. It builds decision trees, so it's good at sharp rules like "only below 30% health". It also works differently: it stores your picks and learns from them in batches, so it needs to be told when to train.
+
+```gml
+// o_controller > Create
+global.taste = gmsa_learn_lambdamart_create();
+global.retrain = false;
+```
+
+```gml
+// o_player > Create (add)
+picks = 0;
+```
+
+```gml
+// o_player > Global Left Pressed, after gmsa_learn_observe
+picks++;
+if (picks mod 10 == 0) global.retrain = true;
+```
+
+```gml
+// o_controller > Step
+if (global.retrain) global.retrain = !gmsa_learn_train(global.taste, 2000);  // 2 ms per step until done
+```
+
+Training runs in the background, a little each step, and the copycat keeps its old opinion until the new one is ready. Until the first training finishes, it has no opinion at all and plays by your design. You can also train once at a checkpoint, at the end of a level or on a death screen, with no budget: `gmsa_learn_train(global.taste)`.
+
+**Which one?**
+
+| Model | Use it for |
+| --- | --- |
+| Linear | The default. Clear preferences, learned in a handful of picks |
+| Count | Habits per situation ("drinks when health is low"), explains itself in plain words |
+| RankNet | Habits that depend on combinations of inputs |
+| LambdaMART | The most detailed habits, sharp thresholds, trained in batches |
+
+They also differ a lot in cost. Count and Linear are cheap enough for every goblin in the room. RankNet and LambdaMART cost several times more per think, so give them to a few agents, a boss or a companion like the copycat, or read them through `gmsa_learn_input`, which shares one prediction per frame between every agent reading it. Whatever you attach, the scheduler's budget still protects your frame rate: a heavier model means fewer thinks per step, never a slower game. The [API Reference](ApiReference.md#what-models-cost) has the measured numbers.
+
+---
+
+## 13. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -718,6 +774,12 @@ Either the model isn't confident yet (it needs a few dozen choices), the influen
 
 **`gmsa_learn_observe` throws about features.**
 The profile of the agent you observed through doesn't declare features. Add `gmsa_profile_set_features` before its build.
+
+**A LambdaMART model has no effect.**
+It hasn't trained yet. It only stores picks until `gmsa_learn_train` finishes, see [Choosing a Model](#12-choosing-a-model).
+
+**A RankNet model learns nothing.**
+Its `learn_rate` is too low for its `half_life`: old evidence fades faster than new evidence builds up. Raise one of them. The defaults are balanced, so this only happens after tuning.
 
 **The model never makes the agent do something.**
 That's the rule: it can only push options down. If your curves score that option at or near zero, see [Learning From the Player](#11-learning-from-the-player) on leaving room.

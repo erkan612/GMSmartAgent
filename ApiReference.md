@@ -18,6 +18,7 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [Random Generator](#random-generator)
 - [Debug](#debug)
 - [Learn](#learn)
+- [Net](#net)
 - [Test](#test)
 - [Data Structures](#data-structures)
 - [Callback Signatures](#callback-signatures)
@@ -82,6 +83,27 @@ The kind of a learning model, see [Learn](#learn).
 | `gmsa_learn_tier.CUSTOM` | Your own model, made with `gmsa_learn_custom` |
 | `gmsa_learn_tier.COUNT` | Habit counting, made with `gmsa_learn_count_create` |
 | `gmsa_learn_tier.LINEAR` | Weighted preferences, made with `gmsa_learn_linear_create` |
+| `gmsa_learn_tier.RANKNET` | Neural ranking, made with `gmsa_learn_ranknet_create` |
+| `gmsa_learn_tier.LAMBDAMART` | Boosted ranking trees, made with `gmsa_learn_lambdamart_create` |
+
+### gmsa_net_activation
+Activation of a network layer, see [Net](#net).
+
+| Element | Meaning |
+| --- | --- |
+| `gmsa_net_activation.LINEAR` | No change |
+| `gmsa_net_activation.TANH` | -1..1, smooth |
+| `gmsa_net_activation.RELU` | 0 below zero, unchanged above |
+| `gmsa_net_activation.LEAKY_RELU` | Like RELU, but 0.01 times the value below zero |
+| `gmsa_net_activation.SIGMOID` | 0..1, smooth |
+
+### gmsa_net_optimizer
+How a network applies its gradients.
+
+| Element | Meaning |
+| --- | --- |
+| `gmsa_net_optimizer.SGD` | Plain gradient descent, with optional momentum |
+| `gmsa_net_optimizer.ADAM` | Adam, adapts the step size per weight |
 
 ### gmsa_test_status
 Result of a test case, see [Test](#test).
@@ -709,13 +731,14 @@ Learning from observed choices. A model watches what a decision-maker (usually t
 - **Re-ranker:** attached to a profile or an agent, it nudges that agent's options toward what it learned, under an influence cap.
 - **Predictor:** read through `gmsa_learn_input`, it turns "what is the player likely to do right now" into an input any profile can use.
 
-The Learn module depends on Core. Core never depends on it: an attached model is called through the model itself, so removing the Learn folder breaks nothing else.
+The Learn module depends on Core and [Net](#net). Core never depends on it: an attached model is called through the model itself, so removing the Learn folder breaks nothing else.
 
 ### The workflow
 
 1. Declare features on the profile whose choices you record, with `gmsa_profile_set_features`.
 2. Record each choice with `gmsa_observe` and train on it with `gmsa_learn_observe`.
 3. Use the model: attach it with `gmsa_profile_set_model` or `gmsa_agent_set_model`, or read it with `gmsa_learn_input` or `gmsa_learn_predict`.
+4. LambdaMART only: train it with `gmsa_learn_train`. It stores choices as they come and learns from them in batches.
 
 ```gml
 // the player's agent records choices, its profile declares the features
@@ -733,8 +756,28 @@ gmsa_profile_add_input(_p, gmsa_input_pull("will_drink", gmsa_learn_input(global
 | Model | Learns | Needs | Good at | Limits |
 | --- | --- | --- | --- | --- |
 | Count | How often each action is chosen in each situation | A handful of choices | Habits, explains itself in plain words | Actions only, not targets; situational inputs only |
-| Linear | Weights per action and input | Dozens of choices | Preferences, including which target | Needs more data before it's confident |
+| Linear | Weights per action and input | Dozens of choices | Preferences, including which target | Can't learn combinations of inputs (low health matters only when danger is high) |
+| RankNet | A small neural network scoring each option | Dozens to hundreds of choices | Combinations of inputs, learns choice by choice | Slower to predict, more settings to tune |
+| LambdaMART | Boosted decision trees ranking the options | Hundreds of choices, trained in batches | The most detailed rankings, sharp thresholds | Slowest to predict, needs `gmsa_learn_train`, can miss situations seen fewer than about 20 times |
 | Custom | Whatever you write | | Game-specific patterns | |
+
+### What models cost
+
+Measured on the VM target, per call, at 3 and 10 options on offer. YYC is faster.
+
+| Model | Observe | Predict | Added to a re-ranked think |
+| --- | --- | --- | --- |
+| Count | 28 / 46 us | 32 / 63 us | 42 / 103 us |
+| Linear | 39 / 102 us | 31 / 77 us | 39 / 105 us |
+| RankNet | 417 / 1253 us | 131 / 418 us | 105 / 348 us |
+| LambdaMART | 23 / 52 us, stores only | 486 / 1557 us | 513 / 1650 us |
+
+LambdaMART training with 100 trees takes about 1.4 s for 500 rows (100 choices of 5 options) and 6.6 s for 2,500 rows, or the same work spread over frames with a budget, see [gmsa_learn_train](#gmsa_learn_train).
+
+- **Count and Linear are the crowd models.** Attach them to as many agents as you like.
+- **RankNet and LambdaMART suit a few agents**, a boss or a companion, or a predictor input: `gmsa_learn_input` caches its prediction per frame, so every agent reading it shares one evaluation.
+- **Observe cost only matters once per recorded choice**, not per frame.
+- **The scheduler budget protects your frame rate whatever is attached.** A heavy model means fewer thinks per step, never a slower game.
 
 ### Names, not indices
 
@@ -796,6 +839,74 @@ loot: value +0.42, dist -0.18, bias +0.10 (p 0.62)
 
 **Throws** when `learn_rate` isn't above 0.
 
+### gmsa_learn_ranknet_create
+
+```gml
+gmsa_learn_ranknet_create([params]) -> model
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `hidden` | array | `[8]` | Hidden layer sizes, `[]` for none |
+| `activation` | `gmsa_net_activation` | `TANH` | Hidden layer activation |
+| `optimizer` | `gmsa_net_optimizer` | `ADAM` | How the network applies what it learns |
+| `learn_rate` | real | 0.02 | Step size of each update |
+| `momentum` | real | 0 | SGD momentum, ignored by Adam |
+| `seed` | integer | 1 | Starting weights, same seed and same choices give the same model |
+| `half_life` | real | 200 | Observations after which old evidence counts half |
+| `confidence_k` | real | 40 | Observations needed for 50% confidence |
+
+How it works:
+- A small neural network ([Net](#net)) scores each option from its features and which action it is. Combinations of inputs are learnable, which Linear can't do.
+- Each observation trains on pairs, the chosen option against each one not chosen, with RankNet's pairwise loss.
+- The offered options compete through a softmax of their scores, so the re-ranker and the predictor input work exactly as with Linear.
+- An untrained model scores every option the same, so it predicts an even split.
+- Old evidence fades through weight decay: weights shrink by the half-life's decay every observation.
+- New actions and inputs grow the network. Saves made before keep working.
+- **Confidence is model-wide:** `samples / (samples + confidence_k)`.
+
+**Tuning:** with Adam, weights settle around `learn_rate / (1 - decay)`. A low `learn_rate` with a short `half_life` leaves the network too weak to learn anything: `learn_rate 0.01` with `half_life 50` learned nothing in testing. When you lower one, raise the other.
+
+Explain reads like this, where each input's share is how much the score drops when that input is 0:
+
+```
+drink: hp +0.84, danger +0.31, gold -0.02, score +1.20 (p 0.71)
+```
+
+**Throws** when `hidden` isn't an array, `learn_rate` isn't above 0, or the network settings are invalid (a layer size, activation or optimizer).
+
+### gmsa_learn_lambdamart_create
+
+```gml
+gmsa_learn_lambdamart_create([params]) -> model
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `trees` | integer | 100 | Trees built per training |
+| `depth` | integer | 3 | Levels per tree, 1 to 8 |
+| `learn_rate` | real | 0.1 | How much each tree adds |
+| `reg` | real | 0.1 | Keeps leaves with little evidence near 0 |
+| `bins` | integer | 16 | Most bins an input is cut into when looking for splits, 2 to 256 |
+| `min_leaf` | integer | 5 | Fewest options a leaf may hold |
+| `buffer` | integer | 500 | Most recent choices kept to train on |
+| `half_life` | real | 200 | Observations after which a stored choice counts half |
+| `confidence_k` | real | 40 | Observations needed for 50% confidence |
+
+How it works:
+- `gmsa_learn_observe` stores the choice in a buffer of the most recent `buffer` choices. Nothing is learned yet.
+- `gmsa_learn_train` builds `trees` decision trees from the buffer, each one correcting the ones before it, guided by LambdaRank: the chosen option should rank first. Older choices weigh less by the half-life.
+- A tree splits on an input's value or on which action an option is, so it can learn sharp rules like "drink below 30% health when danger is high".
+- Until the first training finishes, it predicts an even split with no confidence. During later trainings the previous trees keep predicting.
+- Saves include the buffer as well as the trees, since every training starts again from the buffer.
+- **Confidence is model-wide,** and 0 until the first training finishes.
+
+**Limits:** both come from how decision trees grow, one split at a time.
+- A perfectly balanced pattern of two inputs (exactly as often "both high or both low" as "one high, one low") gives no first split anything to gain, so it's never learned. Any imbalance fixes it, and real players are never balanced. RankNet doesn't have this limit.
+- A situation seen fewer than about 20 times can be missed when its examples are noisy.
+
+**Throws** when a parameter is out of the ranges above.
+
 ### gmsa_learn_custom
 
 ```gml
@@ -812,6 +923,7 @@ Wraps your own model so it works everywhere a built-in one does.
 | `save_data()` | No | Return a JSON-ready struct of what was learned |
 | `load_data(data)` | No | Restore what `save_data` returned |
 | `reset_data()` | No | Forget everything, also called once at creation to initialize `data` |
+| `train(budget)` | No | One step of batch training for `gmsa_learn_train`. Return true when finished, a missing return counts as finished |
 
 Methods run with the model as `self`, so they can read `actions`, `inputs`, `situational`, `decay`, `samples` and their own `data`.
 
@@ -839,7 +951,7 @@ sample = {
 
 Predictions are cleaned before anyone uses them: negative or NaN values become 0, the values are scaled to sum to 1 (or made even if they're all 0), and confidence is clamped to 0..1. A broken custom model can't break scoring.
 
-**Throws** when `observe` or `predict` is missing, or a method isn't callable.
+**Throws** when `observe` or `predict` is missing, or a method isn't callable. GML can't tell a plain number from a script index, so a number that happens to be one of your scripts' indices passes.
 
 ### gmsa_learn_observe
 
@@ -852,6 +964,31 @@ Trains the model on a decision with a chosen option, usually from `gmsa_observe`
 **Returns** false when the model is frozen.
 
 **Throws** when the decision's profile declares no features, or nothing was chosen.
+
+### gmsa_learn_train
+
+```gml
+gmsa_learn_train(model, [budget]) -> bool
+```
+
+Trains a batch model: LambdaMART, or a custom model with a `train` method. `budget` is the most microseconds one call may use. Without it, training finishes before the call returns.
+
+**Returns** true when training finished. Count, Linear, RankNet and frozen models return true at once, so calling it on any model is safe.
+
+```gml
+// at a checkpoint (level end, death screen), all at once
+gmsa_learn_train(global.style);
+
+// or in the background, 2 ms per step
+// Step event
+if (training) training = !gmsa_learn_train(global.style, 2000);
+```
+
+- Each call does at least one small unit of work, then stops when its time is up. Measured overshoot at a 2 ms budget: under 130 us.
+- Training works on a snapshot of the buffer. Choices observed meanwhile wait for the next training.
+- The previous result keeps predicting until training finishes. Predictor inputs update as soon as it does.
+
+**Throws** when `model` isn't a model or `budget` is negative.
 
 ### gmsa_learn_predict
 
@@ -984,7 +1121,7 @@ Loads a save into a model you created. The model keeps its own settings (`half_l
 | Field | Description |
 | --- | --- |
 | `tier` | `gmsa_learn_tier` |
-| `tier_name` | `"count"`, `"linear"` or the custom name |
+| `tier_name` | `"count"`, `"linear"`, `"ranknet"`, `"lambdamart"` or the custom name |
 | `actions` | Action names, the position is the action id |
 | `inputs` | Input names, the position is the input id |
 | `situational` | Per input id, true when it doesn't depend on the target |
@@ -992,6 +1129,151 @@ Loads a save into a model you created. The model keeps its own settings (`half_l
 | `half_life`, `decay`, `confidence_k` | Settings |
 | `frozen` | True while frozen |
 | `data` | What the model learned, its own shape per tier |
+
+---
+
+## Net
+
+A small feed-forward neural network: dense layers, backpropagation, SGD or Adam. RankNet is built on it, and it's public, so custom models and your own game code can use it too.
+
+The Net module depends on Core only. Learn depends on it.
+
+```gml
+// learn XOR
+var _net = gmsa_net_create(2, [8, 1], { optimizer : gmsa_net_optimizer.ADAM, learn_rate : 0.05 });
+var _x = [[0, 0], [0, 1], [1, 0], [1, 1]];
+var _y = [0, 1, 1, 0];
+repeat (1500) {
+    for (var _i = 0; _i < 4; _i++) gmsa_net_train(_net, _x[_i], _y[_i]);
+}
+var _out = gmsa_net_forward(_net, [1, 0]);  // _out[0] is close to 1
+```
+
+### gmsa_net_create
+
+```gml
+gmsa_net_create(inputs, layers, [params]) -> net
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `inputs` | integer | Number of input values |
+| `layers` | array | Layer sizes, the last one is the output layer. An entry can be `{ size, activation }` to set that layer's activation |
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `activation` | `gmsa_net_activation` | `TANH` | Hidden layers' activation |
+| `output` | `gmsa_net_activation` | `LINEAR` | Output layer's activation |
+| `optimizer` | `gmsa_net_optimizer` | `SGD` | How gradients are applied |
+| `learn_rate` | real | 0.01 for SGD, 0.001 for Adam | Step size |
+| `momentum` | real | 0 | SGD momentum, 0 up to below 1 |
+| `weight_decay` | real | 0 | Each step, weights (not biases) are multiplied by `1 - learn_rate * weight_decay` |
+| `beta1`, `beta2`, `epsilon` | real | 0.9, 0.999, 0.00000001 | Adam settings |
+| `seed` | integer | 1 | Starting weights, the same seed gives the same net |
+| `sparse` | bool | false | The first layer skips zero inputs. Faster for mostly-zero inputs such as one-hot codes, slower for dense ones |
+
+- Starting weights use Xavier scaling, or He scaling for RELU and LEAKY_RELU layers, drawn from the net's own generator. GameMaker's `random` is never touched.
+- Every buffer is allocated here, so forward and backward passes allocate nothing.
+
+**Throws** when `inputs` or a layer size isn't a whole number of 1 or more, an activation or the optimizer is unknown, or a setting is out of range.
+
+### gmsa_net_forward
+
+```gml
+gmsa_net_forward(net, input) -> array
+```
+
+Runs the net. **Returns** the output array, which the net reuses, so copy what you keep. A shorter input is padded with 0.
+
+**Throws** when `input` has more values than the net has inputs. Grow it with `gmsa_net_grow_inputs` first.
+
+### gmsa_net_backward
+
+```gml
+gmsa_net_backward(net, gradient)
+```
+
+Backpropagates the gradient of your loss for the most recent forward. `gradient` has one value per output, or is a number when the net has one output. Gradients add up across calls until `gmsa_net_step`, so several forward and backward pairs can make one update.
+
+```gml
+// your own loss: here, squared error toward a target
+var _out = gmsa_net_forward(_net, _x);
+gmsa_net_backward(_net, _out[0] - _target);
+gmsa_net_step(_net);
+```
+
+**Throws** when the gradient doesn't have one value per output.
+
+### gmsa_net_step
+
+```gml
+gmsa_net_step(net)
+```
+
+Applies the gradients gathered since the last step with the net's optimizer, then clears them. Does nothing when no backward happened since.
+
+### gmsa_net_zero_grad
+
+```gml
+gmsa_net_zero_grad(net)
+```
+
+Discards gathered gradients without applying them.
+
+### gmsa_net_train
+
+```gml
+gmsa_net_train(net, input, target) -> real
+```
+
+One step toward `target` with squared error: forward, backward and step. `target` is an array with one value per output, or a number for one output.
+
+**Returns** half the squared error before the step.
+
+### gmsa_net_reset
+
+```gml
+gmsa_net_reset(net, [seed])
+```
+
+New starting weights and cleared optimizer state, from `seed` if given, otherwise the net's own.
+
+### gmsa_net_grow_inputs
+
+```gml
+gmsa_net_grow_inputs(net, count)
+```
+
+Adds `count` inputs at the end. Their weights start at 0, so outputs don't change until they're trained.
+
+### gmsa_net_save
+
+```gml
+gmsa_net_save(net) -> struct
+```
+
+The net's shape, weights and biases as a JSON-ready struct, a copy that later training doesn't change. Optimizer state isn't saved.
+
+### gmsa_net_load
+
+```gml
+gmsa_net_load(net, data) -> bool
+```
+
+Loads a save, as a struct or a JSON string, into a net with the same layer sizes and activations. A save with fewer inputs fills the rest with 0, one with more grows the net. Optimizer state starts fresh.
+
+**Throws** when the save is malformed, from a newer version, or has a different shape.
+
+### Net fields
+
+| Field | Description |
+| --- | --- |
+| `inputs`, `outputs` | Sizes |
+| `layers` | Per layer: `inputs`, `size`, `activation`, `w` (weights, one row of `inputs` per neuron), `b` (biases) |
+| `optimizer`, `learn_rate`, `momentum`, `weight_decay`, `beta1`, `beta2`, `epsilon`, `seed`, `sparse` | Settings |
+| `steps` | Updates applied since creation, reset or load |
+
+Cost on the VM: 6 inputs with `[8, 1]` take 30 us per forward and 155 us per training step with Adam. 12 inputs with `[16, 8, 1]` take 125 us and 739 us.
 
 ---
 
@@ -1220,10 +1502,11 @@ See [Model fields](#model-fields) in Learn.
 | Custom model `save_data` | `function()` | JSON-ready struct |
 | Custom model `load_data` | `function(data)` | Nothing |
 | Custom model `reset_data` | `function()` | Nothing |
+| Custom model `train` | `function(budget)` | True when finished |
 
 Custom model methods run with the model as `self`, see [gmsa_learn_custom](#gmsa_learn_custom).
 
-Callbacks can be anonymous functions, methods or script functions. Bind data to them with `method(struct, function)` when they need more than the agent.
+Callbacks can be anonymous functions, methods or script functions. They're checked when you configure, but GML can't tell a plain number from a script index: a number passed by mistake is only caught when it isn't one of your scripts. Bind data to them with `method(struct, function)` when they need more than the agent.
 
 **Sharing per-target values.** When two actions return the **same array** from their targets callbacks in one think, their per-target inputs are evaluated once per target and shared. Different arrays holding the same target still work correctly, the value is just evaluated once per array.
 
