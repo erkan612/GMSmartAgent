@@ -5,6 +5,9 @@ function gmsa_bench_all() {
     __gmsa_bench_scale_considerations([1, 4, 8, 16]);
     __gmsa_bench_scale_actions([5, 20, 50, 100]);
     __gmsa_bench_scale_agents([100, 1000, 5000, 10000], 2000);
+    __gmsa_bench_net();
+    __gmsa_bench_learn_tiers([3, 10, 30]);
+    __gmsa_bench_lambdamart_train([100, 500], 2000);
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -196,4 +199,145 @@ function __gmsa_bench_scheduler() {
     }
     show_debug_message("[GMSA Bench] scheduler 2 ms budget, 1000 agents: " + string_format(_thinks / _steps, 1, 1)
         + " thinks per step, worst step " + string(_worst) + " us (overshoot " + string(max(0, _worst - 2000)) + " us)");
+}
+
+function __gmsa_bench_net() {
+    var _configs = [
+        ["6 in, [8, 1]",      6, [8, 1]],
+        ["12 in, [16, 1]",    12, [16, 1]],
+        ["12 in, [16, 8, 1]", 12, [16, 8, 1]],
+    ];
+    for (var _c = 0; _c < array_length(_configs); _c++) {
+        var _inputs = _configs[_c][1];
+        var _net = gmsa_net_create(_inputs, _configs[_c][2], { optimizer : gmsa_net_optimizer.ADAM });
+        var _x = array_create(_inputs, 0);
+        for (var _i = 0; _i < _inputs; _i++) _x[_i] = (_i + 1) / (_inputs + 1);
+
+        var _n = 5000;
+        var _t = get_timer();
+        for (var _i = 0; _i < _n; _i++) gmsa_net_forward(_net, _x);
+        var _forward = (get_timer() - _t) / _n;
+
+        _t = get_timer();
+        for (var _i = 0; _i < _n; _i++) gmsa_net_train(_net, _x, 0.5);
+        var _train = (get_timer() - _t) / _n;
+
+        __gmsa_bench_line("net " + _configs[_c][0] + ": forward " + string_format(_forward, 1, 1)
+            + " us, train step " + string_format(_train, 1, 1) + " us");
+    }
+}
+
+function __gmsa_bench_learn_agent(_actions) {
+    var _p = gmsa_profile_create("bench learn");
+    gmsa_profile_add_input(_p, gmsa_input_push("hp"));
+    gmsa_profile_add_input(_p, gmsa_input_push("danger"));
+    gmsa_profile_add_input(_p, gmsa_input_push("gold"));
+    for (var _i = 0; _i < _actions; _i++) gmsa_profile_add_action(_p, "a" + string(_i));
+    gmsa_profile_set_features(_p, ["hp", "danger", "gold"]);
+    return gmsa_agent_create(gmsa_profile_build(_p));
+}
+
+function __gmsa_bench_learn_feed(_agent, _rng) {
+    gmsa_agent_set_input(_agent, "hp", gmsa_rng_next(_rng));
+    gmsa_agent_set_input(_agent, "danger", gmsa_rng_next(_rng));
+    gmsa_agent_set_input(_agent, "gold", gmsa_rng_next(_rng));
+}
+
+function __gmsa_bench_learn_tiers(_option_counts) {
+    var _tiers = ["count", "linear", "ranknet", "lambdamart"];
+    for (var _o = 0; _o < array_length(_option_counts); _o++) {
+        var _count = _option_counts[_o];
+        var _names = array_create(_count, "");
+        for (var _i = 0; _i < _count; _i++) _names[_i] = "a" + string(_i);
+
+        // baseline think without a model
+        var _plain = __gmsa_bench_learn_agent(_count);
+        var _base = __gmsa_bench_time_thinks(_plain, 1000);
+
+        for (var _t = 0; _t < array_length(_tiers); _t++) {
+            var _model;
+            switch (_tiers[_t]) {
+                case "count":      _model = gmsa_learn_count_create(); break;
+                case "linear":     _model = gmsa_learn_linear_create(); break;
+                case "ranknet":    _model = gmsa_learn_ranknet_create(); break;
+                case "lambdamart": _model = gmsa_learn_lambdamart_create(); break;
+            }
+            var _agent = __gmsa_bench_learn_agent(_count);
+            var _rng = gmsa_rng_create(7);
+
+            // observe, timed per call so feeding inputs and recording the choice stay outside
+            var _n = 200;
+            var _observe = 0;
+            for (var _i = 0; _i < _n; _i++) {
+                __gmsa_bench_learn_feed(_agent, _rng);
+                var _d = gmsa_observe(_agent, _names, floor(gmsa_rng_next(_rng) * _count));
+                var _t0 = get_timer();
+                gmsa_learn_observe(_model, _d);
+                _observe += get_timer() - _t0;
+            }
+            _observe /= _n;
+
+            var _train_ms = 0;
+            if (_tiers[_t] == "lambdamart") {
+                var _t0 = get_timer();
+                gmsa_learn_train(_model);
+                _train_ms = (get_timer() - _t0) / 1000;
+            }
+
+            // predict
+            __gmsa_bench_learn_feed(_agent, _rng);
+            var _eval = gmsa_agent_evaluate(_agent);
+            var _np = 1000;
+            var _t0 = get_timer();
+            for (var _i = 0; _i < _np; _i++) gmsa_learn_predict(_model, _eval);
+            var _predict = (get_timer() - _t0) / _np;
+
+            // re-ranked think
+            var _ranked = __gmsa_bench_learn_agent(_count);
+            gmsa_agent_set_model(_ranked, _model, 1);
+            var _think = __gmsa_bench_time_thinks(_ranked, 1000);
+
+            var _line = "learn " + _tiers[_t] + ", " + string(_count) + " options: observe " + string_format(_observe, 1, 1)
+                + " us, predict " + string_format(_predict, 1, 1) + " us, re-ranked think +"
+                + string_format(_think - _base, 1, 1) + " us (base " + string_format(_base, 1, 1) + " us)";
+            if (_train_ms > 0) _line += ", train " + string_format(_train_ms, 1, 1) + " ms";
+            __gmsa_bench_line(_line);
+        }
+    }
+}
+
+function __gmsa_bench_lambdamart_train(_sizes, _budget) {
+    var _actions = 5;
+    var _names = array_create(_actions, "");
+    for (var _i = 0; _i < _actions; _i++) _names[_i] = "a" + string(_i);
+
+    for (var _s = 0; _s < array_length(_sizes); _s++) {
+        var _size = _sizes[_s];
+        var _model = gmsa_learn_lambdamart_create({ buffer : _size });
+        var _agent = __gmsa_bench_learn_agent(_actions);
+        var _rng = gmsa_rng_create(11);
+        repeat (_size) {
+            __gmsa_bench_learn_feed(_agent, _rng);
+            // a learnable habit: a0 when hurt, otherwise random
+            var _chosen = (gmsa_rng_next(_rng) < 0.5) ? 0 : floor(gmsa_rng_next(_rng) * _actions);
+            gmsa_learn_observe(_model, gmsa_observe(_agent, _names, _chosen));
+        }
+
+        var _t = get_timer();
+        gmsa_learn_train(_model);
+        var _full_ms = (get_timer() - _t) / 1000;
+
+        var _calls = 0, _worst = 0, _done = false;
+        while (!_done) {
+            var _t0 = get_timer();
+            _done = gmsa_learn_train(_model, _budget);
+            _worst = max(_worst, get_timer() - _t0);
+            _calls += 1;
+        }
+
+        __gmsa_bench_line("lambdamart train, " + string(_size) + " choices (" + string(_size * _actions) + " rows), 100 trees:");
+        __gmsa_bench_line("   unbudgeted " + string_format(_full_ms, 1, 1) + " ms");
+        __gmsa_bench_line("   budget " + string(_budget) + " us: " + string(_calls) + " calls, worst call " + string(_worst)
+            + " us (overshoot " + string(max(0, _worst - _budget)) + " us)");
+    }
 }

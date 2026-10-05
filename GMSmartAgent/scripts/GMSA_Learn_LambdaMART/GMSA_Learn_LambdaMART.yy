@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Learn_LambdaMART",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Learn_LambdaMART",
+  "parent":{
+    "name":"Learn",
+    "path":"folders/GMSmartAgent/Learn.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

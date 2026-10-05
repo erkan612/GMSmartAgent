@@ -1,4 +1,4 @@
-enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET }
+enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET, LAMBDAMART }
 
 // Creation
 function __gmsa_learn_model_create(_tier, _tier_name, _params) {
@@ -26,6 +26,7 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
         save_data     : undefined,  // function(), returns a JSON-ready struct
         load_data     : undefined,  // function(data)
         reset_data    : undefined,  // function(), also called once at creation
+        train         : undefined,  // function(budget), returns true when finished, batch tiers only
         __bindings    : [],
         __sample      : { situation : [], options : [], chosen : -1, weight : 1 },
         __pool        : [],
@@ -260,6 +261,82 @@ function __gmsa_learn_prediction(_model, _observed, _clock, _refresh) {
 function __gmsa_learn_invalidate(_model) {
     var _cache = _model.__predictions;
     for (var _i = 0; _i < array_length(_cache); _i++) _cache[_i].fresh = false;
+}
+
+// train
+function gmsa_learn_train(_model, _budget = undefined) {
+    if (!is_struct(_model) || _model[$ "tier"] == undefined) throw "GMSA: learn train needs a model";
+    if (_budget != undefined && (!is_numeric(_budget) || _budget < 0)) throw "GMSA: learn train budget must be 0 or more";
+    if (_model.frozen || _model.train == undefined) return true;
+    var _done = _model.train(_budget);
+    if (_done) __gmsa_learn_invalidate(_model);
+    return _done;
+}
+
+function __gmsa_learn_slots_grow(_model) {
+    var _d = _model.data;
+    while (array_length(_d.input_slot) < array_length(_model.inputs)) {
+        array_push(_d.input_slot, _d.slots);
+        _d.slots += 1;
+    }
+    while (array_length(_d.action_slot) < array_length(_model.actions)) {
+        array_push(_d.action_slot, _d.slots);
+        _d.slots += 1;
+    }
+}
+
+function __gmsa_learn_slots_encode(_model, _option) {
+    var _d = _model.data;
+    var _slots = _d.slots;
+    if (array_length(_model.__x) != _slots) array_resize(_model.__x, _slots);
+    for (var _s = 0; _s < _slots; _s++) _model.__x[_s] = 0;
+    var _inputs = _option.inputs;
+    var _m = min(array_length(_d.input_slot), array_length(_inputs));
+    for (var _j = 0; _j < _m; _j++) _model.__x[_d.input_slot[_j]] = _inputs[_j];
+    _model.__x[_d.action_slot[_option.action]] = 1;
+}
+
+function __gmsa_learn_softmax_scores(_model, _n) {
+    array_resize(_model.__p, _n);
+    var _max = -infinity;
+    for (var _i = 0; _i < _n; _i++) if (_model.__s[_i] > _max) _max = _model.__s[_i];
+    var _sum = 0;
+    for (var _i = 0; _i < _n; _i++) {
+        _model.__p[_i] = exp(_model.__s[_i] - _max);
+        _sum += _model.__p[_i];
+    }
+    for (var _i = 0; _i < _n; _i++) _model.__p[_i] /= _sum;
+}
+
+function __gmsa_learn_explain_line(_model, _sample, _index, _score_x) {
+    var _o = _sample.options[_index];
+    __gmsa_learn_slots_encode(_model, _o);
+    var _score = _score_x(_model);
+    var _d = _model.data;
+    var _k = min(array_length(_d.input_slot), array_length(_o.inputs));
+    var _share = array_create(_k, 0);
+    for (var _j = 0; _j < _k; _j++) {
+        var _slot = _d.input_slot[_j];
+        var _keep = _model.__x[_slot];
+        _model.__x[_slot] = 0;
+        _share[_j] = _score - _score_x(_model);
+        _model.__x[_slot] = _keep;
+    }
+
+    var _used = array_create(_k, false);
+    var _parts = "";
+    for (var _r = 0; _r < min(3, _k); _r++) {
+        var _best = -1, _best_abs = 0;
+        for (var _j = 0; _j < _k; _j++) {
+            if (_used[_j]) continue;
+            if (abs(_share[_j]) > _best_abs) { _best_abs = abs(_share[_j]); _best = _j; }
+        }
+        if (_best < 0) break;
+        _used[_best] = true;
+        _parts += _model.inputs[_best] + " " + __gmsa_learn_signed(_share[_best]) + ", ";
+    }
+    return [_model.actions[_o.action] + ": " + _parts + "score " + __gmsa_learn_signed(_score)
+        + " (p " + string_format(_model.__p[_index], 1, 2) + ")"];
 }
 
 // Internal
