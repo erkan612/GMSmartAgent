@@ -1,6 +1,6 @@
 enum gmsa_plan_result { NONE, FOUND, NO_PLAN, OUT_OF_BUDGET }
 enum gmsa_plan_status { IDLE, PLANNING, RUNNING, DONE, FAILED }
-enum gmsa_plan_report { METHOD_SUCCESS, METHOD_FAILURE, METHOD_REWARD, STEP_SUCCESS, STEP_FAILURE }
+enum gmsa_plan_report { METHOD_SUCCESS, METHOD_FAILURE, METHOD_REWARD, STEP_SUCCESS, STEP_FAILURE, GOAL_SUCCESS, GOAL_FAILURE }
 
 #macro __GMSA_PLAN_PAUSED -1
 
@@ -35,9 +35,9 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0, __work : undefined, __fresh_from : -1, __fresh_to : -1, __slice_first : false,
         // a repair's climb: the task being replanned, its entries s to e, and how to search it
         __repair_s : 0, __repair_e : 0, __repair_kind : 0, __repair_index : 0, __repair_depth : 0,
-        __repair_b : 0, __chain_task : [], __chain_method : [], __chain_aux : [],  // what a repair broke, kept for reports
+        __repair_b : 0, __chain_task : [], __chain_method : [], __chain_aux : [], __chain_goal : [], // what a repair broke, kept for reports
         __report : { kind : 0, planner : undefined, task : -1, task_name : undefined, method : -1, method_name : undefined,
-                     step : -1, step_name : undefined, chance : 1, reward : 0, state : undefined },
+                     step : -1, step_name : undefined, chance : 1, reward : 0, state : undefined, goal : -1, goal_name : undefined },
         // plans are entries: kind 0 a step, 1 a task begins (with its method and a trace record), 2 a task ends
         __out_count : 0, __out_kind : [], __out_index : [], __out_method : [], __out_aux : [],  // search output
         __run_count : 0, __run_kind : [], __run_index : [], __run_method : [], __run_aux : [], __run_steps : 0,  // the running plan
@@ -51,6 +51,10 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __frame_trace : [], __frame_depth : [], __frame_start : [], __frame_count : [], __frame_try : [], __frame_k : [],
         // method order per choice point, best first
         __order_top : 0, __order : [], __order_score : [], __method_score : [],
+        // goals: an A* search over imagined states, stored flat and found again through a hash table
+        __g_active : false, __g_goal : 0, __g_undo : 0, __g_start : 0, __g_found : -1, __g_expand : -1, __g_next : 0,
+        __g_count : 0, __g_state : [], __g_parent : [], __g_action : [], __g_cost : [], __g_depth : [], __g_hash : [], __g_closed : [],
+        __g_heap : 0, __g_hf : [], __g_hg : [], __g_hn : [], __g_table_node : [], __g_table_stamp : [], __g_mask : 0, __g_stamp : 0, __g_path : [],
     };
     _p.__report.planner = _p;
     _p.__report.state = _p.state; // filled with the facts the report is about, during the call
@@ -151,6 +155,7 @@ function gmsa_plan_stop(_planner) {
     _planner.__run_steps = 0;
     _planner.__deadline = undefined;
     _planner.__resume_choice = false;
+    _planner.__g_active = false;
 }
 
 function gmsa_plan_reward(_planner, _reward) {
@@ -258,6 +263,7 @@ function __gmsa_plan_search_from(_p, _kind, _index, _depth) {
     _p.__order_top = 0;
     _p.depth_cut = false;
     _p.__resume_choice = false;
+    _p.__g_active = false;
     _p.__head = __gmsa_plan_push_node(_p, _kind, _index, _depth, -1);
     return __gmsa_plan_search(_p);
 }
@@ -273,7 +279,8 @@ function __gmsa_plan_search(_p) {
     while (true) {
         var _n = _p.__head;
         if (_n == -1) return gmsa_plan_result.FOUND;
-        if (_p.__node_kind[_n] == 2) {
+        var _kind = _p.__node_kind[_n];
+        if (_kind == 2) {
             // a task's subtasks are all done, free of budget
             __gmsa_plan_out(_p, 2, _p.__node_index[_n], -1, -1);
             _p.__head = _p.__node_next[_n];
@@ -282,7 +289,7 @@ function __gmsa_plan_search(_p) {
         if (_p.nodes >= _p.budget) return gmsa_plan_result.OUT_OF_BUDGET;
         if (__gmsa_plan_time_up(_p)) return __GMSA_PLAN_PAUSED;
         var _r;
-        if (_p.__node_kind[_n] == 0) {
+        if (_kind == 0) {
             // a step: if it can be done in the imagined state, do it and move on
             _p.nodes += 1;
             var _step = _d.steps[_p.__node_index[_n]];
@@ -296,6 +303,18 @@ function __gmsa_plan_search(_p) {
         } else if (_p.__node_depth[_n] >= _p.depth) {
             _p.depth_cut = true;
             _r = __gmsa_plan_next_choice(_p);
+        } else if (_kind == 3) {
+            // a goal: the cheapest chain of steps that reaches it from the imagined state
+            if (!_p.__g_active) __gmsa_plan_goal_begin(_p, _p.__node_index[_n]);
+            var _g = __gmsa_plan_goal_search(_p);
+            if (_g == __GMSA_PLAN_PAUSED) return __GMSA_PLAN_PAUSED;
+            __gmsa_plan_goal_end(_p, _g == gmsa_plan_result.FOUND);
+            if (_g == gmsa_plan_result.OUT_OF_BUDGET) return _g;
+            if (_g == gmsa_plan_result.FOUND) {
+                _p.__head = _p.__node_next[_n];
+                continue;
+            }
+            _r = __gmsa_plan_next_choice(_p);  // no chain reaches it: back up, like a step that can't be done
         } else {
             // a task: becomes the newest choice point, and its first method is tried
             __gmsa_plan_push_frame(_p, _n);
@@ -552,8 +571,8 @@ function __gmsa_plan_enclosing(_p, _pos) {
     var _level = 0;
     for (var _j = _pos - 1; _j >= 0; _j--) {
         var _k = _p.__run_kind[_j];
-        if (_k == 2) _level += 1;
-        else if (_k == 1) {
+        if (_k == 2 || _k == 4) _level += 1;
+        else if (_k == 1 || _k == 3) {
             if (_level == 0) return _j;
             _level -= 1;
         }
@@ -565,8 +584,8 @@ function __gmsa_plan_matching_end(_p, _s) {
     var _level = 0;
     for (var _j = _s + 1; _j < _p.__run_count; _j++) {
         var _k = _p.__run_kind[_j];
-        if (_k == 1) _level += 1;
-        else if (_k == 2) {
+        if (_k == 1 || _k == 3) _level += 1;
+        else if (_k == 2 || _k == 4) {
             if (_level == 0) return _j;
             _level -= 1;
         }
@@ -578,8 +597,8 @@ function __gmsa_plan_depth_at(_p, _s) {
     var _level = 0;
     for (var _j = 0; _j < _s; _j++) {
         var _k = _p.__run_kind[_j];
-        if (_k == 1) _level += 1;
-        else if (_k == 2) _level -= 1;
+        if (_k == 1 || _k == 3) _level += 1;
+        else if (_k == 2 || _k == 4) _level -= 1;
     }
     return _level;
 }
@@ -652,7 +671,7 @@ function __gmsa_plan_repair_next(_p) {
         var _s = __gmsa_plan_enclosing(_p, _p.__repair_s);
         if (_s == -1) {
             var _root = _p.domain.lookup[$ _p.goal];
-            if (_root.kind == 1) {
+            if (_root.kind == 1 || _root.kind == 3) {
                 _p.result = gmsa_plan_result.NO_PLAN;
                 return 0;
             }
@@ -662,7 +681,7 @@ function __gmsa_plan_repair_next(_p) {
             _p.__repair_e = _p.__run_count - 1;
             _p.__repair_depth = 0;
         } else {
-            _p.__repair_kind = 1;
+            _p.__repair_kind = (_p.__run_kind[_s] == 3) ? 3 : 1; // a goal is repaired by searching it again
             _p.__repair_index = _p.__run_index[_s];
             _p.__repair_s = _s;
             _p.__repair_e = __gmsa_plan_matching_end(_p, _s);
@@ -688,7 +707,8 @@ function __gmsa_plan_repair_result(_p, _r) {
             _p.__fresh_from = _p.__repair_s;
             _p.__fresh_to = _p.__repair_s + _p.__out_count;
             for (var _i = 0; _i < _n; _i++) {
-                __gmsa_plan_emit(_p, gmsa_plan_report.METHOD_FAILURE, _p.__chain_task[_i], _p.__chain_method[_i], _p.__chain_aux[_i], -1, 0);
+                if (_p.__chain_goal[_i]) __gmsa_plan_emit_goal(_p, gmsa_plan_report.METHOD_FAILURE, _p.__chain_task[_i], _p.__chain_aux[_i], -1, 0);
+                else __gmsa_plan_emit(_p, gmsa_plan_report.METHOD_FAILURE, _p.__chain_task[_i], _p.__chain_method[_i], _p.__chain_aux[_i], -1, 0);
             }
             return 1;
         }
@@ -750,8 +770,9 @@ function __gmsa_plan_seek(_p, _from) {
     var _i = _from;
     var _listening = __gmsa_plan_listening(_p);
     while (_i < _p.__run_count && _p.__run_kind[_i] != 0) {
-        // passing a task's end: its method's steps all finished
-        if (_listening && _p.__run_kind[_i] == 2) {
+        // passing a task's or a goal's end: everything inside it finished
+        var _k = _p.__run_kind[_i];
+        if (_listening && (_k == 2 || _k == 4)) {
             __gmsa_plan_emit_entry(_p, gmsa_plan_report.METHOD_SUCCESS, __gmsa_plan_enclosing(_p, _i), -1, 0);
         }
         _i += 1;
@@ -811,6 +832,8 @@ function __gmsa_plan_emit(_p, _kind, _task, _method, _aux, _step, _reward) {
     var _d = _p.domain;
     var _r = _p.__report;
     _r.kind = _kind;
+    _r.goal = -1;
+    _r.goal_name = undefined;
     _r.reward = _reward;
     _r.step = _step;
     _r.step_name = (_step >= 0) ? _d.steps[_step].name : undefined;
@@ -838,6 +861,7 @@ function __gmsa_plan_emit(_p, _kind, _task, _method, _aux, _step, _reward) {
 function __gmsa_plan_emit_entry(_p, _kind, _entry, _step, _reward) {
     if (!__gmsa_plan_listening(_p)) return;
     if (_entry < 0) __gmsa_plan_emit(_p, _kind, -1, -1, -1, _step, _reward);
+    else if (_p.__run_kind[_entry] == 3) __gmsa_plan_emit_goal(_p, _kind, _p.__run_index[_entry], _p.__run_aux[_entry], _step, _reward);
     else __gmsa_plan_emit(_p, _kind, _p.__run_index[_entry], _p.__run_method[_entry], _p.__run_aux[_entry], _step, _reward);
 }
 
@@ -852,6 +876,10 @@ function __gmsa_plan_emit_chain(_p, _kind, _b, _top, _reward) {
     while (true) {
         _s = __gmsa_plan_enclosing(_p, _s);
         if (_s == -1) break;
+        if (_p.__run_kind[_s] == 3 && _kind == gmsa_plan_report.METHOD_REWARD) {
+            if (_s == _top) break;
+            continue;
+        }
         __gmsa_plan_emit_entry(_p, _kind, _s, -1, _reward);
         _n += 1;
         if (_s == _top) break;
@@ -869,8 +897,283 @@ function __gmsa_plan_collect_chain(_p, _b, _top) {
         _p.__chain_task[_n] = _p.__run_index[_s];
         _p.__chain_method[_n] = _p.__run_method[_s];
         _p.__chain_aux[_n] = _p.__run_aux[_s];
+        _p.__chain_goal[_n] = (_p.__run_kind[_s] == 3);
         _n += 1;
         if (_s == _top) break;
     }
     return _n;
+}
+
+// Internal: goals, an A* search over imagined states
+function __gmsa_plan_goal_begin(_p, _goal) {
+    // the hash table holds every state one search can store, with room to spare, sized once per planner
+    var _size = 1;
+    while (_size < (_p.budget + 2) * 2) _size *= 2;
+    if (array_length(_p.__g_table_node) < _size) {
+        array_resize(_p.__g_table_node, _size);
+        array_resize(_p.__g_table_stamp, _size);
+    }
+    _p.__g_mask = array_length(_p.__g_table_node) - 1;
+    _p.__g_stamp += 1;  // empties the table without clearing it
+    _p.__g_active = true;
+    _p.__g_goal = _goal;
+    _p.__g_undo = _p.undo_count; // a recipe's undo log below this mark stays untouched
+    _p.__g_start = _p.nodes;
+    _p.__g_found = -1;
+    _p.__g_count = 0;
+    _p.__g_heap = 0;
+    _p.__g_expand = -1;
+    _p.__g_next = 0;
+    __gmsa_plan_goal_add(_p, _p.domain.goals[_goal], -1, -1, 0, 0, __gmsa_plan_goal_hash(_p)); // the start: the imagined state as it is now
+}
+
+function __gmsa_plan_goal_search(_p) {
+    var _d = _p.domain;
+    var _goal = _d.goals[_p.__g_goal];
+    var _acts = _goal.actions;
+    var _na = array_length(_acts);
+    var _any = false; // the first action of a call is free of the clock, so every call makes progress
+    while (true) {
+        if (_p.__g_expand == -1) {
+            // the most promising state not expanded yet, stale heap entries are skipped
+            var _n = -1;
+            while (_p.__g_heap > 0) {
+                var _top = __gmsa_plan_heap_pop(_p);
+                if (!_p.__g_closed[_top]) {
+                    _n = _top;
+                    break;
+                }
+            }
+            if (_n == -1) return gmsa_plan_result.NO_PLAN;
+            _p.__g_closed[_n] = true;
+            __gmsa_plan_goal_load(_p, _n);
+            if (__gmsa_plan_met(_p.state, _goal.conditions)) {
+                _p.__g_found = _n;
+                return gmsa_plan_result.FOUND;
+            }
+            _p.__g_expand = _n;
+            _p.__g_next = 0;
+        } else {
+            __gmsa_plan_goal_load(_p, _p.__g_expand); // resuming after a pause
+        }
+        var _from = _p.__g_expand;
+        while (_p.__g_next < _na) {
+            if (_p.nodes >= _p.budget) return gmsa_plan_result.OUT_OF_BUDGET;
+            if (_any && __gmsa_plan_time_up(_p)) return __GMSA_PLAN_PAUSED;
+            _any = true;
+            var _step = _d.steps[_acts[_p.__g_next]];
+            _p.__g_next += 1;
+            _p.nodes += 1;
+            if (!__gmsa_plan_met(_p.state, _step.requires)) continue;
+            if (_step.check != undefined && !_step.check(_p.state)) continue;
+            var _cost = _step.cost;
+            if (_step.cost_fn != undefined) {
+                _cost = _step.cost_fn(_p.owner, _p.state);
+                if (!is_numeric(_cost)) throw "GMSA: plan step '" + _step.name + "' cost must return a number";
+                if (!(_cost * 1000000000000 > 0)) continue; // 0 or less rules the step out
+            }
+            var _g = _p.__g_cost[_from] + _cost;
+            var _mark = _p.undo_count;
+            __gmsa_plan_apply(_p, _step.effects);
+            var _hash = __gmsa_plan_goal_hash(_p);
+            var _m = __gmsa_plan_goal_find(_p, _hash);
+            if (_m == -1) {
+                __gmsa_plan_goal_add(_p, _goal, _from, _step.index, _g, _p.__g_depth[_from] + 1, _hash);
+            } else if (!_p.__g_closed[_m] && _g < _p.__g_cost[_m]) {
+                // a cheaper way to a state that's still waiting: take it, its old heap entry gets skipped
+                _p.__g_parent[_m] = _from;
+                _p.__g_action[_m] = _step.index;
+                _p.__g_cost[_m] = _g;
+                _p.__g_depth[_m] = _p.__g_depth[_from] + 1;
+                __gmsa_plan_heap_push(_p, _g + __gmsa_plan_goal_guess(_p, _goal), _g, _m);
+            }
+            __gmsa_plan_undo(_p, _mark);
+        }
+        _p.__g_expand = -1;
+    }
+}
+
+function __gmsa_plan_goal_end(_p, _found) {
+    _p.__g_active = false;
+    // back to the imagined state the goal started from, with the recipe's undo log as it was
+    __gmsa_plan_goal_load(_p, 0);
+    _p.undo_count = _p.__g_undo;
+    if (!_found) return;
+    var _len = _p.__g_depth[_p.__g_found];
+    var _n = _p.__g_found;
+    for (var _i = _len - 1; _i >= 0; _i--) {
+        _p.__g_path[_i] = _p.__g_action[_n];
+        _n = _p.__g_parent[_n];
+    }
+    // the chain goes into the plan between the goal's begin (3) and end (4), its effects into the imagined state
+    __gmsa_plan_out(_p, 3, _p.__g_goal, -1, __gmsa_plan_goal_record(_p));
+    var _steps = _p.domain.steps;
+    for (var _i = 0; _i < _len; _i++) {
+        var _s = _p.__g_path[_i];
+        __gmsa_plan_apply(_p, _steps[_s].effects);
+        __gmsa_plan_out(_p, 0, _s, -1, -1);
+    }
+    __gmsa_plan_out(_p, 4, _p.__g_goal, -1, -1);
+}
+
+function __gmsa_plan_goal_record(_p) {
+    var _o = _p.__trace_top;
+    _p.__trace[_o] = 0;
+    _p.__trace[_o + 1] = _p.nodes - _p.__g_start;
+    _p.__trace[_o + 2] = 1;
+    var _nf = array_length(_p.state);
+    for (var _i = 0; _i < _nf; _i++) _p.__trace[_o + 3 + _i] = _p.__g_state[_i];
+    _p.__trace_top = _o + 3 + _nf;
+    return _o;
+}
+
+function __gmsa_plan_goal_add(_p, _goal, _parent, _action, _g, _depth, _hash) {
+    var _n = _p.__g_count;
+    var _nf = array_length(_p.state);
+    var _o = _n * _nf;
+    for (var _i = 0; _i < _nf; _i++) _p.__g_state[_o + _i] = _p.state[_i];
+    _p.__g_parent[_n] = _parent;
+    _p.__g_action[_n] = _action;
+    _p.__g_cost[_n] = _g;
+    _p.__g_depth[_n] = _depth;
+    _p.__g_hash[_n] = _hash;
+    _p.__g_closed[_n] = false;
+    var _slot = _hash & _p.__g_mask;
+    while (_p.__g_table_stamp[_slot] == _p.__g_stamp) _slot = (_slot + 1) & _p.__g_mask;
+    _p.__g_table_stamp[_slot] = _p.__g_stamp;
+    _p.__g_table_node[_slot] = _n;
+    _p.__g_count = _n + 1;
+    __gmsa_plan_heap_push(_p, _g + __gmsa_plan_goal_guess(_p, _goal), _g, _n);
+}
+
+function __gmsa_plan_goal_find(_p, _hash) {
+    var _nf = array_length(_p.state);
+    var _slot = _hash & _p.__g_mask;
+    while (_p.__g_table_stamp[_slot] == _p.__g_stamp) {
+        var _m = _p.__g_table_node[_slot];
+        if (_p.__g_hash[_m] == _hash) {
+            var _o = _m * _nf;
+            var _same = true;
+            for (var _i = 0; _i < _nf; _i++) {
+                if (_p.__g_state[_o + _i] != _p.state[_i]) {
+                    _same = false;
+                    break;
+                }
+            }
+            if (_same) return _m;
+        }
+        _slot = (_slot + 1) & _p.__g_mask;
+    }
+    return -1;
+}
+
+function __gmsa_plan_goal_load(_p, _n) {
+    var _nf = array_length(_p.state);
+    var _o = _n * _nf;
+    for (var _i = 0; _i < _nf; _i++) _p.state[_i] = _p.__g_state[_o + _i];
+}
+
+function __gmsa_plan_goal_hash(_p) {
+    var _h = 17;
+    var _s = _p.state;
+    for (var _i = 0; _i < array_length(_s); _i++) _h = ((_h * 31) + floor(_s[_i] * 1024)) & 0x3FFFFFFF;
+    return _h;
+}
+
+function __gmsa_plan_goal_guess(_p, _goal) {
+    var _c = _goal.conditions;
+    var _unmet = 0;
+    for (var _i = 0; _i < _c.count; _i++) if (!__gmsa_plan_met_one(_p.state, _c, _i)) _unmet += 1;
+    return ceil(_unmet / _goal.most) * _goal.cheapest;
+}
+
+function __gmsa_plan_met_one(_state, _cond, _i) {
+    var _a = _state[_cond.fact[_i]];
+    var _b = _cond.value[_i];
+    switch (_cond.op[_i]) {
+        case gmsa_plan_op.EQ: return _a == _b;
+        case gmsa_plan_op.NE: return _a != _b;
+        case gmsa_plan_op.LT: return _a < _b;
+        case gmsa_plan_op.LE: return _a <= _b;
+        case gmsa_plan_op.GT: return _a > _b;
+        case gmsa_plan_op.GE: return _a >= _b;
+    }
+    return true;
+}
+
+function __gmsa_plan_heap_before(_p, _a, _b) {
+    var _fa = _p.__g_hf[_a];
+    var _fb = _p.__g_hf[_b];
+    if (_fa != _fb) return _fa < _fb;
+    var _ga = _p.__g_hg[_a];
+    var _gb = _p.__g_hg[_b];
+    if (_ga != _gb) return _ga > _gb;
+    return _p.__g_hn[_a] < _p.__g_hn[_b];
+}
+
+function __gmsa_plan_heap_swap(_p, _a, _b) {
+    var _t = _p.__g_hf[_a]; _p.__g_hf[_a] = _p.__g_hf[_b]; _p.__g_hf[_b] = _t;
+    _t = _p.__g_hg[_a];     _p.__g_hg[_a] = _p.__g_hg[_b]; _p.__g_hg[_b] = _t;
+    _t = _p.__g_hn[_a];     _p.__g_hn[_a] = _p.__g_hn[_b]; _p.__g_hn[_b] = _t;
+}
+
+function __gmsa_plan_heap_push(_p, _f, _g, _n) {
+    var _i = _p.__g_heap;
+    _p.__g_hf[_i] = _f;
+    _p.__g_hg[_i] = _g;
+    _p.__g_hn[_i] = _n;
+    _p.__g_heap = _i + 1;
+    while (_i > 0) {
+        var _up = (_i - 1) div 2;
+        if (!__gmsa_plan_heap_before(_p, _i, _up)) break;
+        __gmsa_plan_heap_swap(_p, _i, _up);
+        _i = _up;
+    }
+}
+
+function __gmsa_plan_heap_pop(_p) {
+    var _top = _p.__g_hn[0];
+    var _last = _p.__g_heap - 1;
+    _p.__g_heap = _last;
+    if (_last > 0) {
+        _p.__g_hf[0] = _p.__g_hf[_last];
+        _p.__g_hg[0] = _p.__g_hg[_last];
+        _p.__g_hn[0] = _p.__g_hn[_last];
+        var _i = 0;
+        while (true) {
+            var _l = _i * 2 + 1;
+            if (_l >= _last) break;
+            var _best = _l;
+            if (_l + 1 < _last && __gmsa_plan_heap_before(_p, _l + 1, _l)) _best = _l + 1;
+            if (!__gmsa_plan_heap_before(_p, _best, _i)) break;
+            __gmsa_plan_heap_swap(_p, _i, _best);
+            _i = _best;
+        }
+    }
+    return _top;
+}
+
+function __gmsa_plan_emit_goal(_p, _kind, _goal, _aux, _step, _reward) {
+    var _ls = _p.domain.listeners;
+    if (array_length(_ls) == 0) return;
+    if (_kind == gmsa_plan_report.METHOD_SUCCESS) _kind = gmsa_plan_report.GOAL_SUCCESS;
+    else if (_kind == gmsa_plan_report.METHOD_FAILURE) _kind = gmsa_plan_report.GOAL_FAILURE;
+    else if (_kind == gmsa_plan_report.METHOD_REWARD) return;
+    var _d = _p.domain;
+    var _r = _p.__report;
+    _r.kind = _kind;
+    _r.reward = _reward;
+    _r.step = _step;
+    _r.step_name = (_step >= 0) ? _d.steps[_step].name : undefined;
+    _r.task = -1;
+    _r.task_name = undefined;
+    _r.method = -1;
+    _r.method_name = undefined;
+    _r.chance = 1;
+    _r.goal = _goal;
+    _r.goal_name = _d.goals[_goal].name;
+    var _tr = _p.__plan_trace;
+    var _facts = _aux + 3 + _tr[_aux] * 2;
+    for (var _i = 0; _i < array_length(_p.state); _i++) _p.state[_i] = _tr[_facts + _i];
+    for (var _i = 0; _i < array_length(_ls); _i++) _ls[_i](_r);
 }

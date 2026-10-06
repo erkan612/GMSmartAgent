@@ -1,9 +1,9 @@
 {
   "$GMScript":"v1",
-  "%Name":"Test_Learn_LambdaMART",
+  "%Name":"Test_Plan_Goal_Search",
   "isCompatibility":false,
   "isDnD":false,
-  "name":"Test_Learn_LambdaMART",
+  "name":"Test_Plan_Goal_Search",
   "parent":{
     "name":"Tests",
     "path":"folders/Tests.yy",

@@ -5,8 +5,8 @@
   "isDnD":false,
   "name":"Test_Learn_Space",
   "parent":{
-    "name":"GMSA_Tests",
-    "path":"folders/GMSA_Tests.yy",
+    "name":"Tests",
+    "path":"folders/Tests.yy",
   },
   "resourceType":"GMScript",
   "resourceVersion":"2.0",
