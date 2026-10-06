@@ -97,7 +97,7 @@ goblins = [];
 for (var _i = 0; _i < 16; _i++) {
     var _g = {
         index : _i, world : id, team : _i div 8, vault : 0, x : 0, y : 0, inside : false, has_loot : false,
-        doing : undefined, path : [], leg : 0, timer : 0, wait : irandom(60), start : 0,
+        doing : undefined, path : [], leg : 0, timer : 0, wait : irandom(60), start : 0, came : 0,
     };
     _g.planner = gmsa_plan_planner_create((_g.team == 0) ? grey_domain : learn_domain, _g, { seed : 100 + _i });
     array_push(goblins, _g);
@@ -113,7 +113,7 @@ path_for = function(_g, _step) {
         case "enter_window": return [_v.outs[1]];
         case "dig_tunnel": return [_v.outs[2]];
         case "take_loot": return [_v.chest];
-        case "escape": return [_v.ins[0]];
+        case "escape": return [_v.ins[_g.came], _v.outs[_g.came], home]; // back out the way it came, then home
     }
     return [home];
 };
@@ -129,16 +129,13 @@ finish = function(_g, _step) {
         if (entrance_steps[_e] != _step) continue;
         if (random(1) >= _v.rules[_e * 2 + (night ? 1 : 0)]) return false;
         _g.inside = true;
+        _g.came = _e;
         _g.x = _v.ins[_e].x;
         _g.y = _v.ins[_e].y;
         return true;
     }
     if (_step == "take_loot") _g.has_loot = true;
-    if (_step == "escape") {
-        _g.inside = false;
-        _g.x = home.x + random_range(-30, 30);
-        _g.y = home.y + random_range(-60, 60);
-    }
+    if (_step == "escape") _g.inside = false;  // already walked home
     return true;
 };
 
