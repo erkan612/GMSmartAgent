@@ -1024,12 +1024,14 @@ function __gmsa_plan_goal_end(_p, _found) {
 
 function __gmsa_plan_goal_record(_p) {
     var _o = _p.__trace_top;
-    _p.__trace[_o] = 0;
+    _p.__trace[_o] = 1;
     _p.__trace[_o + 1] = _p.nodes - _p.__g_start;
     _p.__trace[_o + 2] = 1;
+    _p.__trace[_o + 3] = -1;
+    _p.__trace[_o + 4] = _p.__g_cost[_p.__g_found];
     var _nf = array_length(_p.state);
-    for (var _i = 0; _i < _nf; _i++) _p.__trace[_o + 3 + _i] = _p.__g_state[_i];
-    _p.__trace_top = _o + 3 + _nf;
+    for (var _i = 0; _i < _nf; _i++) _p.__trace[_o + 5 + _i] = _p.__g_state[_i];
+    _p.__trace_top = _o + 5 + _nf;
     return _o;
 }
 

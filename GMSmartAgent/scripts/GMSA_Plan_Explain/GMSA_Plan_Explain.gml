@@ -20,7 +20,7 @@ function gmsa_plan_lines(_planner) {
     var _depth = 0;
     for (var _i = 0; _i < _p.__run_count; _i++) {
         var _kind = _p.__run_kind[_i];
-        if (_kind == 2) {
+        if (_kind == 2 || _kind == 4) {
             _depth -= 1;
             continue;
         }
@@ -34,7 +34,8 @@ function gmsa_plan_lines(_planner) {
             array_push(_lines, _line);
             continue;
         }
-        __gmsa_plan_task_lines(_p, _i, _depth, _fresh, _lines);
+        if (_kind == 3) __gmsa_plan_goal_lines(_p, _i, _depth, _fresh, _lines);
+        else __gmsa_plan_task_lines(_p, _i, _depth, _fresh, _lines);
         _depth += 1;
     }
     return _lines;
@@ -126,6 +127,8 @@ function __gmsa_plan_failure_lines(_p, _lines) {
         var _step = _d.steps[_root.index];
         var _why = __gmsa_plan_why(_p, _step.requires, _step.check);
         array_push(_lines, __gmsa_plan_line("note", 0, _step.name + ((_why == undefined) ? " can be done, but has no target" : " can't be done: " + _why)));
+    } else if (_root.kind == 3) {
+        __gmsa_plan_goal_failure_lines(_p, _d.goals[_root.index], _lines);
     } else {
         var _task = _d.tasks[_root.index];
         array_push(_lines, __gmsa_plan_line("note", 0, _task.name + " has no method that works"));
@@ -153,8 +156,8 @@ function __gmsa_plan_why_method(_p, _method) {
     _p.undo_count = 0;
     for (var _k = 0; _k < array_length(_method.subtasks); _k++) {
         var _sub = _method.subtasks[_k];
-        if (_sub.kind == 1) {
-            _result = _d.tasks[_sub.index].name + " didn't work out";
+        if (_sub.kind == 1 || _sub.kind == 3) {
+            _result = ((_sub.kind == 1) ? _d.tasks[_sub.index].name : _d.goals[_sub.index].name) + " didn't work out";
             break;
         }
         var _step = _d.steps[_sub.index];
@@ -171,29 +174,98 @@ function __gmsa_plan_why_method(_p, _method) {
 
 function __gmsa_plan_why(_p, _cond, _check) {
     for (var _i = 0; _i < _cond.count; _i++) {
-        var _f = _cond.fact[_i];
-        var _a = _p.state[_f];
-        var _b = _cond.value[_i];
-        var _ok = true;
-        var _need = "";
-        switch (_cond.op[_i]) {
-            case gmsa_plan_op.EQ: _ok = (_a == _b); break;
-            case gmsa_plan_op.NE: _ok = (_a != _b); _need = "anything but "; break;
-            case gmsa_plan_op.LT: _ok = (_a < _b);  _need = "less than "; break;
-            case gmsa_plan_op.LE: _ok = (_a <= _b); _need = "at most "; break;
-            case gmsa_plan_op.GT: _ok = (_a > _b);  _need = "more than "; break;
-            case gmsa_plan_op.GE: _ok = (_a >= _b); _need = "at least "; break;
-        }
-        if (!_ok) {
-            return _p.domain.facts[_f].name + " is " + __gmsa_plan_value_text(_p, _f, _a)
-                + ", needs " + _need + __gmsa_plan_value_text(_p, _f, _b);
-        }
+        var _w = __gmsa_plan_why_one(_p, _cond, _i);
+        if (_w != undefined) return _w;
     }
     if (_check != undefined && !_check(_p.state)) return "its check failed";
     return undefined;
 }
 
+function __gmsa_plan_why_one(_p, _cond, _i) {
+    var _f = _cond.fact[_i];
+    var _a = _p.state[_f];
+    var _b = _cond.value[_i];
+    var _ok = true;
+    var _need = "";
+    switch (_cond.op[_i]) {
+        case gmsa_plan_op.EQ: _ok = (_a == _b); break;
+        case gmsa_plan_op.NE: _ok = (_a != _b); _need = "anything but "; break;
+        case gmsa_plan_op.LT: _ok = (_a < _b);  _need = "less than "; break;
+        case gmsa_plan_op.LE: _ok = (_a <= _b); _need = "at most "; break;
+        case gmsa_plan_op.GT: _ok = (_a > _b);  _need = "more than "; break;
+        case gmsa_plan_op.GE: _ok = (_a >= _b); _need = "at least "; break;
+    }
+    if (_ok) return undefined;
+    return _p.domain.facts[_f].name + " is " + __gmsa_plan_value_text(_p, _f, _a) + ", needs " + _need + __gmsa_plan_value_text(_p, _f, _b);
+}
+
 function __gmsa_plan_value_text(_p, _f, _v) {
     if (_p.__fact_bool[_f]) return (_v != 0) ? "true" : "false";
     return string(_v);
+}
+
+function __gmsa_plan_goal_lines(_p, _i, _depth, _fresh, _lines) {
+    var _goal = _p.domain.goals[_p.__run_index[_i]];
+    var _tr = _p.__plan_trace;
+    var _o = _p.__run_aux[_i];
+    var _steps = 0;
+    var _e = __gmsa_plan_matching_end(_p, _i);
+    for (var _j = _i + 1; _j < _e; _j++) if (_p.__run_kind[_j] == 0) _steps += 1;
+    var _text = _goal.name + ": already met";
+    if (_steps > 0) {
+        _text = _goal.name + ": " + string(_steps) + ((_steps == 1) ? " step" : " steps")
+            + ", cost " + __gmsa_plan_number_text(_tr[_o + 4]) + ", searched " + string(_tr[_o + 1]) + " nodes";
+    }
+    var _line = __gmsa_plan_line("goal", _depth, _text);
+    _line.repaired = _fresh;
+    array_push(_lines, _line);
+}
+
+function __gmsa_plan_goal_failure_lines(_p, _goal, _lines) {
+    var _out = (_p.result == gmsa_plan_result.OUT_OF_BUDGET);
+    array_push(_lines, __gmsa_plan_line("note", 0, _goal.name + (_out ? ": the search ran out of budget before finding a chain" : ": no chain of steps reaches it")));
+    var _c = _goal.conditions;
+    for (var _i = 0; _i < _c.count; _i++) {
+        if (_goal.changed[_i]) continue;
+        var _w = __gmsa_plan_why_one(_p, _c, _i);
+        if (_w != undefined) array_push(_lines, __gmsa_plan_line("reason", 0, _w + ", and none of the goal's steps changes it"));
+    }
+    if (_p.__g_count == 0) return;
+
+    // the stored state with the fewest unmet conditions, the cheapest of those
+    var _best = 0;
+    var _best_unmet = infinity;
+    for (var _n = 0; _n < _p.__g_count; _n++) {
+        __gmsa_plan_goal_load(_p, _n);
+        var _unmet = 0;
+        for (var _i = 0; _i < _c.count; _i++) if (!__gmsa_plan_met_one(_p.state, _c, _i)) _unmet += 1;
+        if (_unmet < _best_unmet || (_unmet == _best_unmet && _p.__g_cost[_n] < _p.__g_cost[_best])) {
+            _best = _n;
+            _best_unmet = _unmet;
+        }
+    }
+    var _len = _p.__g_depth[_best];
+    var _where = "where it started";
+    if (_len > 0) {
+        var _names = array_create(_len, "");
+        var _n = _best;
+        for (var _i = _len - 1; _i >= 0; _i--) {
+            _names[_i] = _p.domain.steps[_p.__g_action[_n]].name;
+            _n = _p.__g_parent[_n];
+        }
+        _where = "after ";
+        var _from = max(0, _len - 6);
+        if (_from > 0) _where += "..., ";
+        for (var _i = _from; _i < _len; _i++) _where += ((_i > _from) ? ", " : "") + _names[_i];
+    }
+    array_push(_lines, __gmsa_plan_line("reason", 0, "closest it came: " + _where));
+    __gmsa_plan_goal_load(_p, _best);
+    for (var _i = 0; _i < _c.count; _i++) {
+        var _w = __gmsa_plan_why_one(_p, _c, _i);
+        if (_w != undefined) array_push(_lines, __gmsa_plan_line("reason", 0, "still " + _w));
+    }
+}
+
+function __gmsa_plan_number_text(_v) {
+    return (frac(_v) == 0) ? string(_v) : string_format(_v, 0, 2);
 }
