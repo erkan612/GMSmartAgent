@@ -12,6 +12,7 @@ function gmsa_bench_all() {
     //__gmsa_bench_plan([10, 100]);
     __gmsa_bench_plan_slices();
 	__gmsa_bench_plan_learn();
+	__gmsa_bench_plan_goap();
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -699,4 +700,79 @@ function __gmsa_bench_plan_learn_facts(_runs) {
         }
         show_debug_message("make, " + _names[_v] + ": " + string_format(_make / _runs, 1, 1) + " us");
     }
+}
+
+function __gmsa_bench_plan_goap(_runs = 20) {
+    var _p = gmsa_plan_planner_create(__test_plan_camp_live(), __test_plan_camper());
+    var _t = __gmsa_bench_goap_make(_p, "warm", _runs);
+    show_debug_message("[GMSA Bench] goap, the camp (5 actions): " + string_format(_t, 1, 1) + " us, " + string(gmsa_plan_nodes_used(_p)) + " nodes");
+
+    // a chain to the goal, with distractions the search has to wade through
+    var _sizes = [[4, 2], [8, 4], [10, 6]];
+    var _modes = ["number costs", "cost functions", "variety 0.3"];
+    for (var _s = 0; _s < array_length(_sizes); _s++) {
+        var _chain = _sizes[_s][0];
+        var _noise = _sizes[_s][1];
+        for (var _m = 0; _m < 3; _m++) {
+            var _q = gmsa_plan_planner_create(__gmsa_bench_goap_domain(_chain, _noise, _m), {}, { budget : 20000 });
+            var _tm = __gmsa_bench_goap_make(_q, "done", _runs);
+            var _nodes = gmsa_plan_nodes_used(_q);
+            show_debug_message("[GMSA Bench] goap, chain " + string(_chain + 1) + " with " + string(_noise) + " distractions ("
+                + string(_chain + 1 + _noise) + " actions), " + _modes[_m] + ": " + string_format(_tm, 1, 1) + " us, "
+                + string(_nodes) + " nodes, " + string_format(_tm / max(1, _nodes), 1, 2) + " us per node");
+        }
+    }
+
+    // the biggest, in 1 ms slices
+    var _ps = gmsa_plan_planner_create(__gmsa_bench_goap_domain(10, 6, 0), {}, { budget : 20000, slice : 1000 });
+    var _t0 = get_timer();
+    gmsa_plan_make(_ps, "done");
+    var _dt = get_timer() - _t0;
+    var _calls = 1;
+    var _total = _dt;
+    var _worst = _dt;
+    while (gmsa_plan_get_status(_ps) == gmsa_plan_status.PLANNING && _calls < 10000) {
+        _t0 = get_timer();
+        gmsa_plan_work(_ps);
+        _dt = get_timer() - _t0;
+        _calls += 1;
+        _total += _dt;
+        _worst = max(_worst, _dt);
+    }
+    show_debug_message("[GMSA Bench] goap, the biggest in 1000 us slices: " + string_format(_total, 1, 0) + " us over "
+        + string(_calls) + " calls, worst call " + string_format(_worst, 1, 0) + " us");
+
+    // a recipe with a goal inside
+    var _pe = gmsa_plan_planner_create(__test_plan_evening(), __test_plan_evening_camper());
+    var _te = __gmsa_bench_goap_make(_pe, "dinner", _runs);
+    show_debug_message("[GMSA Bench] goap, dinner (a recipe with a goal inside): " + string_format(_te, 1, 1) + " us, " + string(gmsa_plan_nodes_used(_pe)) + " nodes");
+}
+
+function __gmsa_bench_goap_make(_p, _name, _runs) {
+    gmsa_plan_make(_p, _name); // warm up, so arrays are grown before timing
+    gmsa_plan_stop(_p);
+    var _total = 0;
+    repeat (_runs) {
+        var _t = get_timer();
+        gmsa_plan_make(_p, _name);
+        _total += get_timer() - _t;
+        gmsa_plan_stop(_p);
+    }
+    return _total / _runs;
+}
+
+function __gmsa_bench_goap_domain(_chain, _noise, _mode) {
+    var _d = gmsa_plan_domain_create("bench goap");
+    for (var _i = 0; _i <= _chain; _i++) gmsa_plan_add_fact(_d, "has_" + string(_i), function(_o) { return false; });
+    for (var _j = 0; _j < _noise; _j++) gmsa_plan_add_fact(_d, "n_" + string(_j), function(_o) { return false; });
+    var _cost = (_mode == 1) ? function(_o, _s) { return 1; } : 1;
+    for (var _i = 0; _i <= _chain; _i++) {
+        var _req = (_i == 0) ? [] : [["has_" + string(_i - 1), true]];
+        gmsa_plan_add_step(_d, "make_" + string(_i), { requires : _req, effects : [["has_" + string(_i), true]], cost : _cost });
+    }
+    for (var _j = 0; _j < _noise; _j++) {
+        gmsa_plan_add_step(_d, "fiddle_" + string(_j), { requires : [["n_" + string(_j), false]], effects : [["n_" + string(_j), true]], cost : _cost });
+    }
+    gmsa_plan_add_goal(_d, "done", { conditions : [["has_" + string(_chain), true]], variety : (_mode == 2) ? 0.3 : 0 });
+    return gmsa_plan_domain_build(_d);
 }

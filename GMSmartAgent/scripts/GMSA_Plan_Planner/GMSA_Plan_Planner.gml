@@ -54,7 +54,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         // goals: an A* search over imagined states, stored flat and found again through a hash table
         __g_active : false, __g_goal : 0, __g_undo : 0, __g_start : 0, __g_found : -1, __g_expand : -1, __g_next : 0,
         __g_count : 0, __g_state : [], __g_parent : [], __g_action : [], __g_cost : [], __g_depth : [], __g_hash : [], __g_closed : [],
-        __g_heap : 0, __g_hf : [], __g_hg : [], __g_hn : [], __g_table_node : [], __g_table_stamp : [], __g_mask : 0, __g_stamp : 0, __g_path : [], __g_vary : [],
+        __g_heap : 0, __g_hf : [], __g_hg : [], __g_hn : [], __g_table_node : [], __g_table_stamp : [], __g_mask : 0, __g_stamp : 0, __g_path : [], __g_vary : [], __g_keys : [],
     };
     _p.__report.planner = _p;
     _p.__report.state = _p.state; // filled with the facts the report is about, during the call
@@ -914,7 +914,12 @@ function __gmsa_plan_goal_begin(_p, _goal) {
         array_resize(_p.__g_table_stamp, _size);
     }
     _p.__g_mask = array_length(_p.__g_table_node) - 1;
-    _p.__g_stamp += 1;  // empties the table without clearing it
+    // one fixed odd key per fact for the hash, made once per planner
+    var _nf = array_length(_p.state);
+    if (array_length(_p.__g_keys) != _nf) {
+        for (var _i = 0; _i < _nf; _i++) _p.__g_keys[_i] = (((_i + 1) * 2654435761) & 0x3FFFFFFF) | 1;
+    }
+    _p.__g_stamp += 1; // empties the table without clearing it
     _p.__g_active = true;
     _p.__g_goal = _goal;
     _p.__g_undo = _p.undo_count; // a recipe's undo log below this mark stays untouched
@@ -988,7 +993,23 @@ function __gmsa_plan_goal_search(_p) {
             var _g = _p.__g_cost[_from] + _cost;
             var _mark = _p.undo_count;
             __gmsa_plan_apply(_p, _step.effects);
-            var _hash = __gmsa_plan_goal_hash(_p);
+            // the child's hash: the parent's, changed only where the step's effects changed a fact
+            var _hash = _p.__g_hash[_from];
+            var _eff = _step.effects;
+            var _po = _from * array_length(_p.state);
+            for (var _e = 0; _e < _eff.count; _e++) {
+                var _f = _eff.fact[_e];
+                var _dup = false;
+                for (var _q = 0; _q < _e; _q++) {
+                    if (_eff.fact[_q] == _f) {
+                        _dup = true;
+                        break;
+                    }
+                }
+                if (_dup) continue;
+                var _key = _p.__g_keys[_f];
+                _hash = (_hash + ((floor(_p.state[_f] * 1024) & 0xFFFFF) - (floor(_p.__g_state[_po + _f] * 1024) & 0xFFFFF)) * _key) & 0x3FFFFFFF;
+            }
             var _m = __gmsa_plan_goal_find(_p, _hash);
             if (_m == -1) {
                 __gmsa_plan_goal_add(_p, _goal, _from, _step.index, _g, _p.__g_depth[_from] + 1, _hash);
@@ -1053,7 +1074,7 @@ function __gmsa_plan_goal_add(_p, _goal, _parent, _action, _g, _depth, _hash) {
     _p.__g_depth[_n] = _depth;
     _p.__g_hash[_n] = _hash;
     _p.__g_closed[_n] = false;
-    var _slot = _hash & _p.__g_mask;
+    var _slot = __gmsa_plan_goal_slot(_p, _hash);
     while (_p.__g_table_stamp[_slot] == _p.__g_stamp) _slot = (_slot + 1) & _p.__g_mask;
     _p.__g_table_stamp[_slot] = _p.__g_stamp;
     _p.__g_table_node[_slot] = _n;
@@ -1063,7 +1084,7 @@ function __gmsa_plan_goal_add(_p, _goal, _parent, _action, _g, _depth, _hash) {
 
 function __gmsa_plan_goal_find(_p, _hash) {
     var _nf = array_length(_p.state);
-    var _slot = _hash & _p.__g_mask;
+    var _slot = __gmsa_plan_goal_slot(_p, _hash);
     while (_p.__g_table_stamp[_slot] == _p.__g_stamp) {
         var _m = _p.__g_table_node[_slot];
         if (_p.__g_hash[_m] == _hash) {
@@ -1089,10 +1110,15 @@ function __gmsa_plan_goal_load(_p, _n) {
 }
 
 function __gmsa_plan_goal_hash(_p) {
-    var _h = 17;
+    var _h = 0;
     var _s = _p.state;
-    for (var _i = 0; _i < array_length(_s); _i++) _h = ((_h * 31) + floor(_s[_i] * 1024)) & 0x3FFFFFFF;
+    var _k = _p.__g_keys;
+    for (var _i = 0; _i < array_length(_s); _i++) _h = (_h + (floor(_s[_i] * 1024) & 0xFFFFF) * _k[_i]) & 0x3FFFFFFF;
     return _h;
+}
+
+function __gmsa_plan_goal_slot(_p, _hash) {
+    return (_hash ^ (_hash >> 10) ^ (_hash >> 20)) & _p.__g_mask;
 }
 
 function __gmsa_plan_goal_guess(_p, _goal) {
