@@ -74,6 +74,7 @@ function gmsa_plan_add_goal(_domain, _name, _params = {}) {
         conditions : __gmsa_param(_params, "conditions", []),
         actions    : __gmsa_param(_params, "actions", undefined), // names of the steps the search may use, every step when undefined
         variety    : __gmsa_param(_params, "variety", 0),         // each search multiplies action costs by 1 to 1 + variety
+        prune      : __gmsa_param(_params, "prune", true),        // leave out steps that can't help reach the conditions
     };
     array_push(_domain.goals, _goal);
     return _goal;
@@ -182,6 +183,9 @@ function gmsa_plan_domain_build(_domain) {
                 _acts[_k] = _names[$ _an].index;
             }
         }
+        if (!is_bool(_g.prune)) throw "GMSA: plan " + _at + " prune must be true or false";
+        var _before = array_length(_acts);
+        if (_g.prune) _acts = __gmsa_plan_relevant(_steps, _acts, _cond, array_length(_domain.facts));
         var _most = 0;
         var _cheapest = infinity;
         var _changed = array_create(_cond.count, false);
@@ -200,7 +204,7 @@ function gmsa_plan_domain_build(_domain) {
             _most = max(_most, _n);
         }
         _goals[_i] = {
-            name : _g.name, index : _i, conditions : _cond, actions : _acts, variety : _g.variety,
+            name : _g.name, index : _i, conditions : _cond, actions : _acts, variety : _g.variety, pruned : _before - array_length(_acts),
             most : max(1, _most), cheapest : (_cheapest == infinity) ? 0 : _cheapest, changed : _changed,
         };
     }
@@ -333,4 +337,34 @@ function __gmsa_plan_read_facts(_domain, _owner, _holder) {
         _holder.state[_i] = _v;
         if (_bools) _holder.__fact_bool[_i] = _is_bool;
     }
+}
+
+function __gmsa_plan_relevant(_steps, _acts, _cond, _nf) {
+    var _fact = array_create(_nf, false);
+    for (var _c = 0; _c < _cond.count; _c++) _fact[_cond.fact[_c]] = true;
+    var _n = array_length(_acts);
+    var _keep = array_create(_n, false);
+    var _grew = true;
+    while (_grew) {
+        _grew = false;
+        for (var _a = 0; _a < _n; _a++) {
+            if (_keep[_a]) continue;
+            var _st = _steps[_acts[_a]];
+            var _helps = false;
+            for (var _e = 0; _e < _st.effects.count; _e++) {
+                if (_fact[_st.effects.fact[_e]]) {
+                    _helps = true;
+                    break;
+                }
+            }
+            if (!_helps) continue;
+            if (_st.check != undefined) return _acts;
+            _keep[_a] = true;
+            _grew = true;
+            for (var _r = 0; _r < _st.requires.count; _r++) _fact[_st.requires.fact[_r]] = true;
+        }
+    }
+    var _out = [];
+    for (var _a = 0; _a < _n; _a++) if (_keep[_a]) array_push(_out, _acts[_a]);
+    return _out;
 }

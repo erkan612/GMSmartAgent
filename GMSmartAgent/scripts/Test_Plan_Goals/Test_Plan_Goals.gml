@@ -43,11 +43,11 @@ function test_plan_goals() {
             gmsa_test_assert_equal(_d.goals[_d.lookup[$ "warm"].index].cheapest, 0);
         });
 
-        gmsa_test_case("a goal's actions: a list limits them, conditions no action changes are marked", function() {
+        gmsa_test_case("a goal's actions: a list limits them, pruning drops what can't help", function() {
             var _d = __test_plan_camp(["get_axe"]);
             var _warm = _d.goals[_d.lookup[$ "warm"].index];
-            gmsa_test_assert_equal(array_length(_warm.actions), 1);
-            gmsa_test_assert_equal(_warm.actions[0], _d.lookup[$ "get_axe"].index);
+            gmsa_test_assert_equal(array_length(_warm.actions), 0, "an axe alone never lights a fire");
+            gmsa_test_assert_equal(_warm.pruned, 1);
             gmsa_test_assert_false(_warm.changed[0], "nothing get_axe does lights a fire");
             gmsa_test_assert_equal(_warm.most, 1, "never below 1");
         });
@@ -101,6 +101,58 @@ function test_plan_goals() {
             var _d = __test_plan_camp(undefined);
             gmsa_test_assert_throws(method({ d : _d }, function() { gmsa_plan_add_goal(d, "late", { conditions : [["fire", true]] }); }));
         });
+		
+        gmsa_test_case("pruning keeps every step a chain needs, through requires", function() {
+            var _d = __test_plan_camp(undefined);
+            gmsa_test_assert_equal(_d.goals[_d.lookup[$ "warm"].index].pruned, 0, "the axe and the walk are needed by chop, chop by the fire");
+        });
+
+        gmsa_test_case("pruning drops steps that change nothing the goal needs", function() {
+            var _d = __test_plan_distracted(true, false);
+            var _goal = _d.goals[_d.lookup[$ "warm"].index];
+            gmsa_test_assert_equal(_goal.pruned, 2, "whistle and stretch");
+            var _p = gmsa_plan_planner_create(_d, {});
+            gmsa_plan_make(_p, "warm");
+            gmsa_test_assert_equal(__test_plan_names(_p), "gather,light");
+        });
+
+        gmsa_test_case("prune false keeps every step", function() {
+            var _d = __test_plan_distracted(false, false);
+            gmsa_test_assert_equal(_d.goals[_d.lookup[$ "warm"].index].pruned, 0);
+        });
+
+        gmsa_test_case("a relevant step with a check: pruning steps aside for that goal", function() {
+            var _d = __test_plan_distracted(true, true);
+            gmsa_test_assert_equal(_d.goals[_d.lookup[$ "warm"].index].pruned, 0);
+        });
+
+        gmsa_test_case("a step that only lowers costs: pruned by default, used with prune false", function() {
+            var _make = function(_prune) {
+                var _d = gmsa_plan_domain_create("shoes");
+                gmsa_plan_add_fact(_d, "shoes", function(_o) { return false; });
+                gmsa_plan_add_fact(_d, "there", function(_o) { return false; });
+                gmsa_plan_add_step(_d, "put_on_shoes", { effects : [["shoes", true]], cost : 1 });
+                gmsa_plan_add_step(_d, "walk", { effects : [["there", true]], cost : function(_o, _s) { return _s[0] ? 2 : 10; } });
+                gmsa_plan_add_goal(_d, "arrive", { conditions : [["there", true]], prune : _prune });
+                return gmsa_plan_domain_build(_d);
+            };
+            var _p = gmsa_plan_planner_create(_make(true), {});
+            gmsa_plan_make(_p, "arrive");
+            gmsa_test_assert_equal(__test_plan_names(_p), "walk", "the shoes are pruned, walking barefoot costs 10");
+            var _q = gmsa_plan_planner_create(_make(false), {});
+            gmsa_plan_make(_q, "arrive");
+            gmsa_test_assert_equal(__test_plan_names(_q), "put_on_shoes,walk", "1 + 2 beats 10");
+        });
+
+        gmsa_test_case("prune must be true or false", function() {
+            gmsa_test_assert_throws(function() {
+                var _d = gmsa_plan_domain_create("bad prune");
+                gmsa_plan_add_fact(_d, "fire", function(_o) { return false; });
+                gmsa_plan_add_step(_d, "light", { effects : [["fire", true]] });
+                gmsa_plan_add_goal(_d, "warm", { conditions : [["fire", true]], prune : 1 });
+                gmsa_plan_domain_build(_d);
+            });
+        });
     });
 }
 
@@ -119,5 +171,21 @@ function __test_plan_camp(_actions) {
     if (_actions != undefined) _warm.actions = _actions;
     gmsa_plan_add_goal(_d, "warm", _warm);
     gmsa_plan_add_goal(_d, "ready", { conditions : [["has_axe", true], ["at_tree", true]] });
+    return gmsa_plan_domain_build(_d);
+}
+
+function __test_plan_distracted(_prune, _check) {
+    var _d = gmsa_plan_domain_create("distracted");
+    gmsa_plan_add_fact(_d, "wood", function(_o) { return false; });
+    gmsa_plan_add_fact(_d, "fire", function(_o) { return false; });
+    gmsa_plan_add_fact(_d, "tune", function(_o) { return false; });
+    gmsa_plan_add_fact(_d, "limber", function(_o) { return false; });
+    gmsa_plan_add_step(_d, "gather", { effects : [["wood", true]] });
+    var _light = { requires : [["wood", true]], effects : [["fire", true]] };
+    if (_check) _light.check = function(_s) { return true; };
+    gmsa_plan_add_step(_d, "light", _light);
+    gmsa_plan_add_step(_d, "whistle", { effects : [["tune", true]] });
+    gmsa_plan_add_step(_d, "stretch", { effects : [["limber", true]] });
+    gmsa_plan_add_goal(_d, "warm", { conditions : [["fire", true]], prune : _prune });
     return gmsa_plan_domain_build(_d);
 }
