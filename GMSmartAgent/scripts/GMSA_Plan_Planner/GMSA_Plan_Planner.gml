@@ -417,7 +417,7 @@ function __gmsa_plan_after_search(_p, _r) {
         _p.status = gmsa_plan_status.FAILED;
         return false;
     }
-    __gmsa_plan_splice(_p, 0, -1);
+    __gmsa_plan_adopt(_p);
     __gmsa_plan_settle(_p, false, _p.__paused_once);
     return _p.status != gmsa_plan_status.FAILED;
 }
@@ -532,6 +532,19 @@ function __gmsa_plan_splice(_p, _s, _e) {
     _p.__run_steps = 0;
     for (var _i = 0; _i < _p.__run_count; _i++) if (_p.__run_kind[_i] == 0) _p.__run_steps += 1;
     return true;
+}
+
+function __gmsa_plan_adopt(_p) {
+    var _a = _p.__run_kind;   _p.__run_kind = _p.__out_kind;     _p.__out_kind = _a;
+    _a = _p.__run_index;      _p.__run_index = _p.__out_index;   _p.__out_index = _a;
+    _a = _p.__run_method;     _p.__run_method = _p.__out_method; _p.__out_method = _a;
+    _a = _p.__run_aux;        _p.__run_aux = _p.__out_aux;       _p.__out_aux = _a;
+    _a = _p.__plan_trace;     _p.__plan_trace = _p.__trace;      _p.__trace = _a;  // explain records travel with their plan
+    _p.__run_count = _p.__out_count;
+    _p.__plan_trace_top = _p.__trace_top;
+    _p.at = 0;
+    _p.__run_steps = 0;
+    for (var _i = 0; _i < _p.__run_count; _i++) if (_p.__run_kind[_i] == 0) _p.__run_steps += 1;
 }
 
 function __gmsa_plan_repair(_p, _b) {

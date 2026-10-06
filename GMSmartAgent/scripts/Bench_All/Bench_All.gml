@@ -10,6 +10,7 @@ function gmsa_bench_all() {
     __gmsa_bench_lambdamart_train([100, 500], 2000);
     __gmsa_bench_outcomes([3, 10]);
     __gmsa_bench_plan([10, 100]);
+    __gmsa_bench_plan_slices();
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -477,4 +478,77 @@ function __gmsa_bench_plan(_lengths) {
     var _explain = (get_timer() - _t) / _n;
     __gmsa_bench_line("plan, refresh: repairing a broken task " + string_format(_repair / _n, 1, 1)
         + " us, nothing broken " + string_format(_fine, 1, 1) + " us, explain " + string_format(_explain, 1, 1) + " us");
+}
+
+function __gmsa_bench_plan_slices() {
+    // scheduled planners with nothing to plan: what each scheduler step costs
+    var _counts = [12, 100];
+    var _coins = __test_plan_slice_coins();
+    for (var _c = 0; _c < array_length(_counts); _c++) {
+        var _s = gmsa_scheduler_create(2000);
+        repeat (_counts[_c]) gmsa_plan_schedule(gmsa_plan_planner_create(_coins, { coins : 3 }), _s);
+        var _n = 1000;
+        var _t = get_timer();
+        repeat (_n) gmsa_scheduler_step(_s);
+        __gmsa_bench_line("plan, " + string(_counts[_c]) + " idle scheduled planners: "
+            + string_format((get_timer() - _t) / _n, 1, 1) + " us per scheduler step");
+    }
+
+    // the same 101 step plan in one call, and in 200 us slices
+    var _n = 50;
+    var _whole = gmsa_plan_planner_create(_coins, { coins : 100 }, { depth : 128 });
+    var _t = get_timer();
+    repeat (_n) gmsa_plan_make(_whole, "grab_all");
+    var _one = (get_timer() - _t) / _n;
+    var _sliced = gmsa_plan_planner_create(_coins, { coins : 100 }, { depth : 128, slice : 200 });
+    var _calls = 0;
+    var _worst = 0;
+    _t = get_timer();
+    repeat (_n) {
+        var _t1 = get_timer();
+        gmsa_plan_make(_sliced, "grab_all");
+        _worst = max(_worst, get_timer() - _t1);
+        _calls++;
+        while (gmsa_plan_get_status(_sliced) == gmsa_plan_status.PLANNING) {
+            _t1 = get_timer();
+            gmsa_plan_work(_sliced);
+            _worst = max(_worst, get_timer() - _t1);
+            _calls++;
+        }
+    }
+    __gmsa_bench_line("plan, 101 steps: one call " + string_format(_one, 1, 1) + " us, in 200 us slices "
+        + string_format((get_timer() - _t) / _n, 1, 1) + " us over " + string_format(_calls / _n, 1, 1)
+        + " calls, worst call " + string(round(_worst)) + " us");
+
+    // twelve planners asking at once, each plan about 100 nodes, on one scheduler
+    var _vault = __test_plan_vault(true);
+    var _budgets = [100, 200, 500, 1000, 2000];
+    for (var _b = 0; _b < array_length(_budgets); _b++) {
+        var _budget = _budgets[_b];
+        var _s = gmsa_scheduler_create(_budget);
+        var _planners = [];
+        repeat (12) {
+            var _p = gmsa_plan_planner_create(_vault, { ready : true });
+            gmsa_plan_schedule(_p, _s);
+            gmsa_plan_make(_p, "heist");
+            array_push(_planners, _p);
+        }
+        var _steps = 0;
+        var _worst_step = 0;
+        var _busy = true;
+        while (_busy && _steps < 100000) {
+            gmsa_scheduler_step(_s);
+            _worst_step = max(_worst_step, _s.stats.time);
+            _steps++;
+            _busy = false;
+            for (var _i = 0; _i < 12; _i++) {
+                if (gmsa_plan_get_status(_planners[_i]) == gmsa_plan_status.PLANNING) {
+                    _busy = true;
+                    break;
+                }
+            }
+        }
+        __gmsa_bench_line("plan, 12 planners at once, budget " + string(_budget) + " us: ready after " + string(_steps)
+            + " steps, worst step " + string(round(_worst_step)) + " us (over by " + string(round(max(0, _worst_step - _budget))) + " us)");
+    }
 }
