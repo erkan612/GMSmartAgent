@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"Test_Plan_Goal_Mixed",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"Test_Plan_Goal_Mixed",
+  "parent":{
+    "name":"Tests",
+    "path":"folders/Tests.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

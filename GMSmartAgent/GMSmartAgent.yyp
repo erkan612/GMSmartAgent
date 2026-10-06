@@ -114,6 +114,7 @@
     {"id":{"name":"Test_Plan_Choice","path":"scripts/Test_Plan_Choice/Test_Plan_Choice.yy",},},
     {"id":{"name":"Test_Plan_Domain","path":"scripts/Test_Plan_Domain/Test_Plan_Domain.yy",},},
     {"id":{"name":"Test_Plan_Explain","path":"scripts/Test_Plan_Explain/Test_Plan_Explain.yy",},},
+    {"id":{"name":"Test_Plan_Goal_Mixed","path":"scripts/Test_Plan_Goal_Mixed/Test_Plan_Goal_Mixed.yy",},},
     {"id":{"name":"Test_Plan_Goal_Search","path":"scripts/Test_Plan_Goal_Search/Test_Plan_Goal_Search.yy",},},
     {"id":{"name":"Test_Plan_Goals","path":"scripts/Test_Plan_Goals/Test_Plan_Goals.yy",},},
     {"id":{"name":"Test_Plan_Lines","path":"scripts/Test_Plan_Lines/Test_Plan_Lines.yy",},},
