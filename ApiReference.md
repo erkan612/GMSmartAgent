@@ -121,6 +121,7 @@ Where a planner's plan is, see [Plan](#plan).
 | Element | Meaning |
 | --- | --- |
 | `gmsa_plan_status.IDLE` | No plan, before the first `gmsa_plan_make` or after `gmsa_plan_stop` |
+| `gmsa_plan_status.PLANNING` | A plan is being made or repaired across frames, see [Planning across frames](#planning-across-frames) |
 | `gmsa_plan_status.RUNNING` | A plan is running, `gmsa_plan_current` is the step to do |
 | `gmsa_plan_status.DONE` | Every step of the plan is done |
 | `gmsa_plan_status.FAILED` | No plan was found, or the plan broke and couldn't be repaired |
@@ -572,7 +573,7 @@ gmsa_observe(player_agent, [
 
 ## Scheduler
 
-A scheduler runs agent thinks within a time budget per step. You create schedulers yourself, there's no global one.
+A scheduler runs agent thinks within a time budget per step. Other work can share that budget, such as planners making plans, see [gmsa_scheduler_add_work](#gmsa_scheduler_add_work). You create schedulers yourself, there's no global one.
 
 ### gmsa_scheduler_create
 
@@ -624,17 +625,45 @@ Changes an agent's priority and moves it to the matching tier, at the end of tha
 
 **Returns** false if the agent isn't in this scheduler.
 
+### gmsa_scheduler_add_work
+
+```gml
+gmsa_scheduler_add_work(scheduler, work, [priority]) -> work
+```
+
+Adds work that shares the scheduler's budget with the agents. `work` is any struct with a `work(budget)` method: it's called with the microseconds it may use, and returns true when it did something, false when it had nothing to do. `gmsa_plan_schedule` uses this for planners, and your own long jobs can use it too.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `priority` | real | 0 | Tier, shared with agents of the same priority |
+
+- Within a tier, agents and work take turns: each think is followed by one work turn while there's work to do, then whatever budget the agents leave goes to work, a turn at a time.
+- Work items take turns among themselves, the next step continues where this one stopped.
+- When a pass finds no work item with anything to do, the tier skips work for the rest of the step. Idle work costs one call per item per step.
+- A tier without work runs exactly as before, so schedulers without work pay nothing for this.
+- Respect the budget you're given, the scheduler can't stop a call that runs long.
+
+**Throws** when `work` has no callable `work` method, is already in a scheduler, or `priority` isn't a number.
+
+### gmsa_scheduler_remove_work
+
+```gml
+gmsa_scheduler_remove_work(scheduler, work) -> bool
+```
+
+Removes work. **Returns** false if it wasn't in this scheduler.
+
 ### gmsa_scheduler_step
 
 ```gml
 gmsa_scheduler_step(scheduler) -> integer
 ```
 
-Runs due agents until the budget is spent, then fires queued `on_decide` callbacks. Call it once per step.
+Runs due agents, and work turns, until the budget is spent, then fires queued `on_decide` callbacks. Call it once per step.
 
 - Tiers run highest priority first. Within a tier, agents take turns, and the next step continues where this one stopped.
 - An agent is due when it has never thought, or when `interval` has passed since its last think.
-- The clock is checked before every think except the first, so **every step thinks at least once** when an agent is due, even with a budget of 0. A step can overshoot the budget by at most one think.
+- The clock is checked before every think and work turn except the first, so **every step does at least one** when an agent is due or work is waiting, even with a budget of 0. A step can overshoot the budget by at most one think or one work turn's overrun.
 - Every think in a step uses the same time, read once at the start.
 - `on_decide` callbacks run after the timed loop, so your code never eats into the budget, and a callback can safely remove agents.
 
@@ -645,6 +674,7 @@ Statistics of the last step are in `scheduler.stats`:
 | Field | Meaning |
 | --- | --- |
 | `thinks` | Thinks run |
+| `works` | Work turns that did something |
 | `time` | Microseconds spent, callbacks excluded |
 | `stopped` | True if the budget ran out before every due agent thought |
 
@@ -654,7 +684,7 @@ Statistics of the last step are in `scheduler.stats`:
 gmsa_scheduler_count(scheduler) -> integer
 ```
 
-**Returns** the number of agents in the scheduler.
+**Returns** the number of agents in the scheduler. Work items aren't counted.
 
 ### gmsa_scheduler_set_budget
 
@@ -753,6 +783,35 @@ gmsa_debug_draw(decision, x, y, [max], [namer]) -> real
 Draws the lines at `x, y`, the chosen option in green, followed by any invariant violations in red. Restores the draw colour afterwards. Call it in a Draw or Draw GUI event.
 
 **Returns** the height drawn, so several agents can be stacked.
+
+### gmsa_debug_draw_tree
+
+```gml
+gmsa_debug_draw_tree(lines, x, y, [max]) -> real
+```
+
+Draws a tree of lines at `x, y`, such as the plan tree from [gmsa_plan_lines](#gmsa_plan_lines):
+
+```gml
+// Draw GUI
+gmsa_debug_draw_tree(gmsa_plan_lines(planner), 10, 300);
+```
+
+`lines` is an array of structs with `kind`, `depth` and `text`, optionally `repaired` and `progress`. Debug takes plain lines, not a planner, so it never needs the Plan module and anything that produces lines in this shape can be drawn.
+
+| Kind | Drawn |
+| --- | --- |
+| `"current"` | Green, with `>` before it |
+| `"done"` | Gray, ending in ", done" |
+| `"skipped"`, `"reason"` | Orange |
+| anything else | White |
+
+- `depth` indents by two spaces per level, and every tree line keeps a two character slot before its text, so the `>` never shifts the indentation.
+- `repaired` lines get a faint yellow band behind them.
+- `progress`, 0 to 1, draws a thin bar under the line.
+- Up to `max` lines (default 40), then a line counting the rest. Restores the draw colour and alpha afterwards.
+
+**Returns** the height drawn.
 
 ---
 
@@ -1579,6 +1638,8 @@ switch (gmsa_plan_current(planner)) {
 5. **Refresh** with `gmsa_plan_refresh` when the world changes under a step (the player took the key). The plan repairs itself.
 6. **Stop** with `gmsa_plan_stop` when the agent wants something else.
 
+Plans are made at once by default. For large domains or many planners, they can be made across frames, see [Planning across frames](#planning-across-frames).
+
 ### Working with utility
 
 Utility picks the goal, the game asks for the plan. Core never knows Plan exists, the bridge is one call in your code:
@@ -1723,8 +1784,10 @@ gmsa_plan_planner_create(domain, owner, [params]) -> planner
 | `budget` | integer | 250 | Nodes one planning call may use, see [What planning costs](#what-planning-costs) |
 | `depth` | integer | 32 | How deep tasks may nest, the cap for tasks that use themselves |
 | `retries` | integer | 3 | Failed steps in a row before the plan fails. A done step resets the count |
+| `slice` | real | undefined | Microseconds of planning per call. Undefined plans at once. See [Planning across frames](#planning-across-frames) |
+| `clock` | function | `get_timer` | Time source returning microseconds, used only when planning in slices. Tests pass a fake clock |
 
-**Throws** when the domain isn't built or a param is out of range.
+**Throws** when the domain isn't built, a param is out of range, `slice` isn't above 0 or `clock` isn't callable.
 
 ### gmsa_plan_make
 
@@ -1732,7 +1795,11 @@ gmsa_plan_planner_create(domain, owner, [params]) -> planner
 gmsa_plan_make(planner, name) -> bool
 ```
 
-Reads the facts, plans the named task (or a single step) and starts the plan, replacing whatever was running. **Returns** true when the plan started. When it didn't, `gmsa_plan_last_result` and `gmsa_plan_explain` say why.
+Reads the facts, plans the named task (or a single step) and starts the plan, replacing whatever was running, or a plan being made. **Returns** true when the plan started or is being made, false when planning already failed. When it fails, `gmsa_plan_last_result` and `gmsa_plan_explain` say why.
+
+- Without a slice, the whole plan is made in this call.
+- With a slice, this call plans for one slice. A plan that isn't ready yet leaves the status `PLANNING`, and `gmsa_plan_work` carries on.
+- A scheduled planner only reads the facts here, the scheduler makes the plan.
 
 **Throws** when the domain has no step or task with that name.
 
@@ -1758,7 +1825,7 @@ The target picked for the current step, undefined when the step has no targets o
 gmsa_plan_step_done(planner) -> gmsa_plan_status
 ```
 
-The current step is finished. The facts are read again and the rest of the plan is checked against them, a broken plan is repaired. **Returns** the new status. Does nothing when no plan is running, so a late report after `gmsa_plan_stop` is harmless.
+The current step is finished. The facts are read again and the rest of the plan is checked against them, a broken plan is repaired. **Returns** the new status, `PLANNING` when a sliced or scheduled planner needs more time for the repair. Does nothing unless a plan is running, so a late report after `gmsa_plan_stop` is harmless.
 
 ### gmsa_plan_step_failed
 
@@ -1766,7 +1833,7 @@ The current step is finished. The facts are read again and the rest of the plan 
 gmsa_plan_step_failed(planner) -> gmsa_plan_status
 ```
 
-The current step couldn't be done. The smallest task around it is planned again from the real facts. Each failure in a row uses one retry. **Returns** the new status.
+The current step couldn't be done. The smallest task around it is planned again from the real facts. Each failure in a row uses one retry. **Returns** the new status, possibly `PLANNING`.
 
 ### gmsa_plan_refresh
 
@@ -1774,7 +1841,7 @@ The current step couldn't be done. The smallest task around it is planned again 
 gmsa_plan_refresh(planner) -> gmsa_plan_status
 ```
 
-Reads the facts now and repairs the plan if they broke it. Call it when something changed during a step, such as the player taking the key the goblin is walking to. Facts that changed without breaking the plan change nothing. **Returns** the status.
+Reads the facts now and repairs the plan if they broke it. Call it when something changed during a step, such as the player taking the key the goblin is walking to. Facts that changed without breaking the plan change nothing. **Returns** the status, possibly `PLANNING`.
 
 ### gmsa_plan_stop
 
@@ -1782,7 +1849,7 @@ Reads the facts now and repairs the plan if they broke it. Call it when somethin
 gmsa_plan_stop(planner)
 ```
 
-Drops the plan. The status becomes `IDLE`.
+Drops the plan, or the plan being made or repaired. The status becomes `IDLE`.
 
 ### gmsa_plan_get_status
 
@@ -1830,6 +1897,52 @@ gmsa_plan_nodes_used(planner) -> integer
 
 Nodes the last planning call used, for tuning the budget.
 
+### gmsa_plan_work
+
+```gml
+gmsa_plan_work(planner, [budget]) -> gmsa_plan_status
+```
+
+Carries on making or repairing a plan for up to `budget` microseconds, the planner's `slice` by default. Does nothing unless the status is `PLANNING`. Every call makes progress, even with a tiny budget. **Returns** the new status.
+
+**Throws** when `budget` isn't above 0.
+
+### gmsa_plan_schedule
+
+```gml
+gmsa_plan_schedule(planner, scheduler, [priority]) -> planner
+```
+
+The scheduler makes and repairs this planner's plans inside its budget, taking turns with the agents, see [gmsa_scheduler_add_work](#gmsa_scheduler_add_work). Your own calls (`gmsa_plan_make`, `gmsa_plan_step_done`, ...) still read facts and check the plan, but never search: when planning is needed they return `PLANNING` and the scheduler carries on. The planner's `slice`, when set, caps each of its turns.
+
+**Throws** when the planner is already scheduled.
+
+### gmsa_plan_unschedule
+
+```gml
+gmsa_plan_unschedule(planner) -> bool
+```
+
+Takes the planner out of its scheduler, it plans inside your calls again. **Returns** false when it wasn't scheduled.
+
+### gmsa_plan_lines
+
+```gml
+gmsa_plan_lines(planner) -> array
+```
+
+The plan as data, one struct per line, for your own UI or [gmsa_debug_draw_tree](#gmsa_debug_draw_tree). `gmsa_plan_explain` is these lines as text.
+
+| Field | Description |
+| --- | --- |
+| `kind` | `"title"`, `"note"`, `"reason"`, `"task"`, `"skipped"`, `"step"`, `"done"` or `"current"` |
+| `depth` | Nesting, 0 at the top |
+| `text` | The name or sentence, without indentation or markers |
+| `repaired` | True for what the last repair put in, until the next step is done |
+| `progress` | On the title while planning, 0 to 1 of the node budget. Undefined otherwise |
+
+A new array each call: meant for debugging and UI, not for every agent every frame.
+
 ### gmsa_plan_explain
 
 ```gml
@@ -1850,7 +1963,7 @@ loot_chest (running, step 2 of 3)
 
 Reasons are judged on the facts as they were when that task was planned. A skipped method shows its first failing condition, otherwise its first step that couldn't be done, otherwise that the rest of the plan didn't work with it. Methods ruled out by a score of 0 are listed as such, and the chosen method shows its score when the task has scored methods.
 
-When no plan was found, it lists each of the goal's methods with its reason instead.
+When no plan was found, it lists each of the goal's methods with its reason instead. While planning, it's the title only, such as `loot_chest (planning, 140 of 250 nodes)`.
 
 ### Method order
 
@@ -1883,6 +1996,33 @@ Before each step the planner reads the facts again and checks the rest of the pl
 
 Repairs share one budget per call. `gmsa_plan_make` plans from scratch instead, which can pick a better plan than the one being repaired.
 
+### Planning across frames
+
+A plan that needs hundreds of nodes, or a room where many goblins plan at once, can cost more than a frame should. Two ways to spread it out, both giving exactly the same plan, node for node, as planning at once:
+
+**Slices.** Give the planner a `slice` and call `gmsa_plan_work` each step while it's planning:
+
+```gml
+planner = gmsa_plan_planner_create(global.goblin_domain, id, { slice : 300 });  // 0.3 ms per call
+
+// Step
+if (gmsa_plan_get_status(planner) == gmsa_plan_status.PLANNING) gmsa_plan_work(planner);
+```
+
+**The scheduler.** Schedule the planner, and the scheduler you already step every frame makes its plans inside its budget, taking turns with the agents:
+
+```gml
+gmsa_plan_schedule(planner, global.scheduler);
+```
+
+While a plan is being made or repaired:
+
+- The status is `PLANNING`, `gmsa_plan_current` is undefined, and reports such as `gmsa_plan_step_done` are ignored. Keep the goblin idle, or doing what it was doing.
+- The facts were read when planning started. A plan made over several calls is checked against fresh facts before it starts, and repaired if the world moved on.
+- The node `budget` still caps the whole plan. The time slice only decides how much happens per call.
+
+What isn't sliced: the node a call has already started, and finishing a plan (checking it against fresh facts and picking the first target, about 5 us per step of the plan). A call can therefore go over its slice by a few tens of microseconds for typical plans.
+
 ### Targets
 
 A step with a `targets` callback asks your game for candidates when it becomes current, never while planning:
@@ -1908,22 +2048,26 @@ gmsa_plan_add_step(_d, "grab_coin", {
 
 | Measure | VM |
 | --- | --- |
-| Making an 11 step plan | 425 us, 23 nodes |
-| Making a 101 step plan | 3.8 ms, 203 nodes |
-| Backtracking through 19 wrong methods | 898 us, 98 nodes |
-| One node | about 9 us of search, about 18 us counting make's fixed work |
+| Making an 11 step plan | 329 us, 23 nodes |
+| Making a 101 step plan | 2.7 ms, 203 nodes |
+| Backtracking through 19 wrong methods | 879 us, 98 nodes |
+| One node | about 9 us of search, about 13 us counting make's fixed work |
 | `gmsa_plan_step_done` | about 5 us per step left in the plan |
-| `gmsa_plan_refresh` | 96 us with a repair, 16 us with nothing broken |
-| `gmsa_plan_explain`, 4 step plan | 41 us |
+| `gmsa_plan_refresh` | 100 us with a repair, 16 us with nothing broken |
+| `gmsa_plan_explain`, 4 step plan | 71 us |
+| The 101 step plan in 200 us slices | 3.3 ms over 13 calls, about 20% more in total, worst call 1.1 ms (finishing the long plan) |
+| Idle scheduled planners | about 0.7 us each per scheduler step |
+| 12 planners asking at once, about 100 nodes each | ready after 117 steps at a 100 us budget, 24 at 500 us, 7 at 2000 us |
+| Scheduler steps with planning | over the budget by 22 to 37 us, at every budget |
 
-The default budget of 250 nodes keeps a hopeless search to a few milliseconds on the VM, many times what typical domains use. Raise it for large domains. Game plans usually have under 20 steps, where every running call stays well under 0.1 ms.
+The default budget of 250 nodes keeps a hopeless search to a few milliseconds on the VM, many times what typical domains use. Raise it for large domains, and plan across frames when a plan costs more than a frame can spare. Game plans usually have under 20 steps, where every running call stays well under 0.1 ms. Schedule planners for agents that may plan, hundreds of idle scheduled planners add up.
 
 ### Planner fields
 
 | Field | Description |
 | --- | --- |
 | `domain`, `owner` | As given to `gmsa_plan_planner_create` |
-| `budget`, `depth`, `retries` | Settings |
+| `budget`, `depth`, `retries`, `slice`, `clock` | Settings |
 | `goal` | The name given to the last `gmsa_plan_make` |
 | `status`, `result` | `gmsa_plan_status` and `gmsa_plan_result` |
 | `nodes` | Nodes the last planning call used |
@@ -2168,6 +2312,7 @@ See [Planner fields](#planner-fields) in Plan.
 | Plan step `targets` | `function(owner)` | Array of targets |
 | Plan step `score` | `function(owner, target)` | A number, 0 or less rules the target out |
 | Plan method `score` | `function(owner, state)` | A number, 0 or less rules the method out |
+| Scheduler work `work` | `function(budget)` | True when it did something, false when it had nothing to do |
 
 Custom model methods run with the model as `self`, see [gmsa_learn_custom](#gmsa_learn_custom).
 

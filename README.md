@@ -34,6 +34,7 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 ### Scale
 - **Frame budget** - A time budget per step in microseconds, so frame rate stays stable no matter how many agents you add
 - **Priority tiers** - Important agents think first, background agents use what's left
+- **Shared work** - Planning and your own long jobs can take turns with the agents inside the same budget
 - **Per-agent intervals** - Slow-witted enemies think less often, sharp ones more often
 - **Shared profiles** - One profile, thousands of agents, only per-agent state is duplicated
 ### Observation
@@ -68,10 +69,12 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **Self-repairing plans** - Before each step the facts are read again, and a broken plan is replanned from the smallest task around the break, keeping the rest
 - **Scored recipes** - Let the situation choose between "steal the key" and "buy the key"
 - **Targets per step** - Your game offers candidates when a step starts, scoring picks the best one
-- **Bounded cost** - A node budget per planning call and a depth cap for tasks that use themselves
-- **Explain** - The plan as a tree, with the reason every skipped recipe didn't work
+- **Bounded cost** - A node budget per plan and a depth cap for tasks that use themselves
+- **Planning across frames** - Large plans and many planners spread over several frames, in slices or inside the scheduler budget, giving exactly the same plan as planning at once
+- **Explain** - The plan as a tree, as text or as data for your own UI, with the reason every skipped recipe didn't work
 ### Developer Tools
 - **Debug view** - Ranked options with scores, probabilities and every consideration's value, drawn or as text, with the designer's score shown wherever learning changed it
+- **Plan tree view** - A drawn plan tree: the current step, the done ones, skipped recipes with their reasons, what the last repair changed, and progress while a plan is being made
 - **Test module** - Assertions, a runner, stubs, a fake clock, and scenario tests to lock in your profile tuning
 - **Invariant checks** - Catch broken decisions while you tune
 - **Deterministic** - Own seedable random generator, never touches GameMaker's global random sequence
@@ -102,6 +105,7 @@ goal (a task)
    -> backtracking to the next method when something can't be done
    -> a plan, handed to you one step at a time
    -> facts read again before each step, broken parts replanned
+   (planning can be spread over several frames, inside the scheduler budget)
 ```
 
 ---
@@ -334,6 +338,15 @@ loot_chest (running, step 1 of 2)
     open_chest
 ```
 
+When many goblins plan at once, let the scheduler do it inside the AI budget you already have. The plans are the same, they just arrive over a few frames instead of all in one:
+
+```gml
+gmsa_plan_schedule(planner, global.ai);
+
+// Draw GUI: the plan as a drawn tree
+gmsa_debug_draw_tree(gmsa_plan_lines(planner), 10, 300);
+```
+
 ---
  
 ## Performance
@@ -365,7 +378,7 @@ Learning models add their own cost to every re-ranked think, at 3 options:
 
 LambdaMART trains inside a budget you set, with a measured overshoot under 130 us at 2 ms. Learning from outcomes costs about 25 us per reported result with Count, Linear or LambdaMART, and about 180 us with RankNet. The [API Reference](ApiReference.md#what-models-cost) has the full table.
 
-Planning costs about 9 to 18 us per node searched. A plan of around ten steps takes about 0.4 ms to make, and each step after that about 30 us to check and hand over. The default budget of 250 nodes keeps a hopeless search to a few milliseconds. See [What planning costs](ApiReference.md#what-planning-costs).
+Planning costs about 9 to 13 us per node searched. A plan of around ten steps takes about 0.3 ms to make, and each step after that about 30 us to check and hand over. The default budget of 250 nodes keeps a hopeless search to a few milliseconds. Scheduled planners make their plans inside the scheduler budget, going over it by under 40 us, and cost about 0.7 us per step while idle. See [What planning costs](ApiReference.md#what-planning-costs).
 
 Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents or heavier models slows how often each one re-decides, never the game.
  
@@ -385,7 +398,6 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Roadmap
 
-- **v1.5: Planning across frames** - Resumable planning inside the scheduler budget, and the plan tree in the debug view.
 - **v1.6: Planning meets learning** - Learned method scores, so agents find out which recipe works in which situation, learned step reliability, so plans route around steps that keep failing, and choice models as facts, so plans anticipate the player.
 - **v1.7: GOAP** - The planner composes its own plans from what each action requires and does, guided by learned costs and success chances.
 - **v1.8: More choice models** - A sequence model that learns what the player does next after what they just did, Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
@@ -396,7 +408,7 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, and goblins that plan their way into a locked chest
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, and goblins that plan their way into a locked chest on a shared budget
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
@@ -433,6 +445,8 @@ Nau, D., Au, T-C., Ilghami, O., Kuter, U., Murdock, J. W., Wu, D. and Yaman, F. 
 Humphreys, T. (2013) "[Exploring HTN Planners through Example](http://www.gameaipro.com/GameAIPro/GameAIPro_Chapter12_Exploring_HTN_Planners_through_Example.pdf)", in Rabin, S. (ed.) Game AI Pro, CRC Press
 
 urosidoki "[htn_planner](https://github.com/urosidoki/htn_planner)", a hierarchical task network planner for game AI
+
+**Time-sliced search** Buckland, M. (2004) "[Programming Game AI by Example](https://catdir.loc.gov/catdir/toc/ecip0419/2004015103.html)", Wordware Publishing, chapter 8, "Time-Sliced Path Planning"
 
 **Neural networks** Rumelhart, D. E., Hinton, G. E. and Williams, R. J. (1986) "[Learning Representations by Back-Propagating Errors](https://doi.org/10.1038/323533a0)", Nature, 323, 533-536
 

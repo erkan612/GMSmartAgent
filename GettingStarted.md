@@ -22,7 +22,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 12. [Choosing a Model](#12-choosing-a-model)
 13. [Learning What Works](#13-learning-what-works)
 14. [Plans That Take Several Steps](#14-plans-that-take-several-steps)
-15. [Troubleshooting](#15-troubleshooting)
+15. [Planning on a Budget](#15-planning-on-a-budget)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
@@ -1020,7 +1021,49 @@ The [API Reference](ApiReference.md#plan) has scored methods (letting the situat
 
 ---
 
-## 15. Troubleshooting
+## 15. Planning on a Budget
+
+Put twenty goblins in the room and drop a chest in the middle. Nothing better is around, so every goblin picks "raid" in the same step, and every one of them makes a plan in that step. One plan is cheap, twenty at once is a hitch you can feel.
+
+The scheduler from [chapter 10](#10-many-agents-the-scheduler) already solved this for thinking: a time budget per step, and agents that don't fit wait for the next one. Planners can share that budget. One line per goblin:
+
+```gml
+// o_goblin > Create (add, after the planner is created)
+gmsa_plan_schedule(planner, global.ai);
+```
+
+Nothing else changes in your code. `gmsa_plan_make` still starts the plan, but now it only reads the facts: the scheduler does the planning inside its budget, taking turns with the goblins' thinking. Until the plan is ready, the status is `PLANNING` and `gmsa_plan_current` is undefined, so the movement block from chapter 14 runs with no goal and the goblin stands still for a frame or two. Reports like `gmsa_plan_step_done` work exactly as before. When one of them needs a big repair, that repair also happens inside the budget.
+
+The planner is now in the scheduler, so take it out when the goblin goes, next to the agent:
+
+```gml
+// o_goblin > Clean Up (add)
+gmsa_plan_unschedule(planner);
+```
+
+Without this, the scheduler would keep planning for a goblin that no longer exists, and its fact callbacks would read a destroyed instance.
+
+**See it happen.** Replace the plan text from chapter 14 with a drawn tree:
+
+```gml
+// o_goblin > Draw GUI, replace the draw_text line
+gmsa_debug_draw_tree(gmsa_plan_lines(planner), 10, 300);
+```
+
+The current step is green, done steps are gray, skipped methods are orange with their reasons. While a plan is being made, you see `raid_chest (planning, 40 of 250 nodes)` with a bar filling up under it. When a goblin loses the race for the key, the part of its plan that was repaired gets a faint yellow band until it finishes its next step.
+
+Run it with twenty goblins and lower the budget in `gmsa_scheduler_create` to 200. The goblins take a few frames longer to set off, and the frame time doesn't move. That's the trade: a little waiting, never a hitch.
+
+Two things to remember:
+
+- **The plan is the same.** A plan made across frames is exactly the plan that would have been made at once. Only when it arrives changes. The facts it started from are checked again before the goblin sets off, in case the world moved on meanwhile.
+- **Without a scheduler, use slices.** A single boss outside any scheduler can get `{ slice : 300 }` in `gmsa_plan_planner_create`, and `gmsa_plan_work(planner)` in its Step event while the status is `PLANNING`.
+
+The [API Reference](ApiReference.md#planning-across-frames) has the details and the costs.
+
+---
+
+## 16. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -1078,6 +1121,12 @@ Nothing in its facts explains the failure, so every repair finds the same plan. 
 
 **A plan never finishes a step.**
 Every step needs a `gmsa_plan_step_done` or `gmsa_plan_step_failed` from your game, including instant ones like picking something up.
+
+**A scheduled goblin stands still for a long time.**
+It's waiting for its plan: the status is `PLANNING`. The scheduler's budget is spent elsewhere, or the plan is large. Raise the budget, or check `gmsa_plan_nodes_used` to see how big the plans are.
+
+**Errors from a fact callback after a goblin is destroyed.**
+Its planner is still scheduled. Call `gmsa_plan_unschedule(planner)` in the Clean Up event.
 
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.
