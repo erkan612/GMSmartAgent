@@ -9,6 +9,7 @@ function gmsa_bench_all() {
     __gmsa_bench_learn_tiers([3, 10, 30]);
     __gmsa_bench_lambdamart_train([100, 500], 2000);
     __gmsa_bench_outcomes([3, 10]);
+    __gmsa_bench_plan([10, 100]);
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -397,4 +398,83 @@ function __gmsa_bench_outcomes(_option_counts) {
             __gmsa_bench_line(_line);
         }
     }
+}
+
+function __gmsa_bench_plan(_lengths) {
+    // grab every coin, one step per coin
+    var _d = gmsa_plan_domain_create("bench coins");
+    gmsa_plan_add_fact(_d, "coins", function(_o) { return _o.coins; });
+    gmsa_plan_add_step(_d, "grab", { requires : [["coins", ">", 0]], effects : [["coins", "-", 1]] });
+    gmsa_plan_add_step(_d, "stop");
+    var _task = gmsa_plan_add_task(_d, "grab_all");
+    gmsa_plan_add_method(_task, "more", { requires : [["coins", ">", 0]], subtasks : ["grab", "grab_all"] });
+    gmsa_plan_add_method(_task, "done", { subtasks : ["stop"] });
+    gmsa_plan_domain_build(_d);
+
+    for (var _l = 0; _l < array_length(_lengths); _l++) {
+        var _len = _lengths[_l];
+        var _owner = { coins : _len };
+        var _p = gmsa_plan_planner_create(_d, _owner, { depth : _len + 8, budget : 100000 });
+        var _n = 100;
+        var _t = get_timer();
+        for (var _i = 0; _i < _n; _i++) gmsa_plan_make(_p, "grab_all");
+        var _make = (get_timer() - _t) / _n;
+        var _nodes = gmsa_plan_nodes_used(_p);
+
+        // running it: the game takes a coin, then reports the step done
+        var _steps = 0;
+        var _time = 0;
+        repeat (20) {
+            _owner.coins = _len;
+            gmsa_plan_make(_p, "grab_all");
+            _t = get_timer();
+            while (gmsa_plan_get_status(_p) == gmsa_plan_status.RUNNING) {
+                if (gmsa_plan_current(_p) == "grab") _owner.coins -= 1;
+                gmsa_plan_step_done(_p);
+                _steps++;
+            }
+            _time += get_timer() - _t;
+        }
+        __gmsa_bench_line("plan, " + string(_len + 1) + " steps: make " + string_format(_make, 1, 1) + " us ("
+            + string(_nodes) + " nodes, " + string_format(_make / _nodes, 1, 2) + " us each), step_done "
+            + string_format(_time / _steps, 1, 1) + " us");
+    }
+
+    // backtracking: the right method is the last of 20, every wrong one fails at its last step
+    var _bd = gmsa_plan_domain_create("bench backtrack");
+    gmsa_plan_add_fact(_bd, "x", function(_o) { return 0; });
+    gmsa_plan_add_step(_bd, "work", { effects : [["x", "+", 1]] });
+    gmsa_plan_add_step(_bd, "fail", { requires : [["x", "<", 0]] });
+    gmsa_plan_add_step(_bd, "finish");
+    var _choose = gmsa_plan_add_task(_bd, "choose");
+    for (var _m = 0; _m < 19; _m++) gmsa_plan_add_method(_choose, "wrong_" + string(_m), { subtasks : ["work", "work", "work", "fail"] });
+    gmsa_plan_add_method(_choose, "right", { subtasks : ["work", "finish"] });
+    gmsa_plan_domain_build(_bd);
+    var _bp = gmsa_plan_planner_create(_bd, {});
+    var _n = 200;
+    var _t = get_timer();
+    for (var _i = 0; _i < _n; _i++) gmsa_plan_make(_bp, "choose");
+    __gmsa_bench_line("plan, backtracking through 19 wrong methods: make " + string_format((get_timer() - _t) / _n, 1, 1)
+        + " us (" + string(gmsa_plan_nodes_used(_bp)) + " nodes)");
+
+    // repairing: the door gets locked mid-plan and the get_in task is replanned
+    var _owner = { door_locked : false, has_pick : true };
+    var _rp = gmsa_plan_planner_create(__test_plan_door_domain(), _owner);
+    var _repair = 0;
+    repeat (_n) {
+        _owner.door_locked = false;
+        gmsa_plan_make(_rp, "heist");
+        _owner.door_locked = true;
+        _t = get_timer();
+        gmsa_plan_refresh(_rp);
+        _repair += get_timer() - _t;
+    }
+    _t = get_timer();
+    for (var _i = 0; _i < _n; _i++) gmsa_plan_refresh(_rp); // nothing broken now
+    var _fine = (get_timer() - _t) / _n;
+    _t = get_timer();
+    for (var _i = 0; _i < _n; _i++) gmsa_plan_explain(_rp);
+    var _explain = (get_timer() - _t) / _n;
+    __gmsa_bench_line("plan, refresh: repairing a broken task " + string_format(_repair / _n, 1, 1)
+        + " us, nothing broken " + string_format(_fine, 1, 1) + " us, explain " + string_format(_explain, 1, 1) + " us");
 }

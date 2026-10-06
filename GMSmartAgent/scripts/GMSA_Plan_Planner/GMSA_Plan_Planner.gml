@@ -4,7 +4,7 @@ enum gmsa_plan_status { IDLE, RUNNING, DONE, FAILED }
 function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
     if (!is_struct(_domain) || _domain[$ "built"] == undefined) throw "GMSA: plan planner needs a domain from gmsa_plan_domain_create";
     if (!_domain.built) throw "GMSA: plan domain '" + _domain.name + "' must be built before making planners";
-    var _budget = __gmsa_param(_params, "budget", 2000);
+    var _budget = __gmsa_param(_params, "budget", 250);
     var _depth = __gmsa_param(_params, "depth", 32);
     var _retries = __gmsa_param(_params, "retries", 3);
     if (!is_numeric(_budget) || _budget < 1) throw "GMSA: plan budget must be at least 1";
