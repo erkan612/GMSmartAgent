@@ -221,10 +221,13 @@ function __gmsa_plan_undo(_holder, _mark) {
 
 function __gmsa_plan_read_facts(_domain, _owner, _holder) {
     var _facts = _domain.facts;
+    var _bools = variable_struct_exists(_holder, "__fact_bool");
     for (var _i = 0; _i < array_length(_facts); _i++) {
         var _v = _facts[_i].read(_owner);
-        if (is_bool(_v)) _v = _v ? 1 : 0;
+        var _is_bool = is_bool(_v);
+        if (_is_bool) _v = _v ? 1 : 0;
         if (!is_numeric(_v)) throw "GMSA: plan fact '" + _facts[_i].name + "' must read a number or a bool";
         _holder.state[_i] = _v;
+        if (_bools) _holder.__fact_bool[_i] = _is_bool;
     }
 }
