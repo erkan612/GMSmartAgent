@@ -1,6 +1,6 @@
 # Getting Started with GMSmartAgent
 
-This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, and who plan their way into a locked chest. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
+This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, and who learn which plans work and when you're watching. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
 For every function's full details, see the [API Reference](ApiReference.md).
 
@@ -23,7 +23,9 @@ For every function's full details, see the [API Reference](ApiReference.md).
 13. [Learning What Works](#13-learning-what-works)
 14. [Plans That Take Several Steps](#14-plans-that-take-several-steps)
 15. [Planning on a Budget](#15-planning-on-a-budget)
-16. [Troubleshooting](#16-troubleshooting)
+16. [Plans That Learn](#16-plans-that-learn)
+17. [Reading the Player](#17-reading-the-player)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -1063,7 +1065,192 @@ The [API Reference](ApiReference.md#planning-across-frames) has the details and 
 
 ---
 
-## 16. Troubleshooting
+## 16. Plans That Learn
+
+The raid from [chapter 14](#14-plans-that-take-several-steps) follows your recipes exactly: fetch the key and unlock, or smash when there's no key. Now give the chest a quirk nobody wrote down. When it rains, its lock rusts and jams most of the time.
+
+```gml
+// o_controller > Create (add)
+global.raining = false;
+```
+
+```gml
+// o_controller > Step (add)
+if (keyboard_check_pressed(ord("W"))) global.raining = !global.raining;  // W for weather
+if (!instance_exists(o_chest) && irandom(120) == 0) instance_create_layer(room_width / 2, room_height / 2, "Instances", o_chest);
+if (!instance_exists(o_key) && irandom(240) == 0) instance_create_layer(random(room_width), random(room_height), "Instances", o_key);
+```
+
+Chests and keys now come back after a while, so the goblins raid again and again. The jam is a rule of your game, so it lives in the goblin's step code:
+
+```gml
+// o_goblin > Step, the "unlock" case, replace it
+case "unlock":
+    if (global.raining && random(1) < 0.8) {
+        gmsa_plan_step_failed(planner);  // the lock jammed, the key is still in hand
+        break;
+    }
+    has_key = false;
+    instance_destroy(_chest);
+    gmsa_plan_step_done(planner);
+    break;
+```
+
+Press W and watch a goblin with the key. The lock jams, the plan repairs itself, and the repair finds the same plan: it has the key, it's at the chest, so unlock. It jams again, and again, until the retries run out and the plan fails. Nothing in the facts explains a jammed lock, so the planner has no reason to choose differently. That's the rule from chapter 14: *a failure needs a fact that explains it.*
+
+You could write that fact yourself, if you knew the rule. The point here is that the goblins can find it out.
+
+**Learned step reliability.** Give the planner the weather as a fact, and let it learn how often each step works, per weather:
+
+```gml
+// __raid_domain_build, with the other facts
+gmsa_plan_add_fact(_d, "raining", function(_goblin) { return global.raining; });
+```
+
+```gml
+// __raid_domain_build, right before gmsa_plan_domain_build
+global.lock_sense = gmsa_plan_learn_steps(_d, { inputs : ["raining"] });
+```
+
+Every step your game reports done or failed now teaches the domain that step's chance of success, in the rain and in the dry separately. When a task is planned, each method's score is multiplied by the chances of its steps, so a method whose steps keep failing sinks.
+
+Smashing still has to stay the slow last resort while unlocking works, so give it a lower score:
+
+```gml
+// __raid_domain_build, replace the smash method
+gmsa_plan_add_method(_raid, "smash", { score : function(_goblin, _state) { return 0.5; }, subtasks : ["go_to_chest", "smash"] });
+```
+
+Run it in the rain. The first goblin at the chest jams the lock a couple of times, and on its last retry the repair switches to smashing. From then on, goblins in the rain go straight to smashing, while in the dry they keep using the key. Every step starts out trusted, and a couple of jams aren't proof yet. Once unlock's chance in the rain sinks below smash's 0.5, smashing wins.
+
+Show a goblin's chances under its plan:
+
+```gml
+// o_goblin > Draw GUI (add)
+draw_text(10, 280, "unlock works " + string(round(gmsa_plan_learn_step_chance(global.lock_sense, planner, "unlock") * 100)) + "%");
+```
+
+**Learned methods.** Reliability knows which steps fail. It doesn't know which recipe is *worth* it. A raid that fetches the key from across the room may take longer than smashing ever would. For that, an outcome model scores the recipes themselves, from rewards you choose:
+
+```gml
+// __raid_domain_build, right before gmsa_plan_domain_build (with the line above)
+global.raid_sense = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
+gmsa_plan_learn_methods(_raid, global.raid_sense, { inputs : ["raining"] });
+```
+
+The planner reports on its own when a method finishes its task or fails. What a finished raid was worth, only your game knows. Here a quick raid is worth more:
+
+```gml
+// o_goblin > Step, where it starts the plan, replace the gmsa_plan_make line
+if (gmsa_plan_get_status(planner) != gmsa_plan_status.RUNNING) {
+    gmsa_plan_make(planner, "raid_chest");
+    raid_start = current_time;
+}
+```
+
+```gml
+// o_goblin > Step, in the "unlock" and "smash" cases, after gmsa_plan_step_done(planner)
+gmsa_plan_reward(planner, 1 - min(1, (current_time - raid_start) / 10000));  // 10 seconds or longer is worth nothing
+```
+
+and `raid_start = 0;` in the goblin's Create.
+
+`gmsa_plan_learn_methods` also makes the task pick its recipe by weighted chance instead of always the best. That's on purpose: a goblin that always unlocks never finds out that smashing would have been quicker. Now and then a goblin will smash in the dry or try the key in the rain. That's the price of noticing when things change.
+
+Three things to remember:
+
+- **Give it the situation.** Learned chances and scores are per situation, from the facts you list in `inputs`. Without `raining` in them, the goblins could only learn "unlocking fails sometimes".
+- **Both only push down.** A recipe your score rules out stays out, and nothing ever scores above what you gave it. Your scores are the starting point, learning adjusts them.
+- **They keep what they learn if you save it.** `gmsa_plan_learn_steps_save(global.lock_sense)` and `gmsa_learn_save(global.raid_sense)` give you JSON to store with the game.
+
+The [API Reference](ApiReference.md#planlearn) has how sure a model gets, the reports the planner sends, and the costs. Demo 11, secret entrances, puts a crew that learns next to one that doesn't.
+
+---
+
+## 17. Reading the Player
+
+The goblins learned from the world. They can also learn from you. In [chapter 11](#11-learning-from-the-player) a model learned your taste and a copycat goblin copied it. Here a model learns your habits, and the raiders plan around them.
+
+The new rule: you can guard the chest. Click it and you walk over, and any goblin you catch raiding drops what it was doing. You can't guard the chest and chase coins at the same time, though, and the goblins will learn when you're away.
+
+**Your comings and goings.** The goblins need a description of your choice, guard or roam, and of what might explain it. This is a small profile of its own:
+
+```gml
+// scripts/__watch_profile_build
+function __watch_profile_build() {
+    var _p = gmsa_profile_create("watch");
+    gmsa_profile_add_input(_p, gmsa_input_pull("coins", function(_agent) { return instance_number(o_coin); }, 0, 4));  // 4 or more reads as 1
+    gmsa_profile_set_features(_p, ["coins"]);
+    gmsa_profile_add_action(_p, "guard");
+    gmsa_profile_add_action(_p, "roam");
+    return gmsa_profile_build(_p);
+}
+```
+
+Maybe you guard when there's nothing else to do, maybe you go for coins whenever there are any. The model finds out which, from the coins on the floor. A Count model sorts what it sees into quarters of each input, so a range of 0 to 4 coins tells none, one, two and three or more apart. Add inputs for anything else that drives your habits, like your health. The agent for it never thinks, it only records, like the player's agent in chapter 11:
+
+```gml
+// o_controller > Create (add, before global.raid_domain is built)
+global.watch = gmsa_agent_create(__watch_profile_build());
+global.habits = gmsa_learn_count_create();
+```
+
+**Record each choice.** Clicking the chest is guarding, clicking a coin or a potion is roaming:
+
+```gml
+// o_player > Global Left Pressed, at the top
+var _chest = instance_position(mouse_x, mouse_y, o_chest);
+if (_chest != noone) {
+    gmsa_learn_observe(global.habits, gmsa_observe(global.watch, ["guard", "roam"], 0));
+    goal = _chest;
+    exit;
+}
+```
+
+```gml
+// o_player > Global Left Pressed, after the line if (_item == noone) exit;
+gmsa_learn_observe(global.habits, gmsa_observe(global.watch, ["guard", "roam"], 1));
+```
+
+**The player as a fact.** The prediction becomes a fact the raid can reason with, from 0 (surely roaming) to 1 (surely guarding):
+
+```gml
+// __raid_domain_build, with the other facts
+gmsa_plan_learn_fact(_d, "player_guards", global.habits, global.watch, "guard", { fallback : 0.5 });
+```
+
+```gml
+// __raid_domain_build, replace the go_to_chest step
+gmsa_plan_add_step(_d, "go_to_chest", { requires : [["player_guards", "<", 0.5]] });
+```
+
+Until the model has seen enough of your choices, the fact reads the `fallback`, 0.5: not sure, so the goblins stay away. As your choices pile up, it reads what you're likely to do *right now*, given the coins on the floor.
+
+**Getting caught.** Last, what happens when you do turn up:
+
+```gml
+// o_goblin > Step, before the plan's steps
+if (gmsa_plan_current(planner) != undefined && instance_exists(o_player) && distance_to_object(o_player) < 32) {
+    gmsa_plan_stop(planner);  // caught at it, the goblin gives up
+    gmsa_agent_clear_current(agent);
+}
+```
+
+Play with a habit. Guard the chest whenever the floor is empty, and go for coins whenever some appear. After a dozen or so choices, the goblins stop going for the chest while the floor is empty, and the moment coins appear they set off for it, because that's when you leave.
+
+Watch one that already has the key. The facts are read again before every step, so when you drop a coin and the prediction shifts, its plan is checked again before it walks to the chest. A key fetched while you were away is still a key, but it waits for you to look elsewhere: no method works while you're likely to be there, so the plan fails, and the goblin tries again the next time it thinks of raiding.
+
+Three things to remember:
+
+- **Facts are re-read, predictions included.** A plan built on what you were likely to do is repaired when that changes, before each step. During a long step, `gmsa_plan_refresh(planner)` checks it sooner.
+- **Unpredictable beats clever.** If you guard at random, the fact stays near 0.5 and the goblins can't plan around you. That's honest: there's nothing to learn.
+- **One evaluation per frame.** Every goblin reading `player_guards` in the same frame shares one prediction, so a crowd of raiders costs about as much as one.
+
+A plan dropped because you came to guard counts against the recipe it was using. If that skews what the raid learned in chapter 16, add `"player_guards"` to its `inputs`, so it learns that recipes fail *when you're watching*. Demo 12, the night watch, is this chapter as a game: you're the guard, and two crews raid three vaults.
+
+---
+
+## 18. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -1127,6 +1314,24 @@ It's waiting for its plan: the status is `PLANNING`. The scheduler's budget is s
 
 **Errors from a fact callback after a goblin is destroyed.**
 Its planner is still scheduled. Call `gmsa_plan_unschedule(planner)` in the Clean Up event.
+
+**A plan keeps choosing a step that keeps failing.**
+Nothing tells it the step fails. Add `gmsa_plan_learn_steps` with the facts that explain the failure in `inputs`, and report the failure with `gmsa_plan_step_failed`, not by stopping the plan. Every step starts out trusted, so it takes a few failures before another method wins.
+
+**Learned methods don't seem to learn.**
+The model must learn from outcomes (`learns : gmsa_learn_target.OUTCOMES`), and the situation it needs must be in `inputs`. Check that `gmsa_plan_reward` is called while the plan runs or right after it's done, not after `gmsa_plan_stop` or a new `gmsa_plan_make`.
+
+**Goblins still try the recipe that usually loses.**
+That's exploration, and it's how they notice when the world changes. A model's confidence levels off as old evidence fades, so the losing recipe keeps a small share. For less of it, raise the model's `half_life` or lower its `confidence_k`.
+
+**Planning throws that a fact is a number.**
+A number fact used as a learning input needs a range: add `{ min, max }` to its `gmsa_plan_add_fact`, or leave it out of `inputs`.
+
+**Planning throws that methods were added after `gmsa_plan_learn_methods`.**
+Wire the learning after the task's last method.
+
+**A player fact stays at its fallback.**
+The model hasn't seen enough of the player's choices yet, or they aren't recorded: check that `gmsa_learn_observe` runs on every choice, with the same agent the fact reads.
 
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.

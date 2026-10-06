@@ -9,7 +9,7 @@ A pure GML utility AI framework. Your agents score every option they have, every
 
 GMSmartAgent replaces hand-written `if` chains and rigid state machines with **utility scoring**. Every possible action an agent could take gets a score between 0 and 1 based on what the agent knows right now (its health, the distance to a target, whether it holds a key), and the highest-scoring option wins. Add a new behavior by adding an action, not by rewriting the decision tree.
 
-For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks the goal, planning works out how.
+For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks the goal, planning works out how. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do.
 
 GMSmartAgent **only decides**. It never moves anything, never queries your room, never owns collision or spatial data. Your game hands it numbers, GMSmartAgent hands back a ranked list of options, or a plan one step at a time. What the agent does with it is up to you.
 
@@ -72,6 +72,14 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **Bounded cost** - A node budget per plan and a depth cap for tasks that use themselves
 - **Planning across frames** - Large plans and many planners spread over several frames, in slices or inside the scheduler budget, giving exactly the same plan as planning at once
 - **Explain** - The plan as a tree, as text or as data for your own UI, with the reason every skipped recipe didn't work
+- **Weighted recipes** - A task can draw its recipe by score instead of always taking the best, so a crowd with the same recipes doesn't all do the same thing
+- **Reports** - Listeners hear every recipe that finishes or fails, every step result and every reward, for learning or your own stats
+### Planning Meets Learning
+- **Learned recipes** - An outcome model finds out which recipe works in which situation, from the plans' own results and rewards you choose
+- **Step reliability** - Steps that keep failing get a learned chance of success per situation, and plans route around them, even within the same plan
+- **The player as facts** - A choice model's prediction ("the player will guard the vault") becomes a fact plans require, and plans repair themselves when the prediction shifts
+- **Under the designer** - Learning only lowers recipe scores, never above yours, and a recipe you ruled out stays out
+- **Learn spaces** - Any model can learn from choices that aren't an agent's, described by names and numbers
 ### Developer Tools
 - **Debug view** - Ranked options with scores, probabilities and every consideration's value, drawn or as text, with the designer's score shown wherever learning changed it
 - **Plan tree view** - A drawn plan tree: the current step, the done ones, skipped recipes with their reasons, what the last repair changed, and progress while a plan is being made
@@ -348,6 +356,33 @@ gmsa_debug_draw_tree(gmsa_plan_lines(planner), 10, 300);
 ```
 
 ---
+
+## Plans That Learn
+
+The recipes are yours, learning decides which one when. Here the lock jams in the rain, a rule nobody wrote down, and quick raids are worth more:
+
+```gml
+gmsa_plan_add_fact(_d, "raining", function(_owner) { return global.raining; });
+// ... steps and tasks as before
+
+// how often each step works, rain or dry, and which recipe pays off, rain or dry
+global.lock_sense = gmsa_plan_learn_steps(_d, { inputs : ["raining"] });
+global.raid_sense = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
+gmsa_plan_learn_methods(_loot, global.raid_sense, { inputs : ["raining"] });
+global.goblin_domain = gmsa_plan_domain_build(_d);
+
+// your game reports results as before, and what the finished raid was worth
+gmsa_plan_reward(planner, 1 - raid_time / max_raid_time);
+```
+
+After a few jams, goblins in the rain stop reaching for the key, in the dry they keep using it. Plans can anticipate the player the same way: a model learns where the player goes, and its prediction becomes a fact the plan requires.
+
+```gml
+gmsa_plan_learn_fact(_d, "guard_here", global.habits, player_agent, "guard_vault");
+gmsa_plan_add_step(_d, "break_in", { requires : [["guard_here", "<", 0.4]] });
+```
+
+---
  
 ## Performance
  
@@ -380,6 +415,8 @@ LambdaMART trains inside a budget you set, with a measured overshoot under 130 u
 
 Planning costs about 9 to 13 us per node searched. A plan of around ten steps takes about 0.3 ms to make, and each step after that about 30 us to check and hand over. The default budget of 250 nodes keeps a hopeless search to a few milliseconds. Scheduled planners make their plans inside the scheduler budget, going over it by under 40 us, and cost about 0.7 us per step while idle. See [What planning costs](ApiReference.md#what-planning-costs).
 
+Learning in plans is paid per plan and per step, never per frame. With step reliability and a learned recipe both on, a six-step raid costs about 0.47 ms from making the plan to its reward, against 0.18 ms without learning. A player fact costs one evaluation of the player's model per frame, about 65 us, shared by every planner that reads it. See [What learning in plans costs](ApiReference.md#what-learning-in-plans-costs).
+
 Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents or heavier models slows how often each one re-decides, never the game.
  
 ---
@@ -398,7 +435,6 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Roadmap
 
-- **v1.6: Planning meets learning** - Learned method scores, so agents find out which recipe works in which situation, learned step reliability, so plans route around steps that keep failing, and choice models as facts, so plans anticipate the player.
 - **v1.7: GOAP** - The planner composes its own plans from what each action requires and does, guided by learned costs and success chances.
 - **v1.8: More choice models** - A sequence model that learns what the player does next after what they just did, Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
 - **v1.9: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
@@ -408,7 +444,7 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, and goblins that plan their way into a locked chest on a shared budget
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, and plans that learn which recipe works and when the player is watching
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
@@ -446,6 +482,14 @@ Humphreys, T. (2013) "[Exploring HTN Planners through Example](http://www.gameai
 
 urosidoki "[htn_planner](https://github.com/urosidoki/htn_planner)", a hierarchical task network planner for game AI
 
+**Learning in HTN planning** Ilghami, O., Nau, D. S., Muñoz-Avila, H. and Aha, D. W. (2002) "[CaMeL: Learning Method Preconditions for HTN Planning](https://www.aaai.org/Papers/AIPS/2002/AIPS02-014.pdf)", AIPS-02
+
+**Weighted recipe order** Luce, R. D. (1959) "[Individual Choice Behavior: A Theoretical Analysis](https://catalog.hathitrust.org/Record/000580649)", Wiley
+
+Plackett, R. L. (1975) "[The Analysis of Permutations](https://ideas.repec.org/a/bla/jorssc/v24y1975i2p193-202.html)", Journal of the Royal Statistical Society, Series C (Applied Statistics), 24(2), 193-202
+
+**Player modeling** Yannakakis, G. N. and Togelius, J. (2018) "[Artificial Intelligence and Games](https://gameaibook.org/)", Springer, chapter 5, "Modeling Players"
+
 **Time-sliced search** Buckland, M. (2004) "[Programming Game AI by Example](https://catdir.loc.gov/catdir/toc/ecip0419/2004015103.html)", Wordware Publishing, chapter 8, "Time-Sliced Path Planning"
 
 **Neural networks** Rumelhart, D. E., Hinton, G. E. and Williams, R. J. (1986) "[Learning Representations by Back-Propagating Errors](https://doi.org/10.1038/323533a0)", Nature, 323, 533-536
@@ -474,4 +518,4 @@ Li, L., Chu, W., Langford, J. and Schapire, R. E. (2010) "[A Contextual-Bandit A
 
 Dudík, M., Langford, J. and Li, L. (2011) "[Doubly Robust Policy Evaluation and Learning](https://arxiv.org/abs/1103.4601)", ICML '11
 
-**Credit assignment and exploration** Sutton, R. S. and Barto, A. G. (2018) "[Reinforcement Learning: An Introduction](http://incompleteideas.net/book/the-book-2nd.html)", 2nd edition, MIT Press
+**Credit assignment and exploration** Sutton, R. S. and Barto, A. G. (2018) "[Reinforcement Learning: An Introduction](http://incompleteideas.net/book/the-book-2nd.html)", 2nd edition, MIT Press. Section 2.6, "Optimistic Initial Values", is the idea behind step reliability's starting trust

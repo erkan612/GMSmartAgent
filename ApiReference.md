@@ -21,6 +21,7 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [Learning From Outcomes](#learning-from-outcomes)
 - [Net](#net)
 - [Plan](#plan)
+- [PlanLearn](#planlearn)
 - [Test](#test)
 - [Data Structures](#data-structures)
 - [Callback Signatures](#callback-signatures)
@@ -135,6 +136,17 @@ How the last planning call went, see [Plan](#plan).
 | `gmsa_plan_result.FOUND` | A plan was found |
 | `gmsa_plan_result.NO_PLAN` | No method combination works with the facts as they are |
 | `gmsa_plan_result.OUT_OF_BUDGET` | The search used its node budget before finding a plan |
+
+### gmsa_plan_report
+What a plan report is about, see [Reports](#reports).
+
+| Element | Meaning |
+| --- | --- |
+| `gmsa_plan_report.METHOD_SUCCESS` | A task finished with this method |
+| `gmsa_plan_report.METHOD_FAILURE` | This method broke and was replaced, or the plan failed with it |
+| `gmsa_plan_report.METHOD_REWARD` | A reward from `gmsa_plan_reward` reached this method |
+| `gmsa_plan_report.STEP_SUCCESS` | A step was reported done |
+| `gmsa_plan_report.STEP_FAILURE` | A step was reported failed, or had no target |
 
 ### gmsa_test_status
 Result of a test case, see [Test](#test).
@@ -1346,6 +1358,17 @@ Something good or bad just happened to a tracked agent, and you don't know which
 - **Options your scoring keeps out of the top N are never tried.** Learning stays under the designer, exploration included.
 - **Exploiting is partial by design.** The re-ranker never pushes an option below a share of your score, and weighted selection picks in proportion. So a learning agent keeps trying alternatives often. Raise `influence` or lower `top_n` for more exploitation.
 
+### How sure a model gets
+
+Old evidence fades, so a model's amount of data levels off at about `half_life / ln 2` (about 72 at the default half-life of 50), however long it learns. Confidence, `n / (n + confidence_k)`, levels off with it:
+
+| Model | Defaults | Highest confidence | The worse option keeps about |
+| --- | --- | --- | --- |
+| Count | `half_life` 50, `confidence_k` 5 | 0.94 | 6% of its score |
+| Linear | `half_life` 50, `confidence_k` 20 | 0.78 | 22% of its score |
+
+This is deliberate: the worse option keeps getting tried now and then, which is how a model notices when the world changes. To commit harder, raise `half_life` (slower to notice change) or lower `confidence_k`. With `half_life` 200 and `confidence_k` 5, confidence reaches about 0.98.
+
 ### How each model learns outcomes
 
 Every built-in model takes `learns` and `temperature`:
@@ -1389,6 +1412,78 @@ LambdaMART stores one row per outcome, so training on 500 outcomes takes about 0
 | `probability` | The chance the agent had of picking it |
 | `start`, `last` | When the agent switched to it, and when it last acted on it |
 | `active` | True while it's the agent's current decision |
+
+### Learn spaces
+
+Models usually learn from an agent's decisions. A **space** lets them learn from choices that aren't an agent's: which recipe a planner used, which route a convoy took. You describe the choice as names, then pass options as plain numbers. Every model works with it unchanged, [PlanLearn](#planlearn) is built on it.
+
+```gml
+// once: three routes, described by two inputs
+global.routes = gmsa_learn_space("convoy", ["road", "river", "forest"], ["night", "danger"]);
+global.route_luck = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
+
+// each trip: the options on offer, inputs as 0..1 values in the order declared
+var _inputs = [is_night ? 1 : 0, danger / 100];
+var _options = [{ action : 0, inputs : _inputs }, { action : 1, inputs : _inputs }, { action : 2, inputs : _inputs }];
+var _p = gmsa_learn_space_predict(global.route_luck, global.routes, _options).p;
+
+// when the trip is over: route 1 was taken with a 50% chance, and it went well
+gmsa_learn_space_outcome(global.route_luck, global.routes, _options, 1, 0.5, 1);
+```
+
+### gmsa_learn_space
+
+```gml
+gmsa_learn_space(name, actions, inputs, [params]) -> space
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `name` | string | For error messages |
+| `actions` | array | Unique action names, an option's `action` is an index into it |
+| `inputs` | array | Unique input names, an option's `inputs` holds one 0..1 value per name, in this order |
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `situational` | array | all true | One bool per input: true when the input describes the situation, false when it differs per option (like a per-target input). Count buckets on situational inputs only |
+
+Models bind by names, as with profiles, so a model can learn from a space and a profile that share names.
+
+**Throws** when the name is empty, there are no actions, a name repeats, or `situational` doesn't have one bool per input.
+
+### gmsa_learn_space_predict
+
+```gml
+gmsa_learn_space_predict(model, space, options) -> { p, confidence }
+```
+
+Like [gmsa_learn_predict](#gmsa_learn_predict): `p[i]` matches `options[i]`. The result is reused, copy what you keep.
+
+### gmsa_learn_space_observe
+
+```gml
+gmsa_learn_space_observe(model, space, options, chosen) -> bool
+```
+
+A choice model learns that `options[chosen]` was picked. **Returns** false when the model is frozen.
+
+### gmsa_learn_space_outcome
+
+```gml
+gmsa_learn_space_outcome(model, space, options, chosen, probability, reward, [credit]) -> bool
+```
+
+An outcome model learns how `options[chosen]` turned out. `probability` is the chance it had of being chosen (above 0, at most 1), used for the same fair learning as tracked decisions. `credit` (above 0, at most 1, default 1) scales the update. **Returns** false when the model is frozen.
+
+### gmsa_learn_space_explain
+
+```gml
+gmsa_learn_space_explain(model, space, options, index) -> array of strings
+```
+
+Like [gmsa_learn_explain](#gmsa_learn_explain).
+
+All four **throw** when `options` is empty, an option's `action` isn't a valid index, its `inputs` don't have one value per declared input, or `chosen` isn't an option index.
 
 ### Bring your own network
 
@@ -1673,7 +1768,7 @@ A new, empty domain. **Throws** when `name` isn't a non-empty string.
 ### gmsa_plan_add_fact
 
 ```gml
-gmsa_plan_add_fact(domain, name, read) -> domain
+gmsa_plan_add_fact(domain, name, read, [params]) -> domain
 ```
 
 | Parameter | Type | Description |
@@ -1681,7 +1776,11 @@ gmsa_plan_add_fact(domain, name, read) -> domain
 | `name` | string | The fact's name, used in conditions and effects |
 | `read` | function | `function(owner)` returning a number or a bool, called when planning and before each step |
 
-**Throws** when the domain is built, the name is empty or `read` isn't callable.
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `min`, `max` | real | undefined | The fact's usual range. Planning ignores it, learning needs it to turn a number into 0..1, see [PlanLearn](#planlearn). Give both or neither |
+
+**Throws** when the domain is built, the name is empty, `read` isn't callable, only one of `min` and `max` is given, or `max` isn't above `min`.
 
 ### gmsa_plan_add_step
 
@@ -1702,10 +1801,18 @@ gmsa_plan_add_step(domain, name, [params]) -> step
 ### gmsa_plan_add_task
 
 ```gml
-gmsa_plan_add_task(domain, name) -> task
+gmsa_plan_add_task(domain, name, [params]) -> task
 ```
 
 A goal, broken down by the methods you add to it. Step and task names share one namespace, each must be unique.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `select` | `gmsa_select` | `BEST` | `BEST` tries methods best score first. `TOP_N_WEIGHTED` draws the order among the top `top_n` by score, see [Method order](#method-order) |
+| `top_n` | integer | 3 | How many top methods the weighted draw covers |
+| `adjust` | function | undefined | `function(planner, state, scores)`, changes the methods' scores before they're ordered, see [Adjusting scores](#adjusting-scores) |
+
+**Throws** when the domain is built, the name is empty, `select` isn't `BEST` or `TOP_N_WEIGHTED`, `top_n` is below 1 or `adjust` isn't callable.
 
 ### gmsa_plan_add_method
 
@@ -1741,6 +1848,28 @@ gmsa_plan_fact_index(domain, name) -> integer
 ```
 
 A fact's position in the state array check functions receive, -1 when unknown. Available after build.
+
+### gmsa_plan_add_listener
+
+```gml
+gmsa_plan_add_listener(domain, listener)
+```
+
+`listener` is `function(report)`, called by every planner of the domain when a method or step succeeds or fails, and when a reward arrives. See [Reports](#reports). Listeners can be added before or after build, and run in the order added.
+
+**Throws** when `domain` isn't a domain or `listener` isn't callable.
+
+### gmsa_plan_set_step_chance
+
+```gml
+gmsa_plan_set_step_chance(domain, chance)
+```
+
+`chance` is `function(planner, step, state)` returning a step's chance of success, 0 to 1. `step` is the step's index in `domain.steps`, `state` the imagined facts. When a task is planned, each method's score is multiplied by the chance of each step directly in its subtasks (steps inside nested tasks count when their own task is planned). A method whose steps tend to fail sinks in the order. Pass `undefined` to remove it. One per domain, set before or after build.
+
+[gmsa_plan_learn_steps](#gmsa_plan_learn_steps) sets one that learns the chances from the plans' own results.
+
+**Throws** when `domain` isn't a domain or `chance` isn't callable.
 
 ### Conditions and effects
 
@@ -1786,6 +1915,7 @@ gmsa_plan_planner_create(domain, owner, [params]) -> planner
 | `retries` | integer | 3 | Failed steps in a row before the plan fails. A done step resets the count |
 | `slice` | real | undefined | Microseconds of planning per call. Undefined plans at once. See [Planning across frames](#planning-across-frames) |
 | `clock` | function | `get_timer` | Time source returning microseconds, used only when planning in slices. Tests pass a fake clock |
+| `seed` | integer | 1 | Seeds the planner's own generator, used by tasks with `TOP_N_WEIGHTED`. GameMaker's `random` is never touched |
 
 **Throws** when the domain isn't built, a param is out of range, `slice` isn't above 0 or `clock` isn't callable.
 
@@ -1849,7 +1979,22 @@ Reads the facts now and repairs the plan if they broke it. Call it when somethin
 gmsa_plan_stop(planner)
 ```
 
-Drops the plan, or the plan being made or repaired. The status becomes `IDLE`.
+Drops the plan, or the plan being made or repaired. The status becomes `IDLE`. Nothing is reported, an interruption isn't a failure.
+
+### gmsa_plan_reward
+
+```gml
+gmsa_plan_reward(planner, reward) -> integer
+```
+
+Something good or bad happened that the plan earned: the loot made it home, the raid took too long. Listeners receive a `METHOD_REWARD` report for each method it reaches:
+
+- While a plan runs or is being repaired, the methods around the current step, from its own task up to the goal.
+- Once the plan is done, every method of the plan, once each.
+
+**Returns** how many methods it reached, 0 when there's no plan. Rewards are numbers you choose, roughly -1 to 1, as in [Rewards](#rewards).
+
+**Throws** when `reward` isn't a number.
 
 ### gmsa_plan_get_status
 
@@ -1978,6 +2123,32 @@ gmsa_plan_add_method(_get_key, "buy",   { score : function(_owner, _state) { ret
 - A score of 0 or less rules the method out, like a 0 in utility scoring.
 - Scores are read in the imagined state, when the planner reaches the task. A method early in the plan sees today's facts, one later sees the facts the plan expects by then.
 
+**Weighted order.** A task with `select : gmsa_select.TOP_N_WEIGHTED` doesn't always try its best method first. Its top `top_n` methods are put in a random order drawn by score (a method with twice the score is twice as likely to go first), the rest follow best first. Goblins with the same recipes then don't all do the same thing, and a learning model gets to see every recipe tried.
+
+- The draw uses the planner's own generator, seeded with `seed`. The same seed and the same facts give the same plans.
+- Backtracking works as always: when the drawn method can't work, the next in the drawn order is tried.
+- Each chosen method knows its **chance**: its score over its own and every later method's in the drawn order. Explain shows it as `(score 0.60, chance 0.45)`, and reports carry it.
+
+### Adjusting scores
+
+When the planner reaches a task, the scores go through these stages, in order:
+
+1. Each method's `score`, or 1.
+2. The domain's [step chance](#gmsa_plan_set_step_chance), multiplied in for each step directly in the method.
+3. The task's `adjust`, which sees and changes every score at once.
+4. The order: best first, or the weighted draw.
+
+```gml
+var _fight = gmsa_plan_add_task(_d, "fight", {
+    adjust : function(_planner, _state, _scores) {
+        // late in the night, every method but the first (sneak) is less appealing
+        if (global.hour > 3) for (var _i = 1; _i < array_length(_scores); _i++) _scores[@ _i] *= 0.5;
+    },
+});
+```
+
+`scores` holds one number per method, in the order the methods were added. Write it with `[@ ]`. A score of 0 or less rules the method out, as always. [gmsa_plan_learn_methods](#gmsa_plan_learn_methods) is an `adjust` that learns.
+
 ### How planning works
 
 The planner goes depth first: it breaks the goal into its first method's subtasks, then the first of those, and so on, imagining each step's effects. When a step or method can't be used in the imagined state, it backs up to the latest task that has another method left and tries that. This can undo a task that already looked finished, when a later step needs it done differently.
@@ -1995,6 +2166,44 @@ Before each step the planner reads the facts again and checks the rest of the pl
 3. Otherwise the next larger task is tried, up to the goal. If the goal can't be planned, the plan fails.
 
 Repairs share one budget per call. `gmsa_plan_make` plans from scratch instead, which can pick a better plan than the one being repaired.
+
+### Reports
+
+Listeners added with [gmsa_plan_add_listener](#gmsa_plan_add_listener) hear how plans go, from every planner of the domain. This is what learning is built on, and you can use it for your own stats or logs.
+
+| Report | When |
+| --- | --- |
+| `STEP_SUCCESS` | `gmsa_plan_step_done` |
+| `STEP_FAILURE` | `gmsa_plan_step_failed`, or the step had no target |
+| `METHOD_SUCCESS` | The plan passed the end of a task: the method did its job. A method with no subtasks succeeds at once |
+| `METHOD_FAILURE` | A repair replaced the method: each method around the broken step, up to the task that was planned again. This includes repairs after facts changed, the method didn't work out in the world as it is. When the plan fails, each method up to the goal |
+| `METHOD_REWARD` | `gmsa_plan_reward` reached the method |
+
+Not reported: `gmsa_plan_stop`, an interruption isn't a failure. A step that breaks because facts changed under it gets no `STEP_FAILURE`, the step itself never failed, but the methods the repair replaces are reported.
+
+The report is one struct per planner, reused by every report, so copy what you keep:
+
+| Field | Description |
+| --- | --- |
+| `kind` | `gmsa_plan_report` |
+| `planner` | The planner that reported |
+| `task`, `task_name` | The task's index in `domain.tasks`, and its name |
+| `method`, `method_name` | The method's index in its task, and its name |
+| `step`, `step_name` | The step's index in `domain.steps`, and its name. Step reports only |
+| `chance` | The chance the method had of being chosen. 1 for `BEST` tasks, for methods tried after a weighted task's top `top_n`, and on step reports |
+| `reward` | The reward, `METHOD_REWARD` only |
+| `state` | The facts as the planner saw them when it planned this task (for steps, their task), indexed like `domain.facts`. Read only |
+
+```gml
+// count which recipes finish, for a balance pass
+gmsa_plan_add_listener(global.goblin_domain, function(_r) {
+    if (_r.kind != gmsa_plan_report.METHOD_SUCCESS) return;
+    var _key = _r.task_name + "." + _r.method_name;
+    global.recipe_stats[$ _key] = (global.recipe_stats[$ _key] ?? 0) + 1;
+});
+```
+
+A domain with no listeners pays one array length check per reporting point.
 
 ### Planning across frames
 
@@ -2074,6 +2283,173 @@ The default budget of 250 nodes keeps a hopeless search to a few milliseconds on
 | `depth_cut` | True when the depth cap cut a branch in the last planning call |
 | `target` | The current step's target |
 | `failures` | Failed steps in a row |
+
+---
+
+## PlanLearn
+
+Planning meets learning. The designer still writes every recipe, learning decides which recipe when, which steps to trust, and what the player is about to do. PlanLearn depends on Plan and Learn, neither depends on it.
+
+| You want plans to | Use | Learns from |
+| --- | --- | --- |
+| Pick the recipe that works in this situation | [gmsa_plan_learn_methods](#gmsa_plan_learn_methods) | Which methods finish, fail and earn rewards |
+| Route around steps that keep failing | [gmsa_plan_learn_steps](#gmsa_plan_learn_steps) | Which steps are reported done or failed |
+| Anticipate the player | [gmsa_plan_learn_fact](#gmsa_plan_learn_fact) | The player's choices, through any choice model |
+
+```gml
+// the raid domain of Demo 11: get in by the door, the window or the tunnel
+var _d = gmsa_plan_domain_create("raid");
+gmsa_plan_add_fact(_d, "night", function(_g) { return global.night; });
+// ... the other facts and steps
+var _get_in = gmsa_plan_add_task(_d, "get_in");
+gmsa_plan_add_method(_get_in, "door", { subtasks : ["enter_door"] });
+gmsa_plan_add_method(_get_in, "window", { subtasks : ["enter_window"] });
+gmsa_plan_add_method(_get_in, "tunnel", { subtasks : ["dig_tunnel"] });
+
+// which steps fail by night or by day, and which way in pays off by night or by day
+global.reliability = gmsa_plan_learn_steps(_d, { inputs : ["night"] });
+global.entrances = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
+gmsa_plan_learn_methods(_get_in, global.entrances, { inputs : ["night"] });
+global.raid = gmsa_plan_domain_build(_d);
+
+// when a raid is over: quick raids are worth more
+gmsa_plan_reward(planner, 1 - raid_time / max_raid_time);
+```
+
+**Inputs are facts.** Bool facts are used as 0 and 1. A number fact needs `min` and `max` in [gmsa_plan_add_fact](#gmsa_plan_add_fact) to become 0..1. Pick the facts that explain why a recipe works or a step fails: a model that sees `night` learns "the window works at night", one that doesn't can only learn "the window works half the time".
+
+### gmsa_plan_learn_methods
+
+```gml
+gmsa_plan_learn_methods(task, model, [params]) -> task
+```
+
+An outcome model learns which of the task's methods work in which situation, and the task's methods are scored by it.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `influence` | real | 1 | 0..1, how much say the model gets |
+| `inputs` | array | every fact | Names of the facts the model sees |
+| `success` | real | 1 | Reward when a method finishes its task |
+| `failure` | real | -1 | Reward when a method fails |
+| `select` | `gmsa_select` | `TOP_N_WEIGHTED` | Replaces the task's `select` |
+| `top_n` | integer | every method | Replaces the task's `top_n` |
+
+- **Scoring:** the task's `adjust` becomes `score * max(0.0001, lerp(1, p / best p, influence * confidence))`, as in [How re-ranking works](#how-re-ranking-works). Scores only go down, the method the model likes most keeps its score, and a method you ruled out stays out. A fresh model changes nothing.
+- **Learning:** a listener turns the task's reports into outcomes: `METHOD_SUCCESS` learns `success`, `METHOD_FAILURE` learns `failure`, `METHOD_REWARD` learns the reward. Each outcome uses the method's chance of being chosen, for [fair learning](#fair-learning-and-exploration).
+- **Exploration** comes from the weighted order, which is why `select` defaults to `TOP_N_WEIGHTED` over every method. With `BEST`, a task tries its first working method forever and learns only about that one.
+- Use any model that learns from outcomes. Count suits a few bool facts, Linear suits more facts or ranges.
+
+Wire it after the task's last method and the facts it uses, before the domain is built.
+
+**Throws** when `task` isn't a task, the domain is built, the model doesn't learn from outcomes, the task has fewer than two methods or already has an `adjust`, a param is out of range, or an input isn't a fact of the domain. When planning: when a number fact without `min` and `max` is among the inputs, or methods were added to the task after wiring.
+
+### gmsa_plan_learn_steps
+
+```gml
+gmsa_plan_learn_steps(domain, [params]) -> reliability
+```
+
+Learns each step's chance of success per situation, from the plans' own step reports, and sets it as the domain's [step chance](#gmsa_plan_set_step_chance). Methods whose steps keep failing sink in the order.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `inputs` | array | `[]` | Names of the facts that make up the situation. None: one chance per step |
+| `bins` | integer | 4 | Buckets for facts with a range, 2 or more. Bool facts have 2 |
+| `half_life` | real | 50 | Step reports, from all steps of the domain together, until old evidence counts half |
+| `prior` | real | 2 | Successes a step starts with |
+
+- A step's chance is `(successes + prior) / (tries + prior)`, both fading with `half_life`. An untried step counts as fully reliable, so methods with more steps aren't punished before anything is known.
+- **It works within a plan.** When a step fails, the repair plans its task again, and the failure has already lowered that step's chance in this situation. So the goblin turns to the window at once instead of trying the trapped door again. Without it, a failure no fact explains makes the planner retry the same plan, see [Facts and your game](#facts-and-your-game).
+- Situations multiply: three bool facts and one ranged fact with 4 bins are 2 x 2 x 2 x 4 = 32 situations per step, at most 4096.
+
+Wire it after the facts it uses, before or after build. **Returns** the reliability, for the functions below.
+
+**Throws** when `domain` isn't a domain or already has a step chance, a param is out of range, an input isn't a fact of the domain, or there would be more than 4096 situations. When planning: when a number fact without `min` and `max` is among the inputs.
+
+### gmsa_plan_learn_step_chance
+
+```gml
+gmsa_plan_learn_step_chance(reliability, planner, step) -> real
+```
+
+A step's learned chance of success, by name, in the facts the planner read last. For debugging and UI.
+
+**Throws** when the domain has no step with that name.
+
+### gmsa_plan_learn_steps_reset
+
+```gml
+gmsa_plan_learn_steps_reset(reliability)
+```
+
+Forgets everything learned.
+
+### gmsa_plan_learn_steps_save
+
+```gml
+gmsa_plan_learn_steps_save(reliability) -> string
+```
+
+Everything learned, as JSON. Steps are saved by name, so a save survives steps being added or reordered. The outcome model of `gmsa_plan_learn_methods` is saved with [gmsa_learn_save](#gmsa_learn_save) as usual.
+
+### gmsa_plan_learn_steps_load
+
+```gml
+gmsa_plan_learn_steps_load(reliability, json) -> bool
+```
+
+Loads a save made with the same inputs and bins. Steps the domain no longer has are skipped. **Returns** true.
+
+**Throws** when the text isn't a plan steps save, it comes from a newer version, or it was made with other inputs or bins. Nothing changes when it throws.
+
+### gmsa_plan_learn_fact
+
+```gml
+gmsa_plan_learn_fact(domain, name, model, observed, action, [params]) -> domain
+```
+
+A fact reading how likely the observed agent, usually the player, is to pick `action` right now: [gmsa_learn_input](#gmsa_learn_input) as a fact with the range 0 to 1. `params` are those of `gmsa_learn_input` (`fallback`, `refresh`, `clock`).
+
+```gml
+// the player as an agent nobody runs: its profile only describes the player's choices
+global.guard = gmsa_agent_create(global.guard_profile, obj_player);
+global.habits = gmsa_learn_linear_create();
+
+// at every bell: the player picked a post, the model learns
+gmsa_learn_observe(global.habits, gmsa_observe(global.guard, ["guard_1", "guard_2", "guard_3"], _post));
+
+// the goblins plan around the prediction
+gmsa_plan_learn_fact(_d, "next_1", global.habits, global.guard, "guard_1", { fallback : 1 / 3 });
+gmsa_plan_add_step(_d, "break_in_1", { requires : [["next_1", "<", 0.4]], effects : [["inside", true]] });
+```
+
+- **Plans follow the prediction.** Facts are read again before every step, so when the prediction shifts, a plan built on the old one is repaired: the goblin at the door of the vault the guard is now likely to visit picks another vault.
+- **One evaluation per frame.** Predictions are cached per model and observed agent, so a crowd of planners reading it costs one evaluation, then a few microseconds per read.
+- Usable in conditions, scores and as a learning input, like any fact with a range.
+
+**Throws** like `gmsa_learn_input` and `gmsa_plan_add_fact`.
+
+### What learning in plans costs
+
+Measured on the VM target with Demo 11's raid: six steps, one task of three methods, the situation from two facts.
+
+| Setup | Making the plan | The whole raid, make to reward | A raid whose first entrance fails |
+| --- | --- | --- | --- |
+| No learning | 94 us | 184 us | 281 us |
+| Step reliability | 129 us | 306 us | 442 us |
+| Learned methods (Count) | 149 us | 393 us | 605 us |
+| Both | 186 us | 466 us | 705 us |
+
+| Player facts | VM |
+| --- | --- |
+| One read, first in a frame | 65 us, one evaluation of the observed agent |
+| One read, cached | 2.7 us |
+| Making a plan reading three, first in a frame / cached | 139 / 72 us, 49 us with plain facts |
+
+- Step reliability costs about 6 us per method step when a task is planned, and about 30 us per step result learned.
+- Learned methods cost one prediction when the task is planned, and one outcome per method result and per reward.
+- All of it is paid per plan or per step, never per frame.
 
 ---
 
@@ -2312,6 +2688,9 @@ See [Planner fields](#planner-fields) in Plan.
 | Plan step `targets` | `function(owner)` | Array of targets |
 | Plan step `score` | `function(owner, target)` | A number, 0 or less rules the target out |
 | Plan method `score` | `function(owner, state)` | A number, 0 or less rules the method out |
+| Plan task `adjust` | `function(planner, state, scores)` | Nothing, changes `scores` with `[@ ]` |
+| Plan listener | `function(report)` | Nothing. The report is reused, copy what you keep |
+| Plan step chance | `function(planner, step, state)` | The step's chance of success, 0 to 1. `step` is an index into `domain.steps` |
 | Scheduler work `work` | `function(budget)` | True when it did something, false when it had nothing to do |
 
 Custom model methods run with the model as `self`, see [gmsa_learn_custom](#gmsa_learn_custom).
