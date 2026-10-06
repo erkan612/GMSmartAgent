@@ -19,5 +19,6 @@ function gmsa_tests_all(_verbose = false) {
     test_learn_track();
     test_learn_outcome();
     test_plan_domain();
+    test_plan_planner();
     return gmsa_test_run(_verbose);
 }
