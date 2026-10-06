@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"Test_Plan_Slice",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"Test_Plan_Slice",
+  "parent":{
+    "name":"GMSA_Tests",
+    "path":"folders/GMSA_Tests.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

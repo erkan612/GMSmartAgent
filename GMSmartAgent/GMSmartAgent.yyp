@@ -99,6 +99,7 @@
     {"id":{"name":"Test_Plan_Explain","path":"scripts/Test_Plan_Explain/Test_Plan_Explain.yy",},},
     {"id":{"name":"Test_Plan_Planner","path":"scripts/Test_Plan_Planner/Test_Plan_Planner.yy",},},
     {"id":{"name":"Test_Plan_Run","path":"scripts/Test_Plan_Run/Test_Plan_Run.yy",},},
+    {"id":{"name":"Test_Plan_Slice","path":"scripts/Test_Plan_Slice/Test_Plan_Slice.yy",},},
     {"id":{"name":"Test_RankNet","path":"scripts/Test_RankNet/Test_RankNet.yy",},},
     {"id":{"name":"Test_Scheduler","path":"scripts/Test_Scheduler/Test_Scheduler.yy",},},
     {"id":{"name":"Test_Selfcheck","path":"scripts/Test_Selfcheck/Test_Selfcheck.yy",},},

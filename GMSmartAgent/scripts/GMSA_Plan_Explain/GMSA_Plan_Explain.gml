@@ -3,6 +3,7 @@ function gmsa_plan_explain(_planner) {
     var _p = _planner;
     if (_p.goal == undefined || _p.status == gmsa_plan_status.IDLE) return "no plan running";
     var _text = _p.goal + " (" + __gmsa_plan_status_text(_p) + ")";
+    if (_p.status == gmsa_plan_status.PLANNING) return _text;
     if (_p.__run_count == 0) return _text + "\n" + __gmsa_plan_explain_failure(_p);
     var _steps = _p.domain.steps;
     var _depth = 0;
@@ -35,6 +36,7 @@ function __gmsa_plan_status_text(_p) {
             if (_p.result == gmsa_plan_result.OUT_OF_BUDGET) return "failed, ran out of budget after " + string(_p.nodes) + " nodes";
             if (_p.failures > _p.retries) return "failed, too many failed steps";
             return "failed, no plan";
+        case gmsa_plan_status.PLANNING: return "planning, " + string(_p.nodes) + " of " + string(_p.budget) + " nodes";
     }
     return "idle";
 }

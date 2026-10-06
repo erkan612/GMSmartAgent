@@ -1,5 +1,7 @@
 enum gmsa_plan_result { NONE, FOUND, NO_PLAN, OUT_OF_BUDGET }
-enum gmsa_plan_status { IDLE, RUNNING, DONE, FAILED }
+enum gmsa_plan_status { IDLE, PLANNING, RUNNING, DONE, FAILED }
+
+#macro __GMSA_PLAN_PAUSED -1
 
 function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
     if (!is_struct(_domain) || _domain[$ "built"] == undefined) throw "GMSA: plan planner needs a domain from gmsa_plan_domain_create";
@@ -7,12 +9,19 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
     var _budget = __gmsa_param(_params, "budget", 250);
     var _depth = __gmsa_param(_params, "depth", 32);
     var _retries = __gmsa_param(_params, "retries", 3);
+    var _slice = __gmsa_param(_params, "slice", undefined);
+    var _clock = __gmsa_param(_params, "clock", get_timer);
     if (!is_numeric(_budget) || _budget < 1) throw "GMSA: plan budget must be at least 1";
     if (!is_numeric(_depth) || _depth < 1) throw "GMSA: plan depth must be at least 1";
     if (!is_numeric(_retries) || _retries < 0) throw "GMSA: plan retries must be 0 or more";
+    if (_slice != undefined && (!is_numeric(_slice) || !(_slice * 1000000000000 > 0))) {
+        throw "GMSA: plan slice must be more than 0 microseconds, or undefined to plan at once";
+    }
+    if (!__gmsa_callable(_clock)) throw "GMSA: plan clock must be callable";
     var _facts = array_length(_domain.facts);
     return {
         domain : _domain, owner : _owner, budget : floor(_budget), depth : floor(_depth), retries : floor(_retries),
+        slice : _slice, clock : _clock,
         result : gmsa_plan_result.NONE, status : gmsa_plan_status.IDLE, goal : undefined,
         nodes : 0, depth_cut : false, target : undefined, at : 0, failures : 0,
         // imagined state and its undo log, the holder fields __gmsa_plan_apply and __gmsa_plan_undo use
@@ -20,6 +29,8 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __real : array_create(_facts, 0),          // the facts as last read
         __base : array_create(_facts, 0),          // the state a search starts from
         __fact_bool : array_create(_facts, false), // which facts read as bools, for explain
+        // planning in slices: when this call must stop, and where the search paused
+        __deadline : undefined, __resume_choice : false, __paused_once : false,
         // plans are entries: kind 0 a step, 1 a task begins (with its method and a trace record), 2 a task ends
         __out_count : 0, __out_kind : [], __out_index : [], __out_method : [], __out_aux : [],  // search output
         __run_count : 0, __run_kind : [], __run_index : [], __run_method : [], __run_aux : [], __run_steps : 0,  // the running plan
@@ -44,23 +55,34 @@ function gmsa_plan_make(_planner, _name) {
     }
     var _root = _d.lookup[$ _name];
     _planner.goal = _name;
+    _planner.result = gmsa_plan_result.NONE;
     _planner.target = undefined;
     _planner.failures = 0;
     _planner.at = 0;
     _planner.__run_count = 0;
     _planner.__run_steps = 0;
     _planner.__plan_trace_top = 0;
+    _planner.__paused_once = false;
     _planner.nodes = 0;
     __gmsa_plan_read_real(_planner);
     __gmsa_plan_base(_planner, 0);
-    _planner.result = __gmsa_plan_search_from(_planner, _root.kind, _root.index, 0);
-    if (_planner.result != gmsa_plan_result.FOUND) {
-        _planner.status = gmsa_plan_status.FAILED;
-        return false;
+    __gmsa_plan_start_slice(_planner, _planner.slice);
+    var _r = __gmsa_plan_search_from(_planner, _root.kind, _root.index, 0);
+    _planner.__deadline = undefined;
+    return __gmsa_plan_after_search(_planner, _r);
+}
+
+function gmsa_plan_work(_planner, _budget = undefined) {
+    __gmsa_plan_check_planner(_planner);
+    if (_planner.status != gmsa_plan_status.PLANNING) return _planner.status;
+    if (_budget != undefined && (!is_numeric(_budget) || !(_budget * 1000000000000 > 0))) {
+        throw "GMSA: plan work budget must be more than 0 microseconds";
     }
-    __gmsa_plan_splice(_planner, 0, -1);
-    __gmsa_plan_settle(_planner, false, false);
-    return _planner.status != gmsa_plan_status.FAILED;
+    __gmsa_plan_start_slice(_planner, (_budget == undefined) ? _planner.slice : _budget);
+    var _r = __gmsa_plan_search(_planner);
+    _planner.__deadline = undefined;
+    __gmsa_plan_after_search(_planner, _r);
+    return _planner.status;
 }
 
 function gmsa_plan_step_done(_planner) {
@@ -98,6 +120,8 @@ function gmsa_plan_stop(_planner) {
     _planner.failures = 0;
     _planner.__run_count = 0;
     _planner.__run_steps = 0;
+    _planner.__deadline = undefined;
+    _planner.__resume_choice = false;
 }
 
 function gmsa_plan_get_status(_planner) {
@@ -184,12 +208,19 @@ function __gmsa_plan_search_from(_p, _kind, _index, _depth) {
     _p.__frames = 0;
     _p.__order_top = 0;
     _p.depth_cut = false;
+    _p.__resume_choice = false;
     _p.__head = __gmsa_plan_push_node(_p, _kind, _index, _depth, -1);
     return __gmsa_plan_search(_p);
 }
 
 function __gmsa_plan_search(_p) {
     var _d = _p.domain;
+    if (_p.__resume_choice) {
+        // paused while choosing a method: carry on choosing
+        _p.__resume_choice = false;
+        var _first = __gmsa_plan_choice_result(_p, __gmsa_plan_next_choice(_p));
+        if (_first != undefined) return _first;
+    }
     while (true) {
         var _n = _p.__head;
         if (_n == -1) return gmsa_plan_result.FOUND;
@@ -200,6 +231,7 @@ function __gmsa_plan_search(_p) {
             continue;
         }
         if (_p.nodes >= _p.budget) return gmsa_plan_result.OUT_OF_BUDGET;
+        if (__gmsa_plan_time_up(_p)) return __GMSA_PLAN_PAUSED;
         var _r;
         if (_p.__node_kind[_n] == 0) {
             // a step: if it can be done in the imagined state, do it and move on
@@ -220,9 +252,24 @@ function __gmsa_plan_search(_p) {
             __gmsa_plan_push_frame(_p, _n);
             _r = __gmsa_plan_next_choice(_p);
         }
-        if (_r == 0) return gmsa_plan_result.NO_PLAN;
-        if (_r == 2) return gmsa_plan_result.OUT_OF_BUDGET;
+        var _out = __gmsa_plan_choice_result(_p, _r);
+        if (_out != undefined) return _out;
     }
+}
+
+function __gmsa_plan_choice_result(_p, _r) {
+    switch (_r) {
+        case 0: return gmsa_plan_result.NO_PLAN;
+        case 2: return gmsa_plan_result.OUT_OF_BUDGET;
+        case 3:
+            _p.__resume_choice = true;
+            return __GMSA_PLAN_PAUSED;
+    }
+    return undefined;
+}
+
+function __gmsa_plan_time_up(_p) {
+    return _p.__deadline != undefined && _p.clock() >= _p.__deadline;
 }
 
 function __gmsa_plan_push_frame(_p, _n) {
@@ -277,6 +324,7 @@ function __gmsa_plan_next_choice(_p) {
         var _task = _d.tasks[_p.__frame_task[_f]];
         while (_p.__frame_try[_f] < _p.__frame_count[_f]) {
             if (_p.nodes >= _p.budget) return 2;
+            if (__gmsa_plan_time_up(_p)) return 3;
             var _m = _p.__order[_p.__frame_start[_f] + _p.__frame_try[_f]];
             var _method = _task.methods[_m];
             _p.__frame_try[_f] += 1;
@@ -325,6 +373,26 @@ function __gmsa_plan_keep_record(_p, _o) {
 }
 
 // Internal: running
+function __gmsa_plan_start_slice(_p, _budget) {
+    _p.__deadline = (_budget == undefined) ? undefined : _p.clock() + _budget;
+}
+
+function __gmsa_plan_after_search(_p, _r) {
+    if (_r == __GMSA_PLAN_PAUSED) {
+        _p.status = gmsa_plan_status.PLANNING;
+        _p.__paused_once = true;
+        return true;
+    }
+    _p.result = _r;
+    if (_r != gmsa_plan_result.FOUND) {
+        _p.status = gmsa_plan_status.FAILED;
+        return false;
+    }
+    __gmsa_plan_splice(_p, 0, -1);
+    __gmsa_plan_settle(_p, false, _p.__paused_once);
+    return _p.status != gmsa_plan_status.FAILED;
+}
+
 function __gmsa_plan_read_real(_p) {
     __gmsa_plan_read_facts(_p.domain, _p.owner, _p);
     for (var _i = 0; _i < array_length(_p.__real); _i++) _p.__real[_i] = _p.state[_i];
