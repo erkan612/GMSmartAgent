@@ -2,7 +2,7 @@ enum gmsa_plan_op { EQ, NE, LT, LE, GT, GE, SET, ADD, SUB }
 
 function gmsa_plan_domain_create(_name) {
     if (!is_string(_name) || _name == "") throw "GMSA: plan domain needs a name";
-    return { name : _name, facts : [], steps : [], tasks : [], built : false, fact_lookup : {}, lookup : {}, listeners : [] };
+    return { name : _name, facts : [], steps : [], tasks : [], built : false, fact_lookup : {}, lookup : {}, listeners : [], step_chance : undefined };
 }
 
 function gmsa_plan_add_fact(_domain, _name, _read, _params = {}) {
@@ -145,6 +145,12 @@ function gmsa_plan_add_listener(_domain, _listener) {
     if (!is_struct(_domain) || _domain[$ "built"] == undefined) throw "GMSA: plan listener needs a domain from gmsa_plan_domain_create";
     if (!__gmsa_callable(_listener)) throw "GMSA: plan listener must be callable";
     array_push(_domain.listeners, _listener);
+}
+
+function gmsa_plan_set_step_chance(_domain, _chance) {
+    if (!is_struct(_domain) || _domain[$ "built"] == undefined) throw "GMSA: plan step chance needs a domain from gmsa_plan_domain_create";
+    if (_chance != undefined && !__gmsa_callable(_chance)) throw "GMSA: plan step chance must be callable";
+    _domain.step_chance = _chance;
 }
 
 // Internal

@@ -54,6 +54,84 @@ function test_plan_learn() {
             _owner.allow_steal = 0; // the designer rules stealing out
             gmsa_test_assert_equal(__test_plan_learn_count(_p, _owner, false, "buy"), 50, "a ruled out method stays out");
         });
+		
+        gmsa_test_case("steps wiring validates", function() {
+            var _d = __test_plan_steps_domain();
+            var _ctx = { d : _d };
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_plan_learn_steps(d, { inputs : ["nope"] }); }), "unknown fact");
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_plan_learn_steps(d, { bins : 1 }); }), "bins");
+            gmsa_plan_learn_steps(_d);
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_plan_learn_steps(d); }), "twice");
+            var _wide = gmsa_plan_domain_create("wide");
+            var _names = [];
+            for (var _i = 0; _i < 13; _i++) {
+                gmsa_plan_add_fact(_wide, "f" + string(_i), function(_o) { return false; });
+                array_push(_names, "f" + string(_i));
+            }
+            gmsa_test_assert_throws(method({ d : _wide, n : _names }, function() { gmsa_plan_learn_steps(d, { inputs : n }); }), "too many situations");
+        });
+
+        gmsa_test_case("a step that keeps failing is avoided", function() {
+            var _d = __test_plan_steps_domain();
+            var _rel = gmsa_plan_learn_steps(_d);
+            gmsa_plan_domain_build(_d);
+            var _owner = { raining : true };
+            var _p = gmsa_plan_planner_create(_d, _owner);
+            gmsa_plan_make(_p, "cross");
+            gmsa_test_assert_equal(gmsa_plan_current(_p), "walk_bridge", "the bridge first, as declared");
+            gmsa_plan_step_failed(_p); // the bridge is out in the rain
+            gmsa_test_assert_equal(gmsa_plan_current(_p), "wade", "the repair already avoids it");
+            gmsa_test_assert_true(gmsa_plan_learn_step_chance(_rel, _p, "walk_bridge") < 0.7, "chance dropped");
+            gmsa_test_assert_equal(gmsa_plan_learn_step_chance(_rel, _p, "wade"), 1, "never failed");
+        });
+
+        gmsa_test_case("reliability depends on the situation", function() {
+            var _d = __test_plan_steps_domain();
+            gmsa_plan_learn_steps(_d, { inputs : ["raining"] });
+            gmsa_plan_domain_build(_d);
+            var _owner = { raining : true };
+            var _p = gmsa_plan_planner_create(_d, _owner);
+            __test_plan_steps_episodes(_p, _owner, 4);
+            _owner.raining = true;
+            gmsa_plan_make(_p, "cross");
+            gmsa_test_assert_equal(gmsa_plan_current(_p), "wade", "wade in the rain");
+            _owner.raining = false;
+            gmsa_plan_make(_p, "cross");
+            gmsa_test_assert_equal(gmsa_plan_current(_p), "walk_bridge", "the bridge when it's dry");
+        });
+
+        gmsa_test_case("old failures fade", function() {
+            var _d = __test_plan_steps_domain();
+            var _rel = gmsa_plan_learn_steps(_d, { half_life : 5 });
+            gmsa_plan_domain_build(_d);
+            var _owner = { raining : true };
+            var _p = gmsa_plan_planner_create(_d, _owner);
+            __test_plan_steps_episodes(_p, _owner, 1);
+            gmsa_test_assert_true(gmsa_plan_learn_step_chance(_rel, _p, "walk_bridge") < 0.7, "fresh failure");
+            __test_plan_steps_episodes(_p, _owner, 40); // only wading from now on
+            gmsa_test_assert_true(gmsa_plan_learn_step_chance(_rel, _p, "walk_bridge") > 0.95, "forgotten");
+        });
+
+        gmsa_test_case("reliability saves and loads", function() {
+            var _d = __test_plan_steps_domain();
+            var _rel = gmsa_plan_learn_steps(_d, { inputs : ["raining"] });
+            gmsa_plan_domain_build(_d);
+            var _owner = { raining : true };
+            var _p = gmsa_plan_planner_create(_d, _owner);
+            __test_plan_steps_episodes(_p, _owner, 3);
+            var _json = gmsa_plan_learn_steps_save(_rel);
+            var _d2 = __test_plan_steps_domain();
+            var _rel2 = gmsa_plan_learn_steps(_d2, { inputs : ["raining"] });
+            gmsa_plan_domain_build(_d2);
+            gmsa_plan_learn_steps_load(_rel2, _json);
+            _owner.raining = true; // compare both in the rain, where the bridge has failed
+            gmsa_plan_make(_p, "cross");
+            var _q = gmsa_plan_planner_create(_d2, _owner);
+            gmsa_plan_make(_q, "cross");
+            gmsa_test_assert_equal(gmsa_plan_learn_step_chance(_rel2, _q, "walk_bridge"), gmsa_plan_learn_step_chance(_rel, _p, "walk_bridge"), "same chance");
+            var _other = gmsa_plan_learn_steps(gmsa_plan_domain_create("x"));
+            gmsa_test_assert_throws(method({ r : _other, j : _json }, function() { gmsa_plan_learn_steps_load(r, j); }), "other inputs");
+        });
     });
 }
 
@@ -107,4 +185,31 @@ function __test_plan_learn_count(_p, _owner, _awake, _method) {
         gmsa_plan_stop(_p); // interrupted: nothing is learned from these
     }
     return _n;
+}
+
+function __test_plan_steps_domain() {
+    var _d = gmsa_plan_domain_create("crossing");
+    gmsa_plan_add_fact(_d, "raining", function(_o) { return _o.raining; });
+    gmsa_plan_add_step(_d, "walk_bridge");
+    gmsa_plan_add_step(_d, "wade");
+    var _t = gmsa_plan_add_task(_d, "cross");
+    gmsa_plan_add_method(_t, "bridge", { subtasks : ["walk_bridge"] });
+    gmsa_plan_add_method(_t, "ford", { subtasks : ["wade"] });
+    return _d;
+}
+
+function __test_plan_steps_episodes(_p, _owner, _count) {
+    var _rain = _owner.raining;
+    repeat (_count) {
+        _owner.raining = _rain;
+        gmsa_plan_make(_p, "cross");
+        var _guard = 0;
+        while (gmsa_plan_get_status(_p) == gmsa_plan_status.RUNNING && _guard < 10) {
+            if (gmsa_plan_current(_p) == "walk_bridge" && _owner.raining) gmsa_plan_step_failed(_p);
+            else gmsa_plan_step_done(_p);
+            _guard++;
+        }
+        _rain = !_rain; // alternate rain and dry spells
+    }
+    _owner.raining = _rain;
 }

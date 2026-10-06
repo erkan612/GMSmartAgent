@@ -350,6 +350,17 @@ function __gmsa_plan_push_frame(_p, _n) {
         }
         _p.__method_score[_m] = _s;
     }
+    // how likely each method's own steps are to succeed here, when the domain knows
+    var _chance = _p.domain.step_chance;
+    if (_chance != undefined) {
+        for (var _m = 0; _m < _nm; _m++) {
+            if (!(_p.__method_score[_m] * 1000000000000 > 0)) continue;
+            var _subs = _methods[_m].subtasks;
+            for (var _k = 0; _k < array_length(_subs); _k++) {
+                if (_subs[_k].kind == 0) _p.__method_score[_m] *= clamp(_chance(_p, _subs[_k].index, _p.state), 0, 1);
+            }
+        }
+    }
     if (_task.adjust != undefined) _task.adjust(_p, _p.state, _p.__method_score);
 
     // best first, 0 or less rules a method out, ties keep the declared order
