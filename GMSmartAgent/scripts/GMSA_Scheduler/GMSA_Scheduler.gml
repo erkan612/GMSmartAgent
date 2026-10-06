@@ -9,7 +9,7 @@ function gmsa_scheduler_create(_budget = 2000, _params = {}) {
         tiers  : [], // sorted by priority, highest first
         count  : 0,
         queue  : [], // agents waiting for on_decide
-        stats  : { thinks : 0, time : 0, stopped : false }, // last step
+        stats  : { thinks : 0, works : 0, time : 0, stopped : false }, // last step
     };
 }
 
@@ -41,17 +41,45 @@ function gmsa_scheduler_remove(_scheduler, _agent) {
     return true;
 }
 
+function gmsa_scheduler_add_work(_scheduler, _work, _priority = 0) {
+    if (!is_struct(_work) || !__gmsa_callable(_work[$ "work"])) throw "GMSA: scheduler work needs a struct with a work(budget) method";
+    if (_work[$ "__scheduler"] != undefined) throw "GMSA: work is already in a scheduler";
+    if (!is_numeric(_priority)) throw "GMSA: scheduler work priority must be a number";
+    var _tier = __gmsa_scheduler_tier(_scheduler, _priority);
+    array_push(_tier.works, _work);
+    _work.__scheduler = { scheduler : _scheduler, tier : _tier };
+    return _work;
+}
+
+function gmsa_scheduler_remove_work(_scheduler, _work) {
+    var _slot = _work[$ "__scheduler"];
+    if (_slot == undefined || _slot.scheduler != _scheduler) return false;
+    var _tier = _slot.tier;
+    for (var _i = 0; _i < array_length(_tier.works); _i++) {
+        if (_tier.works[_i] == _work) {
+            array_delete(_tier.works, _i, 1);
+            if (_i < _tier.work_cursor) _tier.work_cursor--;
+            break;
+        }
+    }
+    _work.__scheduler = undefined;
+    return true;
+}
+
 function gmsa_scheduler_step(_scheduler) {
     var _clock   = _scheduler.clock;
     var _start   = _clock();
     var _now     = _start;
     var _budget  = _scheduler.budget;
     var _thinks  = 0;
+    var _works   = 0;
     var _stopped = false;
     var _tiers   = _scheduler.tiers;
 
     for (var _ti = 0; _ti < array_length(_tiers) && !_stopped; _ti++) {
         var _tier = _tiers[_ti];
+        // no work in this tier, or a pass found none: skip work for the rest of the step
+        var _idle = (array_length(_tier.works) == 0);
         var _n = array_length(_tier.agents);
         for (var _k = 0; _k < _n; _k++) {
             if (_tier.cursor >= _n) _tier.cursor = 0;
@@ -61,7 +89,7 @@ function gmsa_scheduler_step(_scheduler) {
                 _tier.cursor++;
                 continue;
             }
-            if (_thinks > 0 && _clock() - _start >= _budget) {
+            if (_thinks + _works > 0 && _clock() - _start >= _budget) {
                 _stopped = true;
                 break;
             }
@@ -69,11 +97,33 @@ function gmsa_scheduler_step(_scheduler) {
             gmsa_agent_think(_agent, _now, _scheduler.rng);
             _thinks++;
             if (_agent.on_decide != undefined) array_push(_scheduler.queue, _agent);
+
+            // work takes turns with the agents
+            if (!_idle) {
+                var _left = _budget - (_clock() - _start);
+                if (_left <= 0) {
+                    _stopped = true;
+                    break;
+                }
+                if (__gmsa_scheduler_work_turn(_tier, _left)) _works++;
+                else _idle = true;
+            }
+        }
+        // whatever the agents left goes to the tier's work, a turn at a time
+        while (!_stopped && !_idle) {
+            var _left = _budget - (_clock() - _start);
+            if (_thinks + _works > 0 && _left <= 0) {
+                _stopped = true;
+                break;
+            }
+            if (__gmsa_scheduler_work_turn(_tier, max(1, _left))) _works++;
+            else _idle = true;
         }
     }
 
     var _stats = _scheduler.stats;
     _stats.thinks  = _thinks;
+    _stats.works   = _works;
     _stats.time    = _clock() - _start;
     _stats.stopped = _stopped;
 
@@ -112,9 +162,21 @@ function __gmsa_scheduler_tier(_scheduler, _priority) {
         if (_tiers[_i].priority == _priority) return _tiers[_i];
         if (_tiers[_i].priority < _priority) break;
     }
-    var _tier = { priority : _priority, agents : [], cursor : 0 };
+    var _tier = { priority : _priority, agents : [], cursor : 0, works : [], work_cursor : 0 };
     array_insert(_tiers, _i, _tier);
     return _tier;
+}
+
+function __gmsa_scheduler_work_turn(_tier, _budget) {
+    var _list = _tier.works;
+    var _n = array_length(_list);
+    for (var _k = 0; _k < _n; _k++) {
+        if (_tier.work_cursor >= _n) _tier.work_cursor = 0;
+        var _work = _list[_tier.work_cursor];
+        _tier.work_cursor++;
+        if (_work.work(_budget)) return true;
+    }
+    return false;
 }
 
 function gmsa_scheduler_set_priority(_scheduler, _agent, _priority) {

@@ -30,7 +30,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __base : array_create(_facts, 0),          // the state a search starts from
         __fact_bool : array_create(_facts, false), // which facts read as bools, for explain
         // planning in slices: when this call must stop, where the search paused, and whether it's a make (0) or a repair (1)
-        __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0,
+        __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0, __work : undefined,
         // a repair's climb: the task being replanned, its entries s to e, and how to search it
         __repair_s : 0, __repair_e : 0, __repair_kind : 0, __repair_index : 0, __repair_depth : 0,
         // plans are entries: kind 0 a step, 1 a task begins (with its method and a trace record), 2 a task ends
@@ -69,7 +69,7 @@ function gmsa_plan_make(_planner, _name) {
     _planner.nodes = 0;
     __gmsa_plan_read_real(_planner);
     __gmsa_plan_base(_planner, 0);
-    __gmsa_plan_start_slice(_planner, _planner.slice);
+    __gmsa_plan_start_slice(_planner, __gmsa_plan_own_slice(_planner));
     var _r = __gmsa_plan_search_from(_planner, _root.kind, _root.index, 0);
     var _ok = __gmsa_plan_after_search(_planner, _r);
     _planner.__deadline = undefined;
@@ -100,7 +100,7 @@ function gmsa_plan_step_done(_planner) {
     if (_planner.status != gmsa_plan_status.RUNNING) return _planner.status;
     _planner.at += 1;
     _planner.failures = 0;
-    __gmsa_plan_start_slice(_planner, _planner.slice);
+    __gmsa_plan_start_slice(_planner, __gmsa_plan_own_slice(_planner));
     __gmsa_plan_settle(_planner, false, true);
     _planner.__deadline = undefined;
     return _planner.status;
@@ -109,7 +109,7 @@ function gmsa_plan_step_done(_planner) {
 function gmsa_plan_step_failed(_planner) {
     __gmsa_plan_check_planner(_planner);
     if (_planner.status != gmsa_plan_status.RUNNING) return _planner.status;
-    __gmsa_plan_start_slice(_planner, _planner.slice);
+    __gmsa_plan_start_slice(_planner, __gmsa_plan_own_slice(_planner));
     __gmsa_plan_settle(_planner, true, true);
     _planner.__deadline = undefined;
     return _planner.status;
@@ -121,7 +121,7 @@ function gmsa_plan_refresh(_planner) {
     __gmsa_plan_read_real(_planner);
     var _bad = __gmsa_plan_broken_at(_planner, _planner.at);
     if (_bad == -1) return _planner.status;
-    __gmsa_plan_start_slice(_planner, _planner.slice);
+    __gmsa_plan_start_slice(_planner, __gmsa_plan_own_slice(_planner));
     __gmsa_plan_after_repair(_planner, __gmsa_plan_repair(_planner, _bad), false);
     _planner.__deadline = undefined;
     return _planner.status;
@@ -390,6 +390,10 @@ function __gmsa_plan_keep_record(_p, _o) {
 // Internal: running
 function __gmsa_plan_start_slice(_p, _budget) {
     _p.__deadline = (_budget == undefined) ? undefined : _p.clock() + _budget;
+}
+
+function __gmsa_plan_own_slice(_p) {
+    return (_p.__work != undefined) ? 0 : _p.slice;
 }
 
 function __gmsa_plan_after_search(_p, _r) {

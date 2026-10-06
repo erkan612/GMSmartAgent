@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Plan_Schedule",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Plan_Schedule",
+  "parent":{
+    "name":"Plan",
+    "path":"folders/GMSmartAgent/Plan.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

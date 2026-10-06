@@ -23,5 +23,7 @@ function gmsa_tests_all(_verbose = false) {
     test_plan_run();
     test_plan_explain();
     test_plan_slice();
+    test_scheduler_work();
+    test_plan_schedule();
     return gmsa_test_run(_verbose);
 }
