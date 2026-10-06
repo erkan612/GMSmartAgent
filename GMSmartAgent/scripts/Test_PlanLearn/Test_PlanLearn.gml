@@ -132,6 +132,35 @@ function test_plan_learn() {
             var _other = gmsa_plan_learn_steps(gmsa_plan_domain_create("x"));
             gmsa_test_assert_throws(method({ r : _other, j : _json }, function() { gmsa_plan_learn_steps_load(r, j); }), "other inputs");
         });
+		
+        gmsa_test_case("the player as a fact", function() {
+            var _profile = gmsa_profile_create("player");
+            gmsa_profile_add_input(_profile, gmsa_input_push("hp"));
+            gmsa_profile_add_action(_profile, "left");
+            gmsa_profile_add_action(_profile, "right");
+            gmsa_profile_set_features(_profile, ["hp"]);
+            gmsa_profile_build(_profile);
+            var _player = gmsa_agent_create(_profile);
+            var _habits = gmsa_learn_count_create();
+            repeat (30) gmsa_learn_observe(_habits, gmsa_observe(_player, [{ action : "left" }, { action : "right" }], 0));
+
+            var _d = gmsa_plan_domain_create("ambush");
+            gmsa_plan_learn_fact(_d, "player_left", _habits, _player, "left", { refresh : 0 });
+            gmsa_plan_add_step(_d, "wait_left");
+            gmsa_plan_add_step(_d, "wait_right");
+            var _t = gmsa_plan_add_task(_d, "ambush");
+            gmsa_plan_add_method(_t, "left_side", { requires : [["player_left", ">=", 0.5]], subtasks : ["wait_left"] });
+            gmsa_plan_add_method(_t, "right_side", { subtasks : ["wait_right"] });
+            gmsa_plan_domain_build(_d);
+            gmsa_test_assert_equal(_d.facts[0].max, 1, "a 0 to 1 fact, ready for learning too");
+
+            var _goblin = gmsa_plan_planner_create(_d, {});
+            gmsa_plan_make(_goblin, "ambush");
+            gmsa_test_assert_equal(gmsa_plan_current(_goblin), "wait_left", "the player usually goes left");
+            repeat (200) gmsa_learn_observe(_habits, gmsa_observe(_player, [{ action : "left" }, { action : "right" }], 1));
+            gmsa_plan_make(_goblin, "ambush");
+            gmsa_test_assert_equal(gmsa_plan_current(_goblin), "wait_right", "habits changed, so did the ambush");
+        });
     });
 }
 

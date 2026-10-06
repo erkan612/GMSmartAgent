@@ -62,6 +62,12 @@ function gmsa_plan_learn_methods(_task, _model, _params = {}) {
     return _task;
 }
 
+function gmsa_plan_learn_fact(_domain, _name, _model, _observed, _action, _params = {}) {
+    var _read = gmsa_learn_input(_model, _observed, _action, _params);
+    gmsa_plan_add_fact(_domain, _name, method({ read : _read }, function(_owner) { return read(undefined, undefined); }), { min : 0, max : 1 });
+    return _domain;
+}
+
 // Internal, run with the wiring context as self
 function __gmsa_plan_learn_adjust(_planner, _state, _scores) {
     var _nm = array_length(options);
