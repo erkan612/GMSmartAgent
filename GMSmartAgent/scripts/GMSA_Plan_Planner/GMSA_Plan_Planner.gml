@@ -30,7 +30,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __base : array_create(_facts, 0),          // the state a search starts from
         __fact_bool : array_create(_facts, false), // which facts read as bools, for explain
         // planning in slices: when this call must stop, where the search paused, and whether it's a make (0) or a repair (1)
-        __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0, __work : undefined, __fresh_from : -1, __fresh_to : -1,
+        __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0, __work : undefined, __fresh_from : -1, __fresh_to : -1, __slice_first : false,
         // a repair's climb: the task being replanned, its entries s to e, and how to search it
         __repair_s : 0, __repair_e : 0, __repair_kind : 0, __repair_index : 0, __repair_depth : 0,
         // plans are entries: kind 0 a step, 1 a task begins (with its method and a trace record), 2 a task ends
@@ -288,7 +288,12 @@ function __gmsa_plan_choice_result(_p, _r) {
 }
 
 function __gmsa_plan_time_up(_p) {
-    return _p.__deadline != undefined && _p.clock() >= _p.__deadline;
+    if (_p.__deadline == undefined) return false;
+    if (_p.__slice_first) {
+        _p.__slice_first = false;
+        return false;
+    }
+    return _p.clock() >= _p.__deadline;
 }
 
 function __gmsa_plan_push_frame(_p, _n) {
@@ -394,6 +399,7 @@ function __gmsa_plan_keep_record(_p, _o) {
 // Internal: running
 function __gmsa_plan_start_slice(_p, _budget) {
     _p.__deadline = (_budget == undefined) ? undefined : _p.clock() + _budget;
+    _p.__slice_first = (_budget != undefined && _budget > 0);
 }
 
 function __gmsa_plan_own_slice(_p) {

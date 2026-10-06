@@ -145,6 +145,20 @@ function test_plan_slice() {
             gmsa_test_assert_equal(gmsa_plan_get_status(_p), gmsa_plan_status.IDLE, "stopped");
             gmsa_test_assert_equal(gmsa_plan_work(_p), gmsa_plan_status.IDLE, "nothing left to work on");
         });
+		
+        gmsa_test_case("a tiny slice still makes progress", function() {
+            var _whole = gmsa_plan_planner_create(__test_plan_slice_coins(), { coins : 30 }, { depth : 64 });
+            gmsa_plan_make(_whole, "grab_all");
+            var _p = gmsa_plan_planner_create(__test_plan_slice_coins(), { coins : 30 }, { depth : 64, slice : 1, clock : __test_plan_clock(100) });
+            gmsa_plan_make(_p, "grab_all");
+            var _calls = 0;
+            while (gmsa_plan_get_status(_p) == gmsa_plan_status.PLANNING && _calls < 10000) {
+                gmsa_plan_work(_p);
+                _calls++;
+            }
+            gmsa_test_assert_equal(gmsa_plan_get_status(_p), gmsa_plan_status.RUNNING, "finished");
+            gmsa_test_assert_equal(gmsa_plan_nodes_used(_p), gmsa_plan_nodes_used(_whole), "same search");
+        });
     });
 }
 
