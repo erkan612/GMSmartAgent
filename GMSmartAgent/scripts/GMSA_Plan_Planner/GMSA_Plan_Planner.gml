@@ -50,7 +50,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __frames : 0, __frame_task : [], __frame_rest : [], __frame_pool : [], __frame_undo : [], __frame_out : [],
         __frame_trace : [], __frame_depth : [], __frame_start : [], __frame_count : [], __frame_try : [], __frame_k : [],
         // method order per choice point, best first
-        __order_top : 0, __order : [], __order_score : [],
+        __order_top : 0, __order : [], __order_score : [], __method_score : [],
     };
     _p.__report.planner = _p;
     _p.__report.state = _p.state; // filled with the facts the report is about, during the call
@@ -338,17 +338,27 @@ function __gmsa_plan_push_frame(_p, _n) {
     _p.__frame_depth[_f] = _p.__node_depth[_n] + 1;
     _p.__frame_try[_f] = 0;
 
+    // every method's score, 1 without one. The task's adjust may change them all at once, such as learned scores
     var _methods = _task.methods;
-    var _start = _p.__order_top;
-    var _count = 0;
-    for (var _m = 0; _m < array_length(_methods); _m++) {
+    var _nm = array_length(_methods);
+    for (var _m = 0; _m < _nm; _m++) {
         var _md = _methods[_m];
         var _s = 1;
         if (_md.score != undefined) {
             _s = _md.score(_p.owner, _p.state);
             if (!is_numeric(_s)) throw "GMSA: plan method '" + _task.name + "." + _md.name + "' score must return a number";
-            if (!(_s * 1000000000000 > 0)) continue;
         }
+        _p.__method_score[_m] = _s;
+    }
+    if (_task.adjust != undefined) _task.adjust(_p, _p.state, _p.__method_score);
+
+    // best first, 0 or less rules a method out, ties keep the declared order
+    var _start = _p.__order_top;
+    var _count = 0;
+    for (var _m = 0; _m < _nm; _m++) {
+        var _s = _p.__method_score[_m];
+        if (!is_numeric(_s)) throw "GMSA: plan task '" + _task.name + "' adjust must leave numbers";
+        if (!(_s * 1000000000000 > 0)) continue;
         var _k = _count;
         while (_k > 0 && _p.__order_score[_start + _k - 1] < _s) {
             _p.__order[_start + _k] = _p.__order[_start + _k - 1];
@@ -359,6 +369,7 @@ function __gmsa_plan_push_frame(_p, _n) {
         _p.__order_score[_start + _k] = _s;
         _count += 1;
     }
+	
     // weighted tasks: the top methods in a weighted random order, the rest after them in score order
     var _k = 0;
     if (_task.select == gmsa_select.TOP_N_WEIGHTED) {

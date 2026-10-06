@@ -43,7 +43,9 @@ function gmsa_plan_add_task(_domain, _name, _params = {}) {
         throw "GMSA: plan task '" + _name + "' select must be gmsa_select.BEST or gmsa_select.TOP_N_WEIGHTED";
     }
     if (!is_numeric(_top_n) || _top_n < 1) throw "GMSA: plan task '" + _name + "' top_n must be at least 1";
-    var _task = { name : _name, domain : _domain, methods : [], select : _select, top_n : floor(_top_n) };
+    var _adjust = __gmsa_param(_params, "adjust", undefined);
+    if (_adjust != undefined && !__gmsa_callable(_adjust)) throw "GMSA: plan task '" + _name + "' adjust must be callable";
+    var _task = { name : _name, domain : _domain, methods : [], select : _select, top_n : floor(_top_n), adjust : _adjust };
     array_push(_domain.tasks, _task);
     return _task;
 }
@@ -116,7 +118,7 @@ function gmsa_plan_domain_build(_domain) {
             for (var _k = 0; _k < array_length(_md.subtasks); _k++) {
                 var _sub = _md.subtasks[_k];
                 if (!is_string(_sub) || !variable_struct_exists(_names, _sub)) throw "GMSA: plan " + _at + " uses unknown step or task '" + string(_sub) + "'";
-                _subs[_k] = _names[$ _sub];  // { kind : 0 step or 1 task, index }
+                _subs[_k] = _names[$ _sub]; // { kind : 0 step or 1 task, index }
             }
             _methods[_m] = {
                 name : _md.name, task : _i, index : _m, subtasks : _subs,
@@ -124,7 +126,7 @@ function gmsa_plan_domain_build(_domain) {
                 check : _md.check, score : _md.score,
             };
         }
-        _tasks[_i] = { name : _t.name, index : _i, methods : _methods, select : _t.select, top_n : _t.top_n };
+        _tasks[_i] = { name : _t.name, index : _i, methods : _methods, select : _t.select, top_n : _t.top_n, adjust : _t.adjust };
     }
 
     _domain.fact_lookup = _facts;

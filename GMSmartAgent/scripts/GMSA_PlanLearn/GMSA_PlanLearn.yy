@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_PlanLearn",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_PlanLearn",
+  "parent":{
+    "name":"PlanLearn",
+    "path":"folders/GMSmartAgent/PlanLearn.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

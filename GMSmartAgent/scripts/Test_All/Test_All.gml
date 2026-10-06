@@ -29,5 +29,6 @@ function gmsa_tests_all(_verbose = false) {
     test_plan_choice();
     test_plan_reports();
     test_learn_space();
+    test_plan_learn();
     return gmsa_test_run(_verbose);
 }
