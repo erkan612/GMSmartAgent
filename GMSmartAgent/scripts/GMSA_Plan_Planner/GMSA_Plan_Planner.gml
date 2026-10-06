@@ -972,6 +972,12 @@ function __gmsa_plan_goal_search(_p) {
                 if (!is_numeric(_cost)) throw "GMSA: plan step '" + _step.name + "' cost must return a number";
                 if (!(_cost * 1000000000000 > 0)) continue; // 0 or less rules the step out
             }
+            // a step that works half the time costs twice as much, one that never works is ruled out
+            if (_d.step_chance != undefined) {
+                var _chance = clamp(_d.step_chance(_p, _step.index, _p.state), 0, 1);
+                if (!(_chance * 1000000000000 > 0)) continue;
+                _cost /= _chance;
+            }
             var _g = _p.__g_cost[_from] + _cost;
             var _mark = _p.undo_count;
             __gmsa_plan_apply(_p, _step.effects);

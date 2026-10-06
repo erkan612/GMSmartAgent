@@ -116,6 +116,56 @@ function test_plan_goal_search() {
             gmsa_test_assert_equal(gmsa_plan_get_status(_q), gmsa_plan_status.FAILED);
             gmsa_test_assert_true(array_contains(_log, string(gmsa_plan_report.GOAL_FAILURE) + ":warm:undefined"));
         });
+		
+        gmsa_test_case("a step chance raises the cost: 10% axe luck makes camping cheaper", function() {
+            var _d = __test_plan_camp_live();
+            gmsa_plan_set_step_chance(_d, function(_planner, _step, _state) {
+                return (_planner.domain.steps[_step].name == "get_axe") ? 0.1 : 1;
+            });
+            var _p = gmsa_plan_planner_create(_d, __test_plan_camper());
+            gmsa_plan_make(_p, "warm");
+            gmsa_test_assert_equal(__test_plan_names(_p), "camp,chop,build_fire", "20 + 4 + 3 + 1 against 9 + 3 + 1");
+        });
+
+        gmsa_test_case("a chance of 0 rules a step out", function() {
+            var _d = __test_plan_camp_live();
+            gmsa_plan_set_step_chance(_d, function(_planner, _step, _state) {
+                return (_planner.domain.steps[_step].name == "camp") ? 0 : 1;
+            });
+            var _o = __test_plan_camper();
+            _o.walk_cost = 20; // camping would win, but it never works
+            var _p = gmsa_plan_planner_create(_d, _o);
+            gmsa_plan_make(_p, "warm");
+            gmsa_test_assert_equal(__test_plan_names(_p), "get_axe,walk_to_tree,chop,build_fire");
+        });
+
+        gmsa_test_case("learned reliability: the repair turns to camping within the same plan", function() {
+            var _d = gmsa_plan_domain_create("unlucky camp");
+            gmsa_plan_add_fact(_d, "has_axe", function(_o) { return _o.has_axe; });
+            gmsa_plan_add_fact(_d, "at_tree", function(_o) { return _o.at_tree; });
+            gmsa_plan_add_fact(_d, "has_wood", function(_o) { return _o.has_wood; });
+            gmsa_plan_add_fact(_d, "fire", function(_o) { return _o.fire; });
+            gmsa_plan_add_step(_d, "get_axe", { effects : [["has_axe", true]], cost : 2 });
+            gmsa_plan_add_step(_d, "walk_to_tree", { effects : [["at_tree", true]], cost : 4.5 });
+            gmsa_plan_add_step(_d, "chop", { requires : [["has_axe", true], ["at_tree", true]], effects : [["has_wood", true]], cost : 3 });
+            gmsa_plan_add_step(_d, "build_fire", { requires : [["has_wood", true]], effects : [["fire", true], ["has_wood", false]] });
+            gmsa_plan_add_step(_d, "camp", { effects : [["has_axe", true], ["at_tree", true]], cost : 9 });
+            gmsa_plan_add_goal(_d, "warm", { conditions : [["fire", true]] });
+            gmsa_plan_learn_steps(_d);
+            gmsa_plan_domain_build(_d);
+
+            // the axe route costs 2 / chance + 8.5, camping 13: after three failures get_axe's chance is 2 / 5, 5 + 8.5 > 13
+            var _p = gmsa_plan_planner_create(_d, __test_plan_camper());
+            gmsa_plan_make(_p, "warm");
+            var _failures = 0;
+            while (gmsa_plan_current(_p) == "get_axe" && _failures < 10) {
+                gmsa_plan_step_failed(_p);
+                _failures += 1;
+            }
+            gmsa_test_assert_equal(_failures, 3);
+            gmsa_test_assert_equal(gmsa_plan_get_status(_p), gmsa_plan_status.RUNNING);
+            gmsa_test_assert_equal(gmsa_plan_current(_p), "camp");
+        });
     });
 }
 
