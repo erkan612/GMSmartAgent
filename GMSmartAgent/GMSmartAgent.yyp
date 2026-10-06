@@ -106,6 +106,7 @@
     {"id":{"name":"Test_Plan_Explain","path":"scripts/Test_Plan_Explain/Test_Plan_Explain.yy",},},
     {"id":{"name":"Test_Plan_Lines","path":"scripts/Test_Plan_Lines/Test_Plan_Lines.yy",},},
     {"id":{"name":"Test_Plan_Planner","path":"scripts/Test_Plan_Planner/Test_Plan_Planner.yy",},},
+    {"id":{"name":"Test_Plan_Reports","path":"scripts/Test_Plan_Reports/Test_Plan_Reports.yy",},},
     {"id":{"name":"Test_Plan_Run","path":"scripts/Test_Plan_Run/Test_Plan_Run.yy",},},
     {"id":{"name":"Test_Plan_Schedule","path":"scripts/Test_Plan_Schedule/Test_Plan_Schedule.yy",},},
     {"id":{"name":"Test_Plan_Slice","path":"scripts/Test_Plan_Slice/Test_Plan_Slice.yy",},},

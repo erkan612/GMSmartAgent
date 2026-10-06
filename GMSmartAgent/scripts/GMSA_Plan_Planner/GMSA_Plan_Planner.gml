@@ -1,5 +1,6 @@
 enum gmsa_plan_result { NONE, FOUND, NO_PLAN, OUT_OF_BUDGET }
 enum gmsa_plan_status { IDLE, PLANNING, RUNNING, DONE, FAILED }
+enum gmsa_plan_report { METHOD_SUCCESS, METHOD_FAILURE, METHOD_REWARD, STEP_SUCCESS, STEP_FAILURE }
 
 #macro __GMSA_PLAN_PAUSED -1
 
@@ -19,7 +20,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
     }
     if (!__gmsa_callable(_clock)) throw "GMSA: plan clock must be callable";
     var _facts = array_length(_domain.facts);
-    return {
+	var _p = {
         domain : _domain, owner : _owner, budget : floor(_budget), depth : floor(_depth), retries : floor(_retries),
         slice : _slice, clock : _clock,
         rng : gmsa_rng_create(__gmsa_param(_params, "seed", 1)), // for weighted tasks, never GameMaker's random
@@ -34,6 +35,9 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0, __work : undefined, __fresh_from : -1, __fresh_to : -1, __slice_first : false,
         // a repair's climb: the task being replanned, its entries s to e, and how to search it
         __repair_s : 0, __repair_e : 0, __repair_kind : 0, __repair_index : 0, __repair_depth : 0,
+        __repair_b : 0, __chain_task : [], __chain_method : [], __chain_aux : [],  // what a repair broke, kept for reports
+        __report : { kind : 0, planner : undefined, task : -1, task_name : undefined, method : -1, method_name : undefined,
+                     step : -1, step_name : undefined, chance : 1, reward : 0, state : undefined },
         // plans are entries: kind 0 a step, 1 a task begins (with its method and a trace record), 2 a task ends
         __out_count : 0, __out_kind : [], __out_index : [], __out_method : [], __out_aux : [],  // search output
         __run_count : 0, __run_kind : [], __run_index : [], __run_method : [], __run_aux : [], __run_steps : 0,  // the running plan
@@ -48,6 +52,9 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         // method order per choice point, best first
         __order_top : 0, __order : [], __order_score : [],
     };
+    _p.__report.planner = _p;
+    _p.__report.state = _p.state; // filled with the facts the report is about, during the call
+    return _p;
 }
 
 function gmsa_plan_make(_planner, _name) {
@@ -101,6 +108,7 @@ function gmsa_plan_work(_planner, _budget = undefined) {
 function gmsa_plan_step_done(_planner) {
     __gmsa_plan_check_planner(_planner);
     if (_planner.status != gmsa_plan_status.RUNNING) return _planner.status;
+    __gmsa_plan_emit_step(_planner, gmsa_plan_report.STEP_SUCCESS);
     _planner.at += 1;
     _planner.failures = 0;
     _planner.__fresh_from = -1;
@@ -114,6 +122,7 @@ function gmsa_plan_step_done(_planner) {
 function gmsa_plan_step_failed(_planner) {
     __gmsa_plan_check_planner(_planner);
     if (_planner.status != gmsa_plan_status.RUNNING) return _planner.status;
+    __gmsa_plan_emit_step(_planner, gmsa_plan_report.STEP_FAILURE);
     __gmsa_plan_start_slice(_planner, __gmsa_plan_own_slice(_planner));
     __gmsa_plan_settle(_planner, true, true);
     _planner.__deadline = undefined;
@@ -142,6 +151,26 @@ function gmsa_plan_stop(_planner) {
     _planner.__run_steps = 0;
     _planner.__deadline = undefined;
     _planner.__resume_choice = false;
+}
+
+function gmsa_plan_reward(_planner, _reward) {
+    __gmsa_plan_check_planner(_planner);
+    if (!is_numeric(_reward)) throw "GMSA: plan reward must be a number";
+    var _p = _planner;
+    if (_p.__run_count == 0) return 0;
+    if (_p.status == gmsa_plan_status.DONE) {
+        var _n = 0;
+        for (var _i = 0; _i < _p.__run_count; _i++) {
+            if (_p.__run_kind[_i] != 1) continue;
+            __gmsa_plan_emit_entry(_p, gmsa_plan_report.METHOD_REWARD, _i, -1, _reward);
+            _n += 1;
+        }
+        return _n;
+    }
+    if (_p.status == gmsa_plan_status.RUNNING || _p.status == gmsa_plan_status.PLANNING) {
+        return __gmsa_plan_emit_chain(_p, gmsa_plan_report.METHOD_REWARD, _p.at, -1, _reward);
+    }
+    return 0;
 }
 
 function gmsa_plan_get_status(_planner) {
@@ -592,6 +621,7 @@ function __gmsa_plan_repair(_p, _b) {
     _p.nodes = 0;
     __gmsa_plan_read_real(_p);
     _p.__repair_s = _b;
+    _p.__repair_b = _b;
     return __gmsa_plan_repair_next(_p);
 }
 
@@ -629,11 +659,17 @@ function __gmsa_plan_repair_result(_p, _r) {
         _p.result = _r;
         return 0;
     }
-    if (_r == gmsa_plan_result.FOUND && __gmsa_plan_splice(_p, _p.__repair_s, _p.__repair_e)) {
-        _p.result = _r;
-        _p.__fresh_from = _p.__repair_s;
-        _p.__fresh_to = _p.__repair_s + _p.__out_count;
-        return 1;
+    if (_r == gmsa_plan_result.FOUND) {
+        var _n = __gmsa_plan_collect_chain(_p, _p.__repair_b, _p.__repair_s);
+        if (__gmsa_plan_splice(_p, _p.__repair_s, _p.__repair_e)) {
+            _p.result = _r;
+            _p.__fresh_from = _p.__repair_s;
+            _p.__fresh_to = _p.__repair_s + _p.__out_count;
+            for (var _i = 0; _i < _n; _i++) {
+                __gmsa_plan_emit(_p, gmsa_plan_report.METHOD_FAILURE, _p.__chain_task[_i], _p.__chain_method[_i], _p.__chain_aux[_i], -1, 0);
+            }
+            return 1;
+        }
     }
     if (_p.__repair_kind == 0) {
         _p.result = gmsa_plan_result.NO_PLAN;
@@ -644,7 +680,7 @@ function __gmsa_plan_repair_result(_p, _r) {
 
 function __gmsa_plan_after_repair(_p, _res, _check) {
     if (_res == 2) __gmsa_plan_planning(_p);
-    else if (_res == 0) __gmsa_plan_fail(_p);
+    else if (_res == 0) __gmsa_plan_fail(_p, _p.__repair_b);
     else __gmsa_plan_settle(_p, false, _check);
 }
 
@@ -653,12 +689,6 @@ function __gmsa_plan_planning(_p) {
     _p.target = undefined;
     _p.__mode = 1;
     _p.__paused_once = true;
-}
-
-function __gmsa_plan_seek(_p, _from) {
-    var _i = _from;
-    while (_i < _p.__run_count && _p.__run_kind[_i] != 0) _i += 1;
-    _p.at = _i;
 }
 
 function __gmsa_plan_pick_target(_p) {
@@ -688,14 +718,29 @@ function __gmsa_plan_pick_target(_p) {
     return true;
 }
 
-function __gmsa_plan_fail(_p) {
+function __gmsa_plan_fail(_p, _b) {
+    if (_b >= 0 && _b < _p.__run_count) __gmsa_plan_emit_chain(_p, gmsa_plan_report.METHOD_FAILURE, _b, -1, 0);
     _p.status = gmsa_plan_status.FAILED;
     _p.target = undefined;
+}
+
+function __gmsa_plan_seek(_p, _from) {
+    var _i = _from;
+    var _listening = __gmsa_plan_listening(_p);
+    while (_i < _p.__run_count && _p.__run_kind[_i] != 0) {
+        // passing a task's end: its method's steps all finished
+        if (_listening && _p.__run_kind[_i] == 2) {
+            __gmsa_plan_emit_entry(_p, gmsa_plan_report.METHOD_SUCCESS, __gmsa_plan_enclosing(_p, _i), -1, 0);
+        }
+        _i += 1;
+    }
+    _p.at = _i;
 }
 
 function __gmsa_plan_settle(_p, _failed, _check) {
     while (true) {
         var _res = 1;
+        var _broken = _p.at;
         if (_failed) {
             _p.failures += 1;
             _res = (_p.failures > _p.retries) ? 0 : __gmsa_plan_repair(_p, _p.at);
@@ -704,11 +749,14 @@ function __gmsa_plan_settle(_p, _failed, _check) {
             if (_p.at < _p.__run_count) {
                 __gmsa_plan_read_real(_p);
                 var _bad = __gmsa_plan_broken_at(_p, _p.at);
-                if (_bad != -1) _res = __gmsa_plan_repair(_p, _bad);
+                if (_bad != -1) {
+                    _broken = _bad;
+                    _res = __gmsa_plan_repair(_p, _bad);
+                }
             }
         }
         if (_res == 0) {
-            __gmsa_plan_fail(_p);
+            __gmsa_plan_fail(_p, _broken);
             return;
         }
         if (_res == 2) {
@@ -724,7 +772,83 @@ function __gmsa_plan_settle(_p, _failed, _check) {
         _p.status = gmsa_plan_status.RUNNING;
         if (__gmsa_plan_pick_target(_p)) return;
         // no target: the step can't start, same as failing
+        __gmsa_plan_emit_step(_p, gmsa_plan_report.STEP_FAILURE);
         _failed = true;
         _check = false;
     }
+}
+
+// Internal: reports
+function __gmsa_plan_listening(_p) {
+    return array_length(_p.domain.listeners) > 0;
+}
+
+function __gmsa_plan_emit(_p, _kind, _task, _method, _aux, _step, _reward) {
+    var _ls = _p.domain.listeners;
+    if (array_length(_ls) == 0) return;
+    var _d = _p.domain;
+    var _r = _p.__report;
+    _r.kind = _kind;
+    _r.reward = _reward;
+    _r.step = _step;
+    _r.step_name = (_step >= 0) ? _d.steps[_step].name : undefined;
+    var _n = array_length(_p.state);
+    if (_task >= 0) {
+        var _tr = _p.__plan_trace;
+        _r.task = _task;
+        _r.task_name = _d.tasks[_task].name;
+        _r.method = _method;
+        _r.method_name = _d.tasks[_task].methods[_method].name;
+        _r.chance = (_step >= 0) ? 1 : _tr[_aux + 2];
+        var _facts = _aux + 3 + _tr[_aux] * 2;
+        for (var _i = 0; _i < _n; _i++) _p.state[_i] = _tr[_facts + _i];
+    } else {
+        _r.task = -1;
+        _r.task_name = undefined;
+        _r.method = -1;
+        _r.method_name = undefined;
+        _r.chance = 1;
+        for (var _i = 0; _i < _n; _i++) _p.state[_i] = _p.__real[_i];
+    }
+    for (var _i = 0; _i < array_length(_ls); _i++) _ls[_i](_r);
+}
+
+function __gmsa_plan_emit_entry(_p, _kind, _entry, _step, _reward) {
+    if (!__gmsa_plan_listening(_p)) return;
+    if (_entry < 0) __gmsa_plan_emit(_p, _kind, -1, -1, -1, _step, _reward);
+    else __gmsa_plan_emit(_p, _kind, _p.__run_index[_entry], _p.__run_method[_entry], _p.__run_aux[_entry], _step, _reward);
+}
+
+function __gmsa_plan_emit_step(_p, _kind) {
+    if (!__gmsa_plan_listening(_p)) return;
+    __gmsa_plan_emit_entry(_p, _kind, __gmsa_plan_enclosing(_p, _p.at), _p.__run_index[_p.at], 0);
+}
+
+function __gmsa_plan_emit_chain(_p, _kind, _b, _top, _reward) {
+    var _n = 0;
+    var _s = _b;
+    while (true) {
+        _s = __gmsa_plan_enclosing(_p, _s);
+        if (_s == -1) break;
+        __gmsa_plan_emit_entry(_p, _kind, _s, -1, _reward);
+        _n += 1;
+        if (_s == _top) break;
+    }
+    return _n;
+}
+
+function __gmsa_plan_collect_chain(_p, _b, _top) {
+    if (!__gmsa_plan_listening(_p)) return 0;
+    var _n = 0;
+    var _s = _b;
+    while (true) {
+        _s = __gmsa_plan_enclosing(_p, _s);
+        if (_s == -1) break;
+        _p.__chain_task[_n] = _p.__run_index[_s];
+        _p.__chain_method[_n] = _p.__run_method[_s];
+        _p.__chain_aux[_n] = _p.__run_aux[_s];
+        _n += 1;
+        if (_s == _top) break;
+    }
+    return _n;
 }
