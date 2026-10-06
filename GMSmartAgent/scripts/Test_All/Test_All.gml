@@ -18,5 +18,6 @@ function gmsa_tests_all(_verbose = false) {
     test_learn_lambdamart();
     test_learn_track();
     test_learn_outcome();
+    test_plan_domain();
     return gmsa_test_run(_verbose);
 }
