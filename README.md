@@ -9,7 +9,7 @@ A pure GML utility AI framework. Your agents score every option they have, every
 
 GMSmartAgent replaces hand-written `if` chains and rigid state machines with **utility scoring**. Every possible action an agent could take gets a score between 0 and 1 based on what the agent knows right now (its health, the distance to a target, whether it holds a key), and the highest-scoring option wins. Add a new behavior by adding an action, not by rewriting the decision tree.
 
-For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks the goal, planning works out how. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do.
+For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks what to do, planning works out how: from recipes you write (HTN), from a goal and a list of actions it searches through itself (GOAP), or both in one plan. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do.
 
 GMSmartAgent **only decides**. It never moves anything, never queries your room, never owns collision or spatial data. Your game hands it numbers, GMSmartAgent hands back a ranked list of options, or a plan one step at a time. What the agent does with it is up to you.
 
@@ -64,14 +64,18 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **Sparse inputs** - One-hot codes cost only the values that aren't zero
 - **Deterministic and allocation-free** - Seeded starting weights, every buffer allocated once at creation
 ### Planning
-- **Goals that take several steps** - A hierarchical task network planner: you write the recipes, the planner picks the ones that work right now, utility picks the goal
+- **Recipes (HTN)** - A hierarchical task network planner: you write the recipes, the planner picks the ones that work right now, utility picks the job
+- **Goals (GOAP)** - Name the result, describe what each action needs, does and costs, and the planner searches for the cheapest chain itself, A* over imagined states
+- **Both in one plan** - A recipe can leave a part to a goal: your structure where you want control, the search where you want the agent to figure it out
+- **Costs from your game** - A number or a function per action, seeing the imagined state, so distance, risk or an agent's own traits decide the route
+- **Variety and pruning** - Identical agents can spread over routes of similar cost, and actions that can't help are left out of the search at build
 - **Facts as data** - What each step requires and changes is declared, checked at build, and planned without allocating
 - **Self-repairing plans** - Before each step the facts are read again, and a broken plan is replanned from the smallest task around the break, keeping the rest
 - **Scored recipes** - Let the situation choose between "steal the key" and "buy the key"
 - **Targets per step** - Your game offers candidates when a step starts, scoring picks the best one
 - **Bounded cost** - A node budget per plan and a depth cap for tasks that use themselves
 - **Planning across frames** - Large plans and many planners spread over several frames, in slices or inside the scheduler budget, giving exactly the same plan as planning at once
-- **Explain** - The plan as a tree, as text or as data for your own UI, with the reason every skipped recipe didn't work
+- **Explain** - The plan as a tree, as text or as data for your own UI, with the reason every skipped recipe didn't work, and for a goal no chain reaches, how close the search came
 - **Weighted recipes** - A task can draw its recipe by score instead of always taking the best, so a crowd with the same recipes doesn't all do the same thing
 - **Reports** - Listeners hear every recipe that finishes or fails, every step result and every reward, for learning or your own stats
 ### Planning Meets Learning
@@ -383,6 +387,34 @@ gmsa_plan_add_step(_d, "break_in", { requires : [["guard_here", "<", 0.4]] });
 ```
 
 ---
+
+## Plans Nobody Wrote
+
+Name the result, describe the actions, and the planner finds the cheapest way:
+
+```gml
+var _d = gmsa_plan_domain_create("escape");
+gmsa_plan_add_fact(_d, "has_key",  function(_owner) { return _owner.has_key; });
+gmsa_plan_add_fact(_d, "box_open", function(_owner) { return global.box_open; });
+gmsa_plan_add_fact(_d, "out",      function(_owner) { return _owner.out; });
+
+gmsa_plan_add_step(_d, "pry_box",      { effects : [["box_open", true]], cost : 4 });
+gmsa_plan_add_step(_d, "take_key",     { requires : [["box_open", true]], effects : [["has_key", true]], cost : 1 });
+gmsa_plan_add_step(_d, "unlock_door",  { requires : [["has_key", true]], effects : [["out", true]], cost : 2 });
+gmsa_plan_add_step(_d, "smash_window", { effects : [["out", true]], cost : function(_owner, _state) { return _owner.strong ? 3 : 12; } });
+gmsa_plan_add_goal(_d, "escape", { conditions : [["out", true]], variety : 0.2 });
+global.escape = gmsa_plan_domain_build(_d);
+
+gmsa_plan_make(planner, "escape");  // the strong smash the window, the rest pry the box, take the key and unlock the door
+```
+
+Nobody wrote either route. Take the key away mid-escape and the plan repairs itself into another one. Learned step reliability counts too: a step that keeps failing costs more, so the search routes around it. And a recipe can leave its tricky parts to a goal:
+
+```gml
+gmsa_plan_add_method(_job, "the_plan", { subtasks : ["case_the_bank", "get_inside", "crack_vault", "get_away"] });  // get_inside and get_away are goals
+```
+
+---
  
 ## Performance
  
@@ -417,6 +449,8 @@ Planning costs about 9 to 13 us per node searched. A plan of around ten steps ta
 
 Learning in plans is paid per plan and per step, never per frame. With step reliability and a learned recipe both on, a six-step raid costs about 0.47 ms from making the plan to its reward, against 0.18 ms without learning. A player fact costs one evaluation of the player's model per frame, about 65 us, shared by every planner that reads it. See [What learning in plans costs](ApiReference.md#what-learning-in-plans-costs).
 
+Goals cost about 10 us per node searched, flat at every size. A goal over a handful of actions takes about 0.35 ms. Searches grow with every action that looks like progress, so goals leave out the actions that can't help: with 17 actions of which 6 are irrelevant, 1.3 ms pruned against 82 ms searching everything. Big searches can be spread over frames like any plan.
+
 Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents or heavier models slows how often each one re-decides, never the game.
  
 ---
@@ -429,13 +463,12 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 - **Deterministic.** Same seed and same inputs give the same decisions, so tests and replays are repeatable.
 - **Allocation-free thinking.** Decisions and options are reused, so many agents don't churn the garbage collector.
 - **Learning stays under the designer.** Models reorder options within what the designer's scoring allows. They can't bring back a vetoed option or lift a score above the designer's, and agents only experiment among the options your scoring ranks highest.
-- **Plans are made of your recipes.** The planner only combines the steps and methods you wrote, it never invents an action. It hands your game one step at a time and never performs anything itself.
+- **Plans are made of your actions.** The planner only combines the steps, recipes and goals you wrote, it never invents an action. It hands your game one step at a time and never performs anything itself.
 
 ---
  
 ## Roadmap
 
-- **v1.7: GOAP** - The planner composes its own plans from what each action requires and does, guided by learned costs and success chances.
 - **v1.8: More choice models** - A sequence model that learns what the player does next after what they just did, Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
 - **v1.9: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
 - **Later** - GMNav input providers such as path cost and reachability, a full debug view with overlays and a scheduler budget view, and YYC benchmarks.
@@ -444,7 +477,7 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, and plans that learn which recipe works and when the player is watching
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, and plans nobody wrote
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
@@ -489,6 +522,12 @@ urosidoki "[htn_planner](https://github.com/urosidoki/htn_planner)", a hierarchi
 Plackett, R. L. (1975) "[The Analysis of Permutations](https://ideas.repec.org/a/bla/jorssc/v24y1975i2p193-202.html)", Journal of the Royal Statistical Society, Series C (Applied Statistics), 24(2), 193-202
 
 **Player modeling** Yannakakis, G. N. and Togelius, J. (2018) "[Artificial Intelligence and Games](https://gameaibook.org/)", Springer, chapter 5, "Modeling Players"
+
+**Goal-oriented action planning (GOAP)** Orkin, J. (2006) "[Three States and a Plan: The A.I. of F.E.A.R.](https://gdcvault.com/play/1013282/Three-States-and-a-Plan)", Game Developers Conference
+
+**A\* search** Hart, P. E., Nilsson, N. J. and Raphael, B. (1968) "[A Formal Basis for the Heuristic Determination of Minimum Cost Paths](https://ieeexplore.ieee.org/document/4082128)", IEEE Transactions on Systems Science and Cybernetics, 4(2), 100-107
+
+**Relevance pruning** Nebel, B., Dimopoulos, Y. and Koehler, J. (1997) "[Ignoring Irrelevant Facts and Operators in Plan Generation](https://gki.informatik.uni-freiburg.de/papers/nebel-etal-ecp-97.pdf)", ECP-97, Lecture Notes in Computer Science 1348, 338-350
 
 **Time-sliced search** Buckland, M. (2004) "[Programming Game AI by Example](https://catdir.loc.gov/catdir/toc/ecip0419/2004015103.html)", Wordware Publishing, chapter 8, "Time-Sliced Path Planning"
 

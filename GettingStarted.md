@@ -1,6 +1,6 @@
 # Getting Started with GMSmartAgent
 
-This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, and who learn which plans work and when you're watching. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
+This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, who learn which plans work and when you're watching, and who work out plans nobody wrote. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
 For every function's full details, see the [API Reference](ApiReference.md).
 
@@ -25,7 +25,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 15. [Planning on a Budget](#15-planning-on-a-budget)
 16. [Plans That Learn](#16-plans-that-learn)
 17. [Reading the Player](#17-reading-the-player)
-18. [Troubleshooting](#18-troubleshooting)
+18. [Plans Nobody Wrote](#18-plans-nobody-wrote)
+19. [Troubleshooting](#19-troubleshooting)
 
 ---
 
@@ -1250,7 +1251,126 @@ A plan dropped because you came to guard counts against the recipe it was using.
 
 ---
 
-## 18. Troubleshooting
+## 18. Plans Nobody Wrote
+
+Every plan so far follows your recipes. `raid_chest` says it: fetch the key and unlock, or smash. The goblin picks between the ways you wrote, in the order you wrote them, so it always fetches the key when there is one, even when the key is across the room and the chest is right next to it.
+
+A **goal** turns this around. You describe what each step needs, does and costs, name the result you want, and the planner searches for the cheapest chain of steps that gets there. Nobody writes the order. This is goal-oriented action planning, GOAP.
+
+**The planner only knows what the facts say.** In the recipe, walking to the key comes before picking it up because you wrote it in that order. A search has no order to follow: if nothing says the goblin must be at the key to pick it up, it will happily plan to pick it up from across the room. So where the goblin is becomes facts, and so does the result we want:
+
+```gml
+// __raid_domain_build, with the other facts
+gmsa_plan_add_fact(_d, "near_key", function(_goblin) { return instance_exists(o_key) && point_distance(_goblin.x, _goblin.y, o_key.x, o_key.y) <= 2; });
+gmsa_plan_add_fact(_d, "near_chest", function(_goblin) { return instance_exists(o_chest) && point_distance(_goblin.x, _goblin.y, o_chest.x, o_chest.y) <= 2; });
+gmsa_plan_add_fact(_d, "chest_open", function(_goblin) { return !instance_exists(o_chest); });
+```
+
+**Costs.** A search picks the cheapest chain, so each step gets a cost. Here costs are seconds: walking at 2 pixels a frame is 120 pixels a second, unlocking takes half a second, smashing three. Walking is measured from where the goblin *will be* at that point of the chain, which the imagined state tells us:
+
+```gml
+// scripts/__raid_walk
+// seconds of walking to an object, from where the goblin will be in this imagined state
+function __raid_walk(_goblin, _state, _object) {
+    if (!instance_exists(_object)) return 1000;
+    var _x = _goblin.x;
+    var _y = _goblin.y;
+    if (_state[global.raid_near_key] && instance_exists(o_key)) {
+        _x = o_key.x;
+        _y = o_key.y;
+    } else if (_state[global.raid_near_chest] && instance_exists(o_chest)) {
+        _x = o_chest.x;
+        _y = o_chest.y;
+    }
+    return point_distance(_x, _y, _object.x, _object.y) / 120;
+}
+```
+
+Now the steps say where they happen and what they cost:
+
+```gml
+// __raid_domain_build, replace the five steps
+gmsa_plan_add_step(_d, "go_to_key", { requires : [["key_exists", true]], effects : [["near_key", true], ["near_chest", false]],
+    cost : function(_goblin, _state) { return __raid_walk(_goblin, _state, o_key); } });
+gmsa_plan_add_step(_d, "pick_up_key", { requires : [["key_exists", true], ["near_key", true]], effects : [["has_key", true], ["key_exists", false]], cost : 0.2 });
+gmsa_plan_add_step(_d, "go_to_chest", { requires : [["player_guards", "<", 0.5]], effects : [["near_chest", true], ["near_key", false]],
+    cost : function(_goblin, _state) { return __raid_walk(_goblin, _state, o_chest); } });
+gmsa_plan_add_step(_d, "unlock", { requires : [["has_key", true], ["near_chest", true]], effects : [["has_key", false], ["chest_open", true]], cost : 0.5 });
+gmsa_plan_add_step(_d, "smash", { requires : [["near_chest", true]], effects : [["chest_open", true]], cost : 3 });
+```
+
+The recipes still work: `go_to_key` now *says* the goblin ends up at the key, which is what `pick_up_key` needs. Costs mean nothing to recipes, they're only read when a goal searches.
+
+**The goal.** One line names the result and the steps the search may use:
+
+```gml
+// __raid_domain_build, after the tasks
+gmsa_plan_add_goal(_d, "open_chest", { conditions : [["chest_open", true]], variety : 0.2,
+    actions : ["go_to_key", "pick_up_key", "go_to_chest", "unlock", "smash"] });
+```
+
+`variety : 0.2` makes each search shuffle the costs a little, so goblins in the same spot don't all pick the same route when two are nearly as good.
+
+The cost functions need to know where `near_key` and `near_chest` are in the imagined state, so keep their positions once the domain is built:
+
+```gml
+// __raid_domain_build, replace the return line
+var _built = gmsa_plan_domain_build(_d);
+global.raid_near_key = gmsa_plan_fact_index(_built, "near_key");
+global.raid_near_chest = gmsa_plan_fact_index(_built, "near_chest");
+return _built;
+```
+
+**Ask for the goal instead of the recipe.** One word changes where the goblin starts its plan:
+
+```gml
+// o_goblin > Step, where it starts the plan, replace "raid_chest"
+gmsa_plan_make(planner, "open_chest");
+```
+
+The step code from chapter 14 stays as it is. The goblin still does one step at a time and reports it, the plan repairs itself, and the tree shows the chain (your numbers depend on where the chest and the key are):
+
+```
+open_chest (running, step 1 of 2)
+  open_chest: 2 steps, cost 4.6, searched 14 nodes
+  > go_to_chest
+    smash
+```
+
+Put the key in one corner and the chest in another, and watch the goblins near the chest smash it while the ones near the key fetch it first. The recipe could never do that: it always fetched the key when there was one.
+
+Everything from the last chapters still counts:
+
+- **The jammed lock.** Step reliability from [chapter 16](#16-plans-that-learn) divides each step's cost by its learned chance. In the rain, `unlock` costs more and more as it jams, until smashing is cheaper even with the key in hand.
+- **You, guarding.** `go_to_chest` still needs `player_guards` below 0.5, from [chapter 17](#17-reading-the-player). While you're likely to be there, no chain reaches the chest and the plan fails. `gmsa_plan_explain` then says how close it came:
+
+```
+open_chest (failed, no plan)
+open_chest: no chain of steps reaches it
+  closest it came: after go_to_key, pick_up_key
+  still chest_open is false, needs true
+```
+
+- **Learned recipes don't apply.** A goal has no recipes to choose between. Its choice is the search, and the costs steer it.
+
+**You don't have to choose.** Recipes and goals mix: a method's subtasks can name a goal. A recipe can keep the parts you want in a fixed order and leave the rest to the search:
+
+```gml
+var _heist = gmsa_plan_add_task(_d, "heist");
+gmsa_plan_add_method(_heist, "in_and_out", { subtasks : ["wait_for_dark", "open_chest", "run_home"] });
+```
+
+Three things to remember:
+
+- **A goal only knows the facts.** Anything the order of a recipe used to imply (being somewhere, holding something) must become a fact and a requirement, or the search will skip it.
+- **Costs decide.** The chain found is the cheapest by your costs. If a goblin does something silly, look at the costs first.
+- **Searches cost more than recipes.** Every allowed step is tried in every promising state. Keep a goal's `actions` to the steps that matter, and give the planner a larger `budget` when goals get big.
+
+The [API Reference](ApiReference.md#goals) has how the search works, pruning, variety and the costs. Demo 13, the escape room, is a goal on its own, and Demo 14, the bank job, mixes recipes and goals.
+
+---
+
+## 19. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -1332,6 +1452,18 @@ Wire the learning after the task's last method.
 
 **A player fact stays at its fallback.**
 The model hasn't seen enough of the player's choices yet, or they aren't recorded: check that `gmsa_learn_observe` runs on every choice, with the same agent the fact reads.
+
+**A goal's plan skips steps, like walking somewhere first.**
+The search only follows facts. If a step needs the goblin to be somewhere or hold something, make that a fact, give the step a requirement on it, and give the step that gets there the effect.
+
+**A goal never finds a plan.**
+`gmsa_plan_explain(planner)` lists what the search couldn't reach and how close it came. A condition "none of the goal's steps changes" usually means a step is missing from the goal's `actions` list.
+
+**A goal runs out of budget, or planning it hitches.**
+Searches try every allowed step in every promising state. Keep the goal's `actions` short, leave pruning on, raise the planner's `budget`, and plan across frames as in [chapter 15](#15-planning-on-a-budget).
+
+**Every goblin takes the same route.**
+The same facts and costs give the same plan. Add `variety` to the goal, or let cost functions read something that differs per goblin.
 
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.

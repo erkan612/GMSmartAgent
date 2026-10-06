@@ -147,6 +147,8 @@ What a plan report is about, see [Reports](#reports).
 | `gmsa_plan_report.METHOD_REWARD` | A reward from `gmsa_plan_reward` reached this method |
 | `gmsa_plan_report.STEP_SUCCESS` | A step was reported done |
 | `gmsa_plan_report.STEP_FAILURE` | A step was reported failed, or had no target |
+| `gmsa_plan_report.GOAL_SUCCESS` | A goal's chain finished |
+| `gmsa_plan_report.GOAL_FAILURE` | A goal's chain broke and was searched again, or the plan failed with it |
 
 ### gmsa_test_status
 Result of a test case, see [Test](#test).
@@ -1680,14 +1682,20 @@ Cost on the VM: 6 inputs with `[8, 1]` take 30 us per forward and 155 us per tra
 
 ## Plan
 
-Planning for goals that take several steps: get the key, get through the door, open the chest. Utility scoring decides *what* an agent wants, Plan works out *how*, as a hierarchical task network (HTN): the designer writes recipes, the planner picks the ones that work right now and keeps the plan working while the world changes.
+Planning for goals that take several steps: get the key, get through the door, open the chest. Utility scoring decides *what* an agent wants, Plan works out *how*, in two ways that mix freely:
+
+- **Recipes (HTN, hierarchical task networks):** the designer writes the ways to do a job, the planner picks the ones that work right now.
+- **Goals (GOAP, goal-oriented action planning):** the designer only describes what each step needs, does and costs, and names the result wanted. The planner searches for the cheapest chain of steps that gets there. See [Goals](#goals).
+
+Either way, the planner keeps the plan working while the world changes.
 
 The Plan module depends on Core only, Core never depends on it. It never touches your game: it reads facts through your callbacks, hands you one step at a time, and you report how it went. Inspired by [urosidoki/htn_planner](https://github.com/urosidoki/htn_planner).
 
 **Words used here:**
 - A **fact** is a number or a bool the planner reasons with, read from your game by a callback (`gold`, `has_key`).
 - A **step** is something your game performs (`pick_up_key`). It can require facts and change them.
-- A **task** is a goal (`loot_chest`). Its **methods** are the recipes for it, each a list of steps and smaller tasks.
+- A **task** is a job with recipes (`loot_chest`). Its **methods** are the recipes for it, each a list of steps, smaller tasks and goals.
+- A **goal** is a result wanted (`chest_open` is true), reached by a chain of steps the planner finds itself.
 - A **plan** is the steps the planner chose, in order.
 
 ```gml
@@ -1728,7 +1736,7 @@ switch (gmsa_plan_current(planner)) {
 
 1. **Build a domain once** and share it, like a profile: facts, steps, tasks and their methods.
 2. **Create a planner per owner.** The owner is your instance or struct, facts are read from it.
-3. **Make a plan** with `gmsa_plan_make` when the agent wants the goal.
+3. **Make a plan** with `gmsa_plan_make` when the agent wants the task or goal done.
 4. **Do the current step** in your game. Report it with `gmsa_plan_step_done` or `gmsa_plan_step_failed`. Change the facts the step changes before reporting it done.
 5. **Refresh** with `gmsa_plan_refresh` when the world changes under a step (the player took the key). The plan repairs itself.
 6. **Stop** with `gmsa_plan_stop` when the agent wants something else.
@@ -1737,7 +1745,7 @@ Plans are made at once by default. For large domains or many planners, they can 
 
 ### Working with utility
 
-Utility picks the goal, the game asks for the plan. Core never knows Plan exists, the bridge is one call in your code:
+Utility picks what to do, the game asks for the plan. Core never knows Plan exists, the bridge is one call in your code:
 
 ```gml
 var _decision = gmsa_agent_consume(agent);
@@ -1795,6 +1803,7 @@ gmsa_plan_add_step(domain, name, [params]) -> step
 | `check` | function | undefined | `function(state)` returning true when the step can be done, for conditions data can't express. See [Check functions](#check-functions) |
 | `targets` | function | undefined | `function(owner)` returning an array of candidates, read when the step becomes current |
 | `score` | function | undefined | `function(owner, target)` returning a number, picks the target. See [Targets](#targets) |
+| `cost` | real or function | 1 | What the step costs when a goal searches: a number above 0, or `function(owner, state)` returning one (0 or less rules the step out in that state). Recipes ignore it. See [Goals](#goals) |
 
 **Throws** when the domain is built or the name is empty. Everything else is checked at build.
 
@@ -1831,6 +1840,23 @@ A method may use its own task in `subtasks` ("grab a coin, then grab the rest"),
 
 **Throws** when `task` doesn't come from `gmsa_plan_add_task`, its domain is built or the name is empty.
 
+### gmsa_plan_add_goal
+
+```gml
+gmsa_plan_add_goal(domain, name, params) -> goal
+```
+
+A result wanted, reached by a chain of steps the planner searches for. Make it the root of a plan with `gmsa_plan_make(planner, name)`, or put its name in a method's `subtasks`. Goals share one namespace with steps and tasks.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `conditions` | array | | What must hold when the chain is done, written like `requires`, see [Conditions and effects](#conditions-and-effects). At least one |
+| `actions` | array | every step | Names of the steps the search may use. In a domain that mixes recipes and goals, keep a goal to its own steps |
+| `variety` | real | 0 | Each search multiplies every step's cost by a random factor between 1 and 1 + `variety`, so identical agents don't all take the same route. See [Variety](#variety) |
+| `prune` | bool | true | Leave out steps that can never help reach the conditions. See [Pruning](#pruning) |
+
+**Throws** when the domain is built or the name is empty. Everything else is checked at build.
+
 ### gmsa_plan_domain_build
 
 ```gml
@@ -1839,7 +1865,7 @@ gmsa_plan_domain_build(domain) -> domain
 
 Checks the whole domain, turns every name into an index and locks it. Nothing changes unless all of it is valid.
 
-**Throws** when the domain has no steps, a name is used twice, a condition or effect is malformed or uses an unknown fact, a method uses an unknown step or task, a task has no methods, or a callback isn't callable.
+**Throws** when the domain has no steps, a name is used twice, a condition or effect is malformed or uses an unknown fact, a method uses an unknown step, task or goal, a task has no methods, a step's cost isn't above 0 or callable, a goal has no conditions, lists something that isn't a step or lists one twice, its `variety` is below 0 or its `prune` isn't a bool, or a callback isn't callable.
 
 ### gmsa_plan_fact_index
 
@@ -1865,7 +1891,7 @@ gmsa_plan_add_listener(domain, listener)
 gmsa_plan_set_step_chance(domain, chance)
 ```
 
-`chance` is `function(planner, step, state)` returning a step's chance of success, 0 to 1. `step` is the step's index in `domain.steps`, `state` the imagined facts. When a task is planned, each method's score is multiplied by the chance of each step directly in its subtasks (steps inside nested tasks count when their own task is planned). A method whose steps tend to fail sinks in the order. Pass `undefined` to remove it. One per domain, set before or after build.
+`chance` is `function(planner, step, state)` returning a step's chance of success, 0 to 1. `step` is the step's index in `domain.steps`, `state` the imagined facts. When a task is planned, each method's score is multiplied by the chance of each step directly in its subtasks (steps inside nested tasks count when their own task is planned). A method whose steps tend to fail sinks in the order. When a goal searches, each step's cost is divided by its chance, so a step that works half the time costs twice as much, and one that never works is left out. Pass `undefined` to remove it. One per domain, set before or after build.
 
 [gmsa_plan_learn_steps](#gmsa_plan_learn_steps) sets one that learns the chances from the plans' own results.
 
@@ -1925,7 +1951,7 @@ gmsa_plan_planner_create(domain, owner, [params]) -> planner
 gmsa_plan_make(planner, name) -> bool
 ```
 
-Reads the facts, plans the named task (or a single step) and starts the plan, replacing whatever was running, or a plan being made. **Returns** true when the plan started or is being made, false when planning already failed. When it fails, `gmsa_plan_last_result` and `gmsa_plan_explain` say why.
+Reads the facts, plans the named task, goal or single step and starts the plan, replacing whatever was running, or a plan being made. **Returns** true when the plan started or is being made, false when planning already failed. When it fails, `gmsa_plan_last_result` and `gmsa_plan_explain` say why.
 
 - Without a slice, the whole plan is made in this call.
 - With a slice, this call plans for one slice. A plan that isn't ready yet leaves the status `PLANNING`, and `gmsa_plan_work` carries on.
@@ -1989,7 +2015,7 @@ gmsa_plan_reward(planner, reward) -> integer
 
 Something good or bad happened that the plan earned: the loot made it home, the raid took too long. Listeners receive a `METHOD_REWARD` report for each method it reaches:
 
-- While a plan runs or is being repaired, the methods around the current step, from its own task up to the goal.
+- While a plan runs or is being repaired, the methods around the current step, from its own task up to the top of the plan.
 - Once the plan is done, every method of the plan, once each.
 
 **Returns** how many methods it reached, 0 when there's no plan. Rewards are numbers you choose, roughly -1 to 1, as in [Rewards](#rewards).
@@ -2080,7 +2106,7 @@ The plan as data, one struct per line, for your own UI or [gmsa_debug_draw_tree]
 
 | Field | Description |
 | --- | --- |
-| `kind` | `"title"`, `"note"`, `"reason"`, `"task"`, `"skipped"`, `"step"`, `"done"` or `"current"` |
+| `kind` | `"title"`, `"note"`, `"reason"`, `"task"`, `"goal"`, `"skipped"`, `"step"`, `"done"` or `"current"` |
 | `depth` | Nesting, 0 at the top |
 | `text` | The name or sentence, without indentation or markers |
 | `repaired` | True for what the last repair put in, until the next step is done |
@@ -2108,7 +2134,7 @@ loot_chest (running, step 2 of 3)
 
 Reasons are judged on the facts as they were when that task was planned. A skipped method shows its first failing condition, otherwise its first step that couldn't be done, otherwise that the rest of the plan didn't work with it. Methods ruled out by a score of 0 are listed as such, and the chosen method shows its score when the task has scored methods.
 
-When no plan was found, it lists each of the goal's methods with its reason instead. While planning, it's the title only, such as `loot_chest (planning, 140 of 250 nodes)`.
+When no plan was found, it lists each of the task's methods with its reason instead, or for a goal, what the search couldn't reach (see [Goals](#goals)). While planning, it's the title only, such as `loot_chest (planning, 140 of 250 nodes)`.
 
 ### Method order
 
@@ -2151,7 +2177,7 @@ var _fight = gmsa_plan_add_task(_d, "fight", {
 
 ### How planning works
 
-The planner goes depth first: it breaks the goal into its first method's subtasks, then the first of those, and so on, imagining each step's effects. When a step or method can't be used in the imagined state, it backs up to the latest task that has another method left and tries that. This can undo a task that already looked finished, when a later step needs it done differently.
+The planner goes depth first: it breaks the task into its first method's subtasks, then the first of those, and so on, imagining each step's effects. When a step or method can't be used in the imagined state, it backs up to the latest task that has another method left and tries that. This can undo a task that already looked finished, when a later step needs it done differently.
 
 - **Nodes.** Every step and every method tried costs one node. A planning call stops with `OUT_OF_BUDGET` when it has used its budget, it never goes over.
 - **Depth.** A task nested deeper than the planner's `depth` fails that branch only, the search goes on elsewhere.
@@ -2163,7 +2189,9 @@ Before each step the planner reads the facts again and checks the rest of the pl
 
 1. The smallest task around the broken step is planned again. A task later in the plan is planned as if the steps before it were done, and the current step carries on. A task the current step belongs to starts over from the real facts.
 2. The new part is kept only if the rest of the plan still works after it.
-3. Otherwise the next larger task is tried, up to the goal. If the goal can't be planned, the plan fails.
+3. Otherwise the next larger task is tried, up to the top of the plan. If that can't be planned, the plan fails.
+
+A goal is repaired the same way: a broken step in its chain makes the goal search again from the real facts, the rest of the plan stays.
 
 Repairs share one budget per call. `gmsa_plan_make` plans from scratch instead, which can pick a better plan than the one being repaired.
 
@@ -2176,8 +2204,10 @@ Listeners added with [gmsa_plan_add_listener](#gmsa_plan_add_listener) hear how 
 | `STEP_SUCCESS` | `gmsa_plan_step_done` |
 | `STEP_FAILURE` | `gmsa_plan_step_failed`, or the step had no target |
 | `METHOD_SUCCESS` | The plan passed the end of a task: the method did its job. A method with no subtasks succeeds at once |
-| `METHOD_FAILURE` | A repair replaced the method: each method around the broken step, up to the task that was planned again. This includes repairs after facts changed, the method didn't work out in the world as it is. When the plan fails, each method up to the goal |
+| `METHOD_FAILURE` | A repair replaced the method: each method around the broken step, up to the task that was planned again. This includes repairs after facts changed, the method didn't work out in the world as it is. When the plan fails, each method up to the top |
 | `METHOD_REWARD` | `gmsa_plan_reward` reached the method |
+| `GOAL_SUCCESS` | The plan passed the end of a goal's chain |
+| `GOAL_FAILURE` | A repair searched the goal again, or the plan failed with it. Like `METHOD_FAILURE`, including repairs after facts changed |
 
 Not reported: `gmsa_plan_stop`, an interruption isn't a failure. A step that breaks because facts changed under it gets no `STEP_FAILURE`, the step itself never failed, but the methods the repair replaces are reported.
 
@@ -2192,7 +2222,8 @@ The report is one struct per planner, reused by every report, so copy what you k
 | `step`, `step_name` | The step's index in `domain.steps`, and its name. Step reports only |
 | `chance` | The chance the method had of being chosen. 1 for `BEST` tasks, for methods tried after a weighted task's top `top_n`, and on step reports |
 | `reward` | The reward, `METHOD_REWARD` only |
-| `state` | The facts as the planner saw them when it planned this task (for steps, their task), indexed like `domain.facts`. Read only |
+| `goal`, `goal_name` | The goal's index in `domain.goals`, and its name, on goal reports and on step reports from a goal's chain. -1 and undefined otherwise |
+| `state` | The facts as the planner saw them when it planned this task or searched this goal (for steps, theirs), indexed like `domain.facts`. Read only |
 
 ```gml
 // count which recipes finish, for a balance pass
@@ -2202,6 +2233,8 @@ gmsa_plan_add_listener(global.goblin_domain, function(_r) {
     global.recipe_stats[$ _key] = (global.recipe_stats[$ _key] ?? 0) + 1;
 });
 ```
+
+Goals have no methods, so `gmsa_plan_reward` skips them and doesn't count them. On goal reports and the steps of a goal's chain, `task` is -1.
 
 A domain with no listeners pays one array length check per reporting point.
 
@@ -2231,6 +2264,98 @@ While a plan is being made or repaired:
 - The node `budget` still caps the whole plan. The time slice only decides how much happens per call.
 
 What isn't sliced: the node a call has already started, and finishing a plan (checking it against fresh facts and picking the first target, about 5 us per step of the plan). A call can therefore go over its slice by a few tens of microseconds for typical plans.
+
+### Goals
+
+A goal names a result, and the planner finds the steps. You write no recipe, only what each step needs, does and costs:
+
+```gml
+var _d = gmsa_plan_domain_create("escape");
+gmsa_plan_add_fact(_d, "has_key",  function(_owner) { return _owner.has_key; });
+gmsa_plan_add_fact(_d, "box_open", function(_owner) { return global.box_open; });
+gmsa_plan_add_fact(_d, "out",      function(_owner) { return _owner.out; });
+
+gmsa_plan_add_step(_d, "pry_box",     { effects : [["box_open", true]], cost : 4 });
+gmsa_plan_add_step(_d, "take_key",    { requires : [["box_open", true]], effects : [["has_key", true]], cost : 1 });
+gmsa_plan_add_step(_d, "unlock_door", { requires : [["has_key", true]], effects : [["out", true]], cost : 2 });
+gmsa_plan_add_step(_d, "smash_window", { effects : [["out", true]], cost : function(_owner, _state) { return _owner.strong ? 3 : 12; } });
+gmsa_plan_add_goal(_d, "escape", { conditions : [["out", true]] });
+global.escape = gmsa_plan_domain_build(_d);
+
+// a strong prisoner smashes the window (3), a weak one pries the box, takes the key and unlocks the door (4 + 1 + 2)
+gmsa_plan_make(planner, "escape");
+```
+
+Everything else works as with recipes: you do one step at a time and report it, the plan repairs itself, it can be made across frames or in the scheduler, and explain shows it. A domain of facts, steps and goals only is plain GOAP, no tasks needed.
+
+**Steps are your actions.** GOAP usually calls them actions, here they're the same steps recipes use. One `take_key` serves both.
+
+#### How a goal searches
+
+The planner runs an A* search over imagined states: from the facts as they are, it tries every allowed step whose `requires` hold, imagines its effects, and keeps going from the cheapest state so far until the conditions hold.
+
+- **The chain found is the cheapest,** by your costs. Its guess of the cost still to go never overestimates, which is what guarantees it. One exception: a cost function returning less than the cheapest number cost among the goal's steps can make the guess too high, so the chain found may not be the very cheapest.
+- **Costs are what you choose them to be.** Seconds of work, walking distance, risk, money. A cost function sees the imagined state, so a step can cost more or less depending on where the agent will be by then, for example through a fact holding its position.
+- **Deterministic.** The same facts give the same chain. [Variety](#variety) adds controlled randomness.
+- **Bounded.** Every step tried in a state costs one node of the planner's `budget`. A goal over many steps uses nodes much faster than a recipe, so give goal planners a larger budget (2000 to 8000 is typical) and plan across frames when chains get long. Searching remembers the states it has seen, in arrays sized by the budget and reused.
+- **A goal already met** gives an empty chain, and a plan that's done at once.
+- **Learned chances count.** With a [step chance](#gmsa_plan_set_step_chance) on the domain, such as [learned step reliability](#gmsa_plan_learn_steps), each step's cost is divided by its chance: unreliable steps get avoided without changing any cost.
+
+#### Goals inside recipes
+
+A method's `subtasks` can name a goal. The recipe gives the structure, the search fills the gap:
+
+```gml
+var _job = gmsa_plan_add_task(_d, "job");
+gmsa_plan_add_method(_job, "the_plan", { subtasks : ["case_the_bank", "get_inside", "crack_vault", "get_away"] });  // get_inside and get_away are goals
+```
+
+- The goal is searched from the imagined state where the recipe reaches it.
+- **One answer per visit.** If a later part of the recipe fails, the planner backs up past the goal instead of asking it for its second best chain. When backing up changes something before the goal, the goal is reached again from a different state and searches again.
+- A broken step in the goal's chain repairs by searching the goal again. The recipe around it stays.
+- Give goals in a mixed domain an `actions` list, so a goal doesn't wander into the steps of other recipes.
+
+#### Variety
+
+Without it, identical agents in the same situation all take the same route. With `variety : 0.3`, each search multiplies every step's cost by a random factor between 1 and 1.3, drawn once per search from the planner's own generator (seeded with the planner's `seed`):
+
+- Routes within about 30% of each other get mixed between agents, a clearly worse route stays rare.
+- The factors only raise costs, so each search still finds the cheapest chain for its draw.
+- A repair is a new search, with a new draw.
+
+Variety is noise. When the difference should have a reason, put it in the costs instead: a cost function can read the agent's own traits (a strong agent smashes cheaply) or the world (an exit others are already heading to costs more).
+
+#### Pruning
+
+At build, each goal keeps only the steps that can help: a step that changes a fact the conditions need is relevant, then the facts it requires become needed too, until nothing changes. Steps that never become relevant are left out of that goal's search. A goal over a domain's full list of steps then searches only the ones that matter, often many times faster.
+
+- **It never changes the chain found,** with one exception: a step that only makes other steps cheaper through a cost function (running shoes that make walking cheaper) is left out, since no condition or requirement needs it. Use `prune : false` for such a goal.
+- A relevant step with a `check` can read any fact, so pruning steps aside for that goal and every allowed step is kept.
+
+#### Explaining goals
+
+A goal shows in the plan tree as one line with its chain under it:
+
+```
+escape (running, step 1 of 3)
+  escape: 3 steps, cost 7, searched 12 nodes
+  > pry_box
+    take_key
+    unlock_door
+```
+
+When no chain reaches a goal planned on its own, explain says how close it came. Here the goal's `actions` list forgot the door and the window:
+
+```
+escape (failed, no plan)
+escape: no chain of steps reaches it
+  out is false, needs true, and none of the goal's steps changes it
+  closest it came: after pry_box, take_key
+  still out is false, needs true
+```
+
+- A condition no allowed step changes is named first: usually a missing step or a wrong `actions` list.
+- The closest state is the one with the fewest unmet conditions, the cheapest of those, with the steps that led there.
 
 ### Targets
 
@@ -2268,8 +2393,13 @@ gmsa_plan_add_step(_d, "grab_coin", {
 | Idle scheduled planners | about 0.7 us each per scheduler step |
 | 12 planners asking at once, about 100 nodes each | ready after 117 steps at a 100 us budget, 24 at 500 us, 7 at 2000 us |
 | Scheduler steps with planning | over the budget by 22 to 37 us, at every budget |
+| A goal: one node | about 10 to 11 us, flat at every search size |
+| A goal over 5 steps, or a recipe with a goal inside | about 350 us, 23 to 25 nodes |
+| A goal, 17 steps, of which 6 can't help: pruned / not pruned | 1.3 ms, 121 nodes / 82 ms, 7633 nodes |
+| The unpruned 17 step search in 1 ms slices | 114 calls, worst call 1.1 ms |
+| Cost functions, variety | 10 to 20% more per node, almost nothing |
 
-The default budget of 250 nodes keeps a hopeless search to a few milliseconds on the VM, many times what typical domains use. Raise it for large domains, and plan across frames when a plan costs more than a frame can spare. Game plans usually have under 20 steps, where every running call stays well under 0.1 ms. Schedule planners for agents that may plan, hundreds of idle scheduled planners add up.
+The default budget of 250 nodes keeps a hopeless search to a few milliseconds on the VM, many times what typical domains use. Raise it for large domains, and plan across frames when a plan costs more than a frame can spare. Game plans usually have under 20 steps, where every running call stays well under 0.1 ms. Schedule planners for agents that may plan, hundreds of idle scheduled planners add up. Goals cost more than recipes: the search tries every allowed step in every promising state, and states multiply with every step that looks like progress. Keep goals to the steps that matter (pruning does most of it), and plan across frames when a search needs more than a few hundred nodes.
 
 ### Planner fields
 
@@ -2361,6 +2491,7 @@ Learns each step's chance of success per situation, from the plans' own step rep
 
 - A step's chance is `(successes + prior) / (tries + prior)`, both fading with `half_life`. An untried step counts as fully reliable, so methods with more steps aren't punished before anything is known.
 - **It works within a plan.** When a step fails, the repair plans its task again, and the failure has already lowered that step's chance in this situation. So the goblin turns to the window at once instead of trying the trapped door again. Without it, a failure no fact explains makes the planner retry the same plan, see [Facts and your game](#facts-and-your-game).
+- **Goals use it too:** a goal's search divides each step's cost by its learned chance, so a goal finds a route around the failing step on its next search, the repair included.
 - Situations multiply: three bool facts and one ranged fact with 4 bins are 2 x 2 x 2 x 4 = 32 situations per step, at most 4096.
 
 Wire it after the facts it uses, before or after build. **Returns** the reliability, for the functions below.
@@ -2687,6 +2818,7 @@ See [Planner fields](#planner-fields) in Plan.
 | Plan step or method `check` | `function(state)` | True when it can be used. `state` is read only |
 | Plan step `targets` | `function(owner)` | Array of targets |
 | Plan step `score` | `function(owner, target)` | A number, 0 or less rules the target out |
+| Plan step `cost` | `function(owner, state)` | The step's cost when a goal searches, 0 or less rules it out in that state. `state` is read only |
 | Plan method `score` | `function(owner, state)` | A number, 0 or less rules the method out |
 | Plan task `adjust` | `function(planner, state, scores)` | Nothing, changes `scores` with `[@ ]` |
 | Plan listener | `function(report)` | Nothing. The report is reused, copy what you keep |
