@@ -26,5 +26,6 @@ function gmsa_tests_all(_verbose = false) {
     test_scheduler_work();
     test_plan_schedule();
     test_plan_lines();
+    test_plan_choice();
     return gmsa_test_run(_verbose);
 }

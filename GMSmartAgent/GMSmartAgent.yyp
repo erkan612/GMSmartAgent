@@ -101,6 +101,7 @@
     {"id":{"name":"Test_Learn_Track","path":"scripts/Test_Learn_Track/Test_Learn_Track.yy",},},
     {"id":{"name":"Test_Net","path":"scripts/Test_Net/Test_Net.yy",},},
     {"id":{"name":"Test_Observe","path":"scripts/Test_Observe/Test_Observe.yy",},},
+    {"id":{"name":"Test_Plan_Choice","path":"scripts/Test_Plan_Choice/Test_Plan_Choice.yy",},},
     {"id":{"name":"Test_Plan_Domain","path":"scripts/Test_Plan_Domain/Test_Plan_Domain.yy",},},
     {"id":{"name":"Test_Plan_Explain","path":"scripts/Test_Plan_Explain/Test_Plan_Explain.yy",},},
     {"id":{"name":"Test_Plan_Lines","path":"scripts/Test_Plan_Lines/Test_Plan_Lines.yy",},},

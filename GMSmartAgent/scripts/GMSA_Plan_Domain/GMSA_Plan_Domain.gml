@@ -5,11 +5,17 @@ function gmsa_plan_domain_create(_name) {
     return { name : _name, facts : [], steps : [], tasks : [], built : false, fact_lookup : {}, lookup : {} };
 }
 
-function gmsa_plan_add_fact(_domain, _name, _read) {
+function gmsa_plan_add_fact(_domain, _name, _read, _params = {}) {
     __gmsa_plan_check_open(_domain);
     if (!is_string(_name) || _name == "") throw "GMSA: plan fact needs a name";
     if (!__gmsa_callable(_read)) throw "GMSA: plan fact '" + _name + "' needs a read function";
-    array_push(_domain.facts, { name : _name, read : _read });
+    var _min = __gmsa_param(_params, "min", undefined);
+    var _max = __gmsa_param(_params, "max", undefined);
+    if ((_min == undefined) != (_max == undefined)) throw "GMSA: plan fact '" + _name + "' needs both min and max, or neither";
+    if (_min != undefined && (!is_numeric(_min) || !is_numeric(_max) || !(_max > _min))) {
+        throw "GMSA: plan fact '" + _name + "' range needs numbers with max above min";
+    }
+    array_push(_domain.facts, { name : _name, read : _read, min : _min, max : _max });
     return _domain;
 }
 
@@ -28,10 +34,16 @@ function gmsa_plan_add_step(_domain, _name, _params = {}) {
     return _step;
 }
 
-function gmsa_plan_add_task(_domain, _name) {
+function gmsa_plan_add_task(_domain, _name, _params = {}) {
     __gmsa_plan_check_open(_domain);
     if (!is_string(_name) || _name == "") throw "GMSA: plan task needs a name";
-    var _task = { name : _name, domain : _domain, methods : [] };
+    var _select = __gmsa_param(_params, "select", gmsa_select.BEST);
+    var _top_n = __gmsa_param(_params, "top_n", 3);
+    if (_select != gmsa_select.BEST && _select != gmsa_select.TOP_N_WEIGHTED) {
+        throw "GMSA: plan task '" + _name + "' select must be gmsa_select.BEST or gmsa_select.TOP_N_WEIGHTED";
+    }
+    if (!is_numeric(_top_n) || _top_n < 1) throw "GMSA: plan task '" + _name + "' top_n must be at least 1";
+    var _task = { name : _name, domain : _domain, methods : [], select : _select, top_n : floor(_top_n) };
     array_push(_domain.tasks, _task);
     return _task;
 }
@@ -112,7 +124,7 @@ function gmsa_plan_domain_build(_domain) {
                 check : _md.check, score : _md.score,
             };
         }
-        _tasks[_i] = { name : _t.name, index : _i, methods : _methods };
+        _tasks[_i] = { name : _t.name, index : _i, methods : _methods, select : _t.select, top_n : _t.top_n };
     }
 
     _domain.fact_lookup = _facts;

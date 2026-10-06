@@ -86,15 +86,18 @@ function __gmsa_plan_task_lines(_p, _i, _depth, _fresh, _lines) {
     var _count = _tr[_o];
     var _pick = _tr[_o + 1];
     var _text = _task.name + ": " + _task.methods[_p.__run_method[_i]].name;
-    if (__gmsa_plan_task_scored(_task)) _text += " (score " + string_format(_tr[_o + 3 + _pick * 2], 0, 2) + ")";
+    var _notes = "";
+    if (__gmsa_plan_task_scored(_task)) _notes = "score " + string_format(_tr[_o + 4 + _pick * 2], 0, 2);
+    if (_task.select == gmsa_select.TOP_N_WEIGHTED) _notes += ((_notes == "") ? "" : ", ") + "chance " + string_format(_tr[_o + 2], 0, 2);
+    if (_notes != "") _text += " (" + _notes + ")";
     var _head = __gmsa_plan_line("task", _depth, _text);
     _head.repaired = _fresh;
     array_push(_lines, _head);
 
-    var _facts = _o + 2 + _count * 2;
+    var _facts = _o + 3 + _count * 2;
     for (var _f = 0; _f < array_length(_p.state); _f++) _p.state[_f] = _tr[_facts + _f];
     for (var _k = 0; _k < _pick; _k++) {
-        var _md = _task.methods[_tr[_o + 2 + _k * 2]];
+        var _md = _task.methods[_tr[_o + 3 + _k * 2]];
         var _line = __gmsa_plan_line("skipped", _depth + 1, _md.name + " skipped: " + __gmsa_plan_why_method(_p, _md));
         _line.repaired = _fresh;
         array_push(_lines, _line);
@@ -102,7 +105,7 @@ function __gmsa_plan_task_lines(_p, _i, _depth, _fresh, _lines) {
     for (var _m = 0; _m < array_length(_task.methods); _m++) {
         var _listed = false;
         for (var _k = 0; _k < _count; _k++) {
-            if (_tr[_o + 2 + _k * 2] == _m) {
+            if (_tr[_o + 3 + _k * 2] == _m) {
                 _listed = true;
                 break;
             }

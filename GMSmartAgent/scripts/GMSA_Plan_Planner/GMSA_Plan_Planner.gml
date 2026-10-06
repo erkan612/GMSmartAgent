@@ -22,6 +22,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
     return {
         domain : _domain, owner : _owner, budget : floor(_budget), depth : floor(_depth), retries : floor(_retries),
         slice : _slice, clock : _clock,
+        rng : gmsa_rng_create(__gmsa_param(_params, "seed", 1)), // for weighted tasks, never GameMaker's random
         result : gmsa_plan_result.NONE, status : gmsa_plan_status.IDLE, goal : undefined,
         nodes : 0, depth_cut : false, target : undefined, at : 0, failures : 0,
         // imagined state and its undo log, the holder fields __gmsa_plan_apply and __gmsa_plan_undo use
@@ -43,7 +44,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __head : -1, __pool : 0, __node_kind : [], __node_index : [], __node_depth : [], __node_next : [],
         // choice points, one per task being broken down
         __frames : 0, __frame_task : [], __frame_rest : [], __frame_pool : [], __frame_undo : [], __frame_out : [],
-        __frame_trace : [], __frame_depth : [], __frame_start : [], __frame_count : [], __frame_try : [],
+        __frame_trace : [], __frame_depth : [], __frame_start : [], __frame_count : [], __frame_try : [], __frame_k : [],
         // method order per choice point, best first
         __order_top : 0, __order : [], __order_score : [],
     };
@@ -329,6 +330,33 @@ function __gmsa_plan_push_frame(_p, _n) {
         _p.__order_score[_start + _k] = _s;
         _count += 1;
     }
+    // weighted tasks: the top methods in a weighted random order, the rest after them in score order
+    var _k = 0;
+    if (_task.select == gmsa_select.TOP_N_WEIGHTED) {
+        _k = min(_task.top_n, _count);
+        for (var _i = 0; _i < _k - 1; _i++) {
+            var _total = 0;
+            for (var _j = _i; _j < _k; _j++) _total += _p.__order_score[_start + _j];
+            var _r = gmsa_rng_next(_p.rng) * _total;
+            var _pick = _k - 1;
+            for (var _j = _i; _j < _k; _j++) {
+                _r -= _p.__order_score[_start + _j];
+                if (_r * 1000000000000 < 0) {
+                    _pick = _j;
+                    break;
+                }
+            }
+            if (_pick != _i) {
+                var _m = _p.__order[_start + _i];
+                var _s = _p.__order_score[_start + _i];
+                _p.__order[_start + _i] = _p.__order[_start + _pick];
+                _p.__order_score[_start + _i] = _p.__order_score[_start + _pick];
+                _p.__order[_start + _pick] = _m;
+                _p.__order_score[_start + _pick] = _s;
+            }
+        }
+    }
+    _p.__frame_k[_f] = _k;
     _p.__frame_start[_f] = _start;
     _p.__frame_count[_f] = _count;
     _p.__order_top = _start + _count;
@@ -375,13 +403,15 @@ function __gmsa_plan_record(_p, _f) {
     var _o = _p.__trace_top;
     var _c = _p.__frame_count[_f];
     var _start = _p.__frame_start[_f];
+    var _pick = _p.__frame_try[_f] - 1;
     _p.__trace[_o] = _c;
-    _p.__trace[_o + 1] = _p.__frame_try[_f] - 1;
+    _p.__trace[_o + 1] = _pick;
+    _p.__trace[_o + 2] = __gmsa_plan_chance(_p, _start, _pick, _p.__frame_k[_f]);
     for (var _i = 0; _i < _c; _i++) {
-        _p.__trace[_o + 2 + _i * 2] = _p.__order[_start + _i];
-        _p.__trace[_o + 3 + _i * 2] = _p.__order_score[_start + _i];
+        _p.__trace[_o + 3 + _i * 2] = _p.__order[_start + _i];
+        _p.__trace[_o + 4 + _i * 2] = _p.__order_score[_start + _i];
     }
-    var _w = _o + 2 + _c * 2;
+    var _w = _o + 3 + _c * 2;
     var _n = array_length(_p.state);
     for (var _i = 0; _i < _n; _i++) _p.__trace[_w + _i] = _p.state[_i];
     _p.__trace_top = _w + _n;
@@ -389,11 +419,22 @@ function __gmsa_plan_record(_p, _f) {
 }
 
 function __gmsa_plan_keep_record(_p, _o) {
-    var _len = 2 + _p.__trace[_o] * 2 + array_length(_p.state);
+    var _len = 3 + _p.__trace[_o] * 2 + array_length(_p.state);
     var _at = _p.__plan_trace_top;
     for (var _i = 0; _i < _len; _i++) _p.__plan_trace[_at + _i] = _p.__trace[_o + _i];
     _p.__plan_trace_top = _at + _len;
     return _at;
+}
+
+function __gmsa_plan_chance(_p, _start, _pick, _k) {
+    if (_pick >= _k) return 1;
+    var _total = 0;
+    for (var _j = _pick; _j < _k; _j++) _total += _p.__order_score[_start + _j];
+    return _p.__order_score[_start + _pick] / _total;
+}
+
+function __gmsa_plan_entry_chance(_p, _i) {
+    return _p.__plan_trace[_p.__run_aux[_i] + 2];
 }
 
 // Internal: running
