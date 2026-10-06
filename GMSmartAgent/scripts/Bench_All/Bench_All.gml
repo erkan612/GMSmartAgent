@@ -1,16 +1,17 @@
 function gmsa_bench_all() {
     show_debug_message("[GMSA Bench] running on " + (code_is_compiled() ? "YYC" : "VM"));
-    __gmsa_bench_curves();
-    __gmsa_bench_scale_targets([10, 50, 100, 200, 500]);
-    __gmsa_bench_scale_considerations([1, 4, 8, 16]);
-    __gmsa_bench_scale_actions([5, 20, 50, 100]);
-    __gmsa_bench_scale_agents([100, 1000, 5000, 10000], 2000);
-    __gmsa_bench_net();
-    __gmsa_bench_learn_tiers([3, 10, 30]);
-    __gmsa_bench_lambdamart_train([100, 500], 2000);
-    __gmsa_bench_outcomes([3, 10]);
-    __gmsa_bench_plan([10, 100]);
+    //__gmsa_bench_curves();
+    //__gmsa_bench_scale_targets([10, 50, 100, 200, 500]);
+    //__gmsa_bench_scale_considerations([1, 4, 8, 16]);
+    //__gmsa_bench_scale_actions([5, 20, 50, 100]);
+    //__gmsa_bench_scale_agents([100, 1000, 5000, 10000], 2000);
+    //__gmsa_bench_net();
+    //__gmsa_bench_learn_tiers([3, 10, 30]);
+    //__gmsa_bench_lambdamart_train([100, 500], 2000);
+    //__gmsa_bench_outcomes([3, 10]);
+    //__gmsa_bench_plan([10, 100]);
     __gmsa_bench_plan_slices();
+	__gmsa_bench_plan_learn();
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -550,5 +551,152 @@ function __gmsa_bench_plan_slices() {
         }
         __gmsa_bench_line("plan, 12 planners at once, budget " + string(_budget) + " us: ready after " + string(_steps)
             + " steps, worst step " + string(round(_worst_step)) + " us (over by " + string(round(max(0, _worst_step - _budget))) + " us)");
+    }
+}
+
+function __gmsa_bench_plan_learn(_runs = 1000) {
+    show_debug_message("Plan learn benchmarks, " + string(_runs) + " runs each, average per call");
+    var _names = ["designer", "step reliability", "learned methods", "both"];
+    for (var _k = 0; _k < 4; _k++) {
+        var _b = __gmsa_bench_plan_learn_domain(_k == 1 || _k == 3, _k == 2 || _k == 3);
+        var _o = { night : false, vault : 0, inside : false, has_loot : false };
+        var _p = gmsa_plan_planner_create(_b.domain, _o);
+        for (var _i = 0; _i < 20; _i++) __gmsa_bench_plan_learn_episode(_p, _o, _i mod 2 == 0);  // warm up
+
+        var _make = 0;
+        for (var _i = 0; _i < _runs; _i++) {
+            _o.night = (_i mod 2 == 0);
+            _o.vault = _i mod 3;
+            _o.inside = false;
+            _o.has_loot = false;
+            var _t = get_timer();
+            gmsa_plan_make(_p, "raid");
+            _make += get_timer() - _t;
+            gmsa_plan_stop(_p);
+        }
+        var _clean = 0;
+        var _failing = 0;
+        for (var _i = 0; _i < _runs; _i++) {
+            _o.night = (_i mod 2 == 0);
+            _o.vault = _i mod 3;
+            _clean += __gmsa_bench_plan_learn_episode(_p, _o, false);
+            _failing += __gmsa_bench_plan_learn_episode(_p, _o, true);
+        }
+        show_debug_message(_names[_k] + ": make " + string_format(_make / _runs, 1, 1)
+            + " us, raid " + string_format(_clean / _runs, 1, 1)
+            + " us, raid with a failed entrance " + string_format(_failing / _runs, 1, 1) + " us");
+    }
+    __gmsa_bench_plan_learn_facts(_runs);
+}
+
+function __gmsa_bench_plan_learn_domain(_reliable, _learned) {
+    var _d = gmsa_plan_domain_create("bench plan learn");
+    gmsa_plan_add_fact(_d, "night", function(_o) { return _o.night; });
+    gmsa_plan_add_fact(_d, "vault", function(_o) { return _o.vault; }, { min : 0, max : 2 });
+    gmsa_plan_add_fact(_d, "inside", function(_o) { return _o.inside; });
+    gmsa_plan_add_fact(_d, "has_loot", function(_o) { return _o.has_loot; });
+    gmsa_plan_add_step(_d, "approach", { requires : [["inside", false]] });
+    gmsa_plan_add_step(_d, "enter_door", { requires : [["inside", false]], effects : [["inside", true]] });
+    gmsa_plan_add_step(_d, "enter_window", { requires : [["inside", false]], effects : [["inside", true]] });
+    gmsa_plan_add_step(_d, "dig_tunnel", { requires : [["inside", false]], effects : [["inside", true]] });
+    gmsa_plan_add_step(_d, "take_loot", { requires : [["inside", true]], effects : [["has_loot", true]] });
+    gmsa_plan_add_step(_d, "escape", { requires : [["has_loot", true]], effects : [["inside", false]] });
+    var _get_in = gmsa_plan_add_task(_d, "get_in");
+    gmsa_plan_add_method(_get_in, "door", { subtasks : ["enter_door"] });
+    gmsa_plan_add_method(_get_in, "window", { subtasks : ["enter_window"] });
+    gmsa_plan_add_method(_get_in, "tunnel", { subtasks : ["dig_tunnel"] });
+    var _raid = gmsa_plan_add_task(_d, "raid");
+    gmsa_plan_add_method(_raid, "only", { subtasks : ["approach", "get_in", "take_loot", "escape"] });
+    var _out = { domain : _d, reliability : undefined, model : undefined };
+    if (_reliable) _out.reliability = gmsa_plan_learn_steps(_d, { inputs : ["night", "vault"] });
+    if (_learned) {
+        _out.model = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
+        gmsa_plan_learn_methods(_get_in, _out.model, { inputs : ["night", "vault"] });
+    }
+    gmsa_plan_domain_build(_d);
+    return _out;
+}
+
+function __gmsa_bench_plan_learn_episode(_p, _o, _fail_first) {
+    _o.inside = false;
+    _o.has_loot = false;
+    var _t = get_timer();
+    gmsa_plan_make(_p, "raid");
+    var _failed = !_fail_first;
+    var _guard = 0;
+    while (gmsa_plan_get_status(_p) == gmsa_plan_status.RUNNING && _guard++ < 50) {
+        var _step = gmsa_plan_current(_p);
+        var _entrance = (_step == "enter_door" || _step == "enter_window" || _step == "dig_tunnel");
+        if (_entrance && !_failed) {
+            _failed = true;
+            gmsa_plan_step_failed(_p);
+            continue;
+        }
+        if (_entrance) _o.inside = true;
+        if (_step == "take_loot") _o.has_loot = true;
+        if (_step == "escape") _o.inside = false;
+        gmsa_plan_step_done(_p);
+    }
+    if (gmsa_plan_get_status(_p) == gmsa_plan_status.DONE) gmsa_plan_reward(_p, 1);
+    return get_timer() - _t;
+}
+
+function __gmsa_bench_plan_learn_facts(_runs) {
+    var _gp = gmsa_profile_create("bench guard");
+    gmsa_profile_add_input(_gp, gmsa_input_pull("at", function(_agent) { return _agent.owner.post; }, 0, 2));
+    gmsa_profile_add_input(_gp, gmsa_input_pull("raided", function(_agent) { return _agent.owner.raid; }, 0, 2));
+    gmsa_profile_set_features(_gp, ["at", "raided"]);
+    for (var _k = 1; _k <= 3; _k++) gmsa_profile_add_action(_gp, "guard_" + string(_k));
+    gmsa_profile_build(_gp);
+    var _guard = { post : 0, raid : 0 };
+    var _agent = gmsa_agent_create(_gp, _guard);
+    var _model = gmsa_learn_linear_create();
+    var _options = ["guard_1", "guard_2", "guard_3"];
+    for (var _i = 0; _i < 60; _i++) {
+        _guard.post = _i mod 3;
+        gmsa_learn_observe(_model, gmsa_observe(_agent, _options, (_i + 1) mod 3));
+    }
+
+    // a clock the bench moves by hand: moved, the cache is stale, held, it is fresh
+    global.__gmsa_bench_now = 0;
+    var _clock = function() { return global.__gmsa_bench_now; };
+    var _read = gmsa_learn_input(_model, _agent, "guard_2", { refresh : 1, clock : _clock });
+    var _first = 0;
+    var _cached = 0;
+    for (var _i = 0; _i < _runs; _i++) {
+        global.__gmsa_bench_now += 10;
+        var _t = get_timer();
+        _read(undefined, undefined);
+        _first += get_timer() - _t;
+        _t = get_timer();
+        _read(undefined, undefined);
+        _cached += get_timer() - _t;
+    }
+    show_debug_message("player fact read: first in a frame " + string_format(_first / _runs, 1, 1)
+        + " us, cached " + string_format(_cached / _runs, 1, 1) + " us");
+
+    // three vaults, each method needs its vault's prediction below 0.4, plain facts against learned ones
+    var _names = ["plain facts", "player facts, first in a frame", "player facts, cached"];
+    for (var _v = 0; _v < 3; _v++) {
+        var _d = gmsa_plan_domain_create("bench player facts");
+        var _raid = gmsa_plan_add_task(_d, "raid");
+        for (var _k = 1; _k <= 3; _k++) {
+            var _n = string(_k);
+            if (_v == 0) gmsa_plan_add_fact(_d, "next_" + _n, function(_o) { return 0.2; }, { min : 0, max : 1 });
+            else gmsa_plan_learn_fact(_d, "next_" + _n, _model, _agent, "guard_" + _n, { refresh : 1, clock : _clock });
+            gmsa_plan_add_step(_d, "go_" + _n, { requires : [["next_" + _n, "<", 0.4]] });
+            gmsa_plan_add_method(_raid, "vault_" + _n, { subtasks : ["go_" + _n] });
+        }
+        gmsa_plan_domain_build(_d);
+        var _p = gmsa_plan_planner_create(_d, {});
+        var _make = 0;
+        for (var _i = 0; _i < _runs; _i++) {
+            if (_v == 1) global.__gmsa_bench_now += 10;
+            var _t = get_timer();
+            gmsa_plan_make(_p, "raid");
+            _make += get_timer() - _t;
+            gmsa_plan_stop(_p);
+        }
+        show_debug_message("make, " + _names[_v] + ": " + string_format(_make / _runs, 1, 1) + " us");
     }
 }
