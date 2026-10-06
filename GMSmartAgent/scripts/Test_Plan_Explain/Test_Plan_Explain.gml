@@ -9,12 +9,12 @@ function test_plan_explain() {
             gmsa_plan_make(_p, "loot_chest");
             gmsa_plan_step_done(_p);
             var _expect = "loot_chest (running, step 2 of 3)"
-                + "\nloot_chest: fetch"
-                + "\n  have_key skipped: has_key is false, needs true"
-                + "\n  buy skipped: buy_key: gold is 3, needs at least 10"
-                + "\n  go_to_key, done"
+                + "\n  loot_chest: fetch"
+                + "\n    have_key skipped: has_key is false, needs true"
+                + "\n    buy skipped: buy_key: gold is 3, needs at least 10"
+                + "\n    go_to_key, done"
                 + "\n  > pick_up_key"
-                + "\n  open_chest";
+                + "\n    open_chest";
             gmsa_test_assert_equal(gmsa_plan_explain(_p), _expect, "text");
             gmsa_test_assert_equal(gmsa_plan_current(_p), "pick_up_key", "explaining changes nothing");
             gmsa_plan_stop(_p);
@@ -26,22 +26,22 @@ function test_plan_explain() {
             var _p = gmsa_plan_planner_create(__test_plan_door_domain(), _owner);
             gmsa_plan_make(_p, "heist");
             var _expect = "heist (running, step 1 of 3)"
-                + "\nheist: front"
+                + "\n  heist: front"
                 + "\n  > approach"
-                + "\n  get_in: walk_in"
-                + "\n    walk"
-                + "\n    enter";
+                + "\n    get_in: walk_in"
+                + "\n      walk"
+                + "\n      enter";
             gmsa_test_assert_equal(gmsa_plan_explain(_p), _expect, "nested");
             _owner.door_locked = true;
             gmsa_plan_refresh(_p);
             _expect = "heist (running, step 1 of 4)"
-                + "\nheist: front"
+                + "\n  heist: front"
                 + "\n  > approach"
-                + "\n  get_in: pick"
-                + "\n    walk_in skipped: door_locked is true, needs false"
-                + "\n    walk"
-                + "\n    pick_lock"
-                + "\n    enter";
+                + "\n    get_in: pick"
+                + "\n      walk_in skipped: door_locked is true, needs false"
+                + "\n      walk"
+                + "\n      pick_lock"
+                + "\n      enter";
             gmsa_test_assert_equal(gmsa_plan_explain(_p), _expect, "after the repair");
         });
 

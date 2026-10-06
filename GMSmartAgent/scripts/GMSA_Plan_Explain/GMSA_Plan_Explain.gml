@@ -12,15 +12,15 @@ function gmsa_plan_explain(_planner) {
             _depth -= 1;
             continue;
         }
-        var _pad = string_repeat("  ", _depth);
+        var _indent = string_repeat("  ", _depth);
         if (_kind == 0) {
             var _line = _steps[_p.__run_index[_i]].name;
             if (_i < _p.at) _line += ", done";
-            if (_i == _p.at && _p.status == gmsa_plan_status.RUNNING) _line = "> " + _line;
-            _text += "\n" + _pad + _line;
+            var _slot = (_i == _p.at && _p.status == gmsa_plan_status.RUNNING) ? "> " : "  ";
+            _text += "\n" + _indent + _slot + _line;
             continue;
         }
-        _text += "\n" + _pad + __gmsa_plan_explain_task(_p, _i, _pad + "  ");
+        _text += "\n" + _indent + "  " + __gmsa_plan_explain_task(_p, _i, _indent + "    ");
         _depth += 1;
     }
     return _text;
