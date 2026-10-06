@@ -1,9 +1,9 @@
 {
   "$GMScript":"v1",
-  "%Name":"Test_Plan_Planner",
+  "%Name":"Test_Plan_Run",
   "isCompatibility":false,
   "isDnD":false,
-  "name":"Test_Plan_Planner",
+  "name":"Test_Plan_Run",
   "parent":{
     "name":"GMSA_Tests",
     "path":"folders/GMSA_Tests.yy",
