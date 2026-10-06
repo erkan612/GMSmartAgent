@@ -29,8 +29,10 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __real : array_create(_facts, 0),          // the facts as last read
         __base : array_create(_facts, 0),          // the state a search starts from
         __fact_bool : array_create(_facts, false), // which facts read as bools, for explain
-        // planning in slices: when this call must stop, and where the search paused
-        __deadline : undefined, __resume_choice : false, __paused_once : false,
+        // planning in slices: when this call must stop, where the search paused, and whether it's a make (0) or a repair (1)
+        __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0,
+        // a repair's climb: the task being replanned, its entries s to e, and how to search it
+        __repair_s : 0, __repair_e : 0, __repair_kind : 0, __repair_index : 0, __repair_depth : 0,
         // plans are entries: kind 0 a step, 1 a task begins (with its method and a trace record), 2 a task ends
         __out_count : 0, __out_kind : [], __out_index : [], __out_method : [], __out_aux : [],  // search output
         __run_count : 0, __run_kind : [], __run_index : [], __run_method : [], __run_aux : [], __run_steps : 0,  // the running plan
@@ -63,13 +65,15 @@ function gmsa_plan_make(_planner, _name) {
     _planner.__run_steps = 0;
     _planner.__plan_trace_top = 0;
     _planner.__paused_once = false;
+	_planner.__mode = 0;
     _planner.nodes = 0;
     __gmsa_plan_read_real(_planner);
     __gmsa_plan_base(_planner, 0);
     __gmsa_plan_start_slice(_planner, _planner.slice);
     var _r = __gmsa_plan_search_from(_planner, _root.kind, _root.index, 0);
+    var _ok = __gmsa_plan_after_search(_planner, _r);
     _planner.__deadline = undefined;
-    return __gmsa_plan_after_search(_planner, _r);
+    return _ok;
 }
 
 function gmsa_plan_work(_planner, _budget = undefined) {
@@ -80,8 +84,14 @@ function gmsa_plan_work(_planner, _budget = undefined) {
     }
     __gmsa_plan_start_slice(_planner, (_budget == undefined) ? _planner.slice : _budget);
     var _r = __gmsa_plan_search(_planner);
+    if (_planner.__mode == 0) {
+        __gmsa_plan_after_search(_planner, _r);
+    } else {
+        var _res = __gmsa_plan_repair_result(_planner, _r);
+        if (_res == -1) _res = __gmsa_plan_repair_next(_planner);
+        __gmsa_plan_after_repair(_planner, _res, true);
+    }
     _planner.__deadline = undefined;
-    __gmsa_plan_after_search(_planner, _r);
     return _planner.status;
 }
 
@@ -90,14 +100,18 @@ function gmsa_plan_step_done(_planner) {
     if (_planner.status != gmsa_plan_status.RUNNING) return _planner.status;
     _planner.at += 1;
     _planner.failures = 0;
+    __gmsa_plan_start_slice(_planner, _planner.slice);
     __gmsa_plan_settle(_planner, false, true);
+    _planner.__deadline = undefined;
     return _planner.status;
 }
 
 function gmsa_plan_step_failed(_planner) {
     __gmsa_plan_check_planner(_planner);
     if (_planner.status != gmsa_plan_status.RUNNING) return _planner.status;
+    __gmsa_plan_start_slice(_planner, _planner.slice);
     __gmsa_plan_settle(_planner, true, true);
+    _planner.__deadline = undefined;
     return _planner.status;
 }
 
@@ -107,8 +121,9 @@ function gmsa_plan_refresh(_planner) {
     __gmsa_plan_read_real(_planner);
     var _bad = __gmsa_plan_broken_at(_planner, _planner.at);
     if (_bad == -1) return _planner.status;
-    if (__gmsa_plan_repair(_planner, _bad)) __gmsa_plan_settle(_planner, false, false);
-    else __gmsa_plan_fail(_planner);
+    __gmsa_plan_start_slice(_planner, _planner.slice);
+    __gmsa_plan_after_repair(_planner, __gmsa_plan_repair(_planner, _bad), false);
+    _planner.__deadline = undefined;
     return _planner.status;
 }
 
@@ -508,38 +523,66 @@ function __gmsa_plan_splice(_p, _s, _e) {
 function __gmsa_plan_repair(_p, _b) {
     _p.nodes = 0;
     __gmsa_plan_read_real(_p);
-    var _s = _b;
+    _p.__repair_s = _b;
+    return __gmsa_plan_repair_next(_p);
+}
+
+function __gmsa_plan_repair_next(_p) {
     while (true) {
-        _s = __gmsa_plan_enclosing(_p, _s);
-        var _kind = 1;
-        var _index, _e, _depth;
+        var _s = __gmsa_plan_enclosing(_p, _p.__repair_s);
         if (_s == -1) {
             var _root = _p.domain.lookup[$ _p.goal];
-            if (_root.kind == 1) break;
-            _kind = 0;
-            _index = _root.index;
-            _s = 0;
-            _e = _p.__run_count - 1;
-            _depth = 0;
+            if (_root.kind == 1) {
+                _p.result = gmsa_plan_result.NO_PLAN;
+                return 0;
+            }
+            _p.__repair_kind = 0;
+            _p.__repair_index = _root.index;
+            _p.__repair_s = 0;
+            _p.__repair_e = _p.__run_count - 1;
+            _p.__repair_depth = 0;
         } else {
-            _index = _p.__run_index[_s];
-            _e = __gmsa_plan_matching_end(_p, _s);
-            _depth = __gmsa_plan_depth_at(_p, _s);
+            _p.__repair_kind = 1;
+            _p.__repair_index = _p.__run_index[_s];
+            _p.__repair_s = _s;
+            _p.__repair_e = __gmsa_plan_matching_end(_p, _s);
+            _p.__repair_depth = __gmsa_plan_depth_at(_p, _s);
         }
-        __gmsa_plan_base(_p, _s);
-        var _r = __gmsa_plan_search_from(_p, _kind, _index, _depth);
-        if (_r == gmsa_plan_result.OUT_OF_BUDGET) {
-            _p.result = _r;
-            return false;
-        }
-        if (_r == gmsa_plan_result.FOUND && __gmsa_plan_splice(_p, _s, _e)) {
-            _p.result = _r;
-            return true;
-        }
-        if (_kind == 0) break;
+        __gmsa_plan_base(_p, _p.__repair_s);
+        var _r = __gmsa_plan_search_from(_p, _p.__repair_kind, _p.__repair_index, _p.__repair_depth);
+        var _res = __gmsa_plan_repair_result(_p, _r);
+        if (_res != -1) return _res;
     }
-    _p.result = gmsa_plan_result.NO_PLAN;
-    return false;
+}
+
+function __gmsa_plan_repair_result(_p, _r) {
+    if (_r == __GMSA_PLAN_PAUSED) return 2;
+    if (_r == gmsa_plan_result.OUT_OF_BUDGET) {
+        _p.result = _r;
+        return 0;
+    }
+    if (_r == gmsa_plan_result.FOUND && __gmsa_plan_splice(_p, _p.__repair_s, _p.__repair_e)) {
+        _p.result = _r;
+        return 1;
+    }
+    if (_p.__repair_kind == 0) {
+        _p.result = gmsa_plan_result.NO_PLAN;
+        return 0;
+    }
+    return -1;
+}
+
+function __gmsa_plan_after_repair(_p, _res, _check) {
+    if (_res == 2) __gmsa_plan_planning(_p);
+    else if (_res == 0) __gmsa_plan_fail(_p);
+    else __gmsa_plan_settle(_p, false, _check);
+}
+
+function __gmsa_plan_planning(_p) {
+    _p.status = gmsa_plan_status.PLANNING;
+    _p.target = undefined;
+    _p.__mode = 1;
+    _p.__paused_once = true;
 }
 
 function __gmsa_plan_seek(_p, _from) {
@@ -582,22 +625,25 @@ function __gmsa_plan_fail(_p) {
 
 function __gmsa_plan_settle(_p, _failed, _check) {
     while (true) {
+        var _res = 1;
         if (_failed) {
             _p.failures += 1;
-            if (_p.failures > _p.retries || !__gmsa_plan_repair(_p, _p.at)) {
-                __gmsa_plan_fail(_p);
-                return;
-            }
+            _res = (_p.failures > _p.retries) ? 0 : __gmsa_plan_repair(_p, _p.at);
         } else if (_check) {
             __gmsa_plan_seek(_p, _p.at);
             if (_p.at < _p.__run_count) {
                 __gmsa_plan_read_real(_p);
                 var _bad = __gmsa_plan_broken_at(_p, _p.at);
-                if (_bad != -1 && !__gmsa_plan_repair(_p, _bad)) {
-                    __gmsa_plan_fail(_p);
-                    return;
-                }
+                if (_bad != -1) _res = __gmsa_plan_repair(_p, _bad);
             }
+        }
+        if (_res == 0) {
+            __gmsa_plan_fail(_p);
+            return;
+        }
+        if (_res == 2) {
+            __gmsa_plan_planning(_p);
+            return;
         }
         __gmsa_plan_seek(_p, _p.at);
         if (_p.at >= _p.__run_count) {
@@ -607,6 +653,7 @@ function __gmsa_plan_settle(_p, _failed, _check) {
         }
         _p.status = gmsa_plan_status.RUNNING;
         if (__gmsa_plan_pick_target(_p)) return;
+        // no target: the step can't start, same as failing
         _failed = true;
         _check = false;
     }

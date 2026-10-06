@@ -36,7 +36,8 @@ function __gmsa_plan_status_text(_p) {
             if (_p.result == gmsa_plan_result.OUT_OF_BUDGET) return "failed, ran out of budget after " + string(_p.nodes) + " nodes";
             if (_p.failures > _p.retries) return "failed, too many failed steps";
             return "failed, no plan";
-        case gmsa_plan_status.PLANNING: return "planning, " + string(_p.nodes) + " of " + string(_p.budget) + " nodes";
+        case gmsa_plan_status.PLANNING:
+            return ((_p.__mode == 1) ? "repairing, " : "planning, ") + string(_p.nodes) + " of " + string(_p.budget) + " nodes";
     }
     return "idle";
 }
