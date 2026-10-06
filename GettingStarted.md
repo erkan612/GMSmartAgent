@@ -1,6 +1,6 @@
 # Getting Started with GMSmartAgent
 
-This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
+This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, and who plan their way into a locked chest. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
 For every function's full details, see the [API Reference](ApiReference.md).
 
@@ -21,7 +21,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 11. [Learning From the Player](#11-learning-from-the-player)
 12. [Choosing a Model](#12-choosing-a-model)
 13. [Learning What Works](#13-learning-what-works)
-14. [Troubleshooting](#14-troubleshooting)
+14. [Plans That Take Several Steps](#14-plans-that-take-several-steps)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
@@ -38,6 +39,7 @@ For every function's full details, see the [API Reference](ApiReference.md).
 | Debug | Recommended | Seeing why an agent chose what it chose |
 | Learn | Optional | Learning from the player's choices. Requires Net |
 | Net | With Learn | The small neural network Learn's RankNet model is built on, usable on its own |
+| Plan | Optional | Goals that take several steps, planned and repaired as the world changes |
 
 GMSmartAgent is pure GML, so there are no extensions or DLLs, and it runs on every platform GameMaker exports to. It needs a GameMaker version with structs and methods (2.3 or newer).
 
@@ -831,7 +833,194 @@ The [API Reference](ApiReference.md#learning-from-outcomes) has ambient rewards,
 
 ---
 
-## 14. Troubleshooting
+## 14. Plans That Take Several Steps
+
+Everything so far is one decision, one action: see a coin, walk to it, pick it up. Some goals take several steps that depend on each other. Put a locked chest in the room, and a key somewhere else. Raiding the chest means getting the key, walking to the chest and unlocking it, or, without a key, smashing the chest open, which is slow.
+
+Utility scoring is good at *what* the goblin wants. The **Plan** module works out *how*, when that takes several steps, and keeps the plan working while the room changes.
+
+Four words:
+
+- A **fact** is a number or a bool the planner reasons with, read from your game.
+- A **step** is something the goblin does: `go_to_key`, `unlock`.
+- A **task** is a goal, `raid_chest`. Its **methods** are the recipes for it, each a list of steps and smaller tasks.
+- A **plan** is the steps the planner chose, in order.
+
+**Write the recipes once,** shared by every goblin, like the profile:
+
+```gml
+// scripts/__raid_domain_build
+function __raid_domain_build() {
+    var _d = gmsa_plan_domain_create("raid");
+    gmsa_plan_add_fact(_d, "has_key", function(_goblin) { return _goblin.has_key; });
+    gmsa_plan_add_fact(_d, "key_exists", function(_goblin) { return instance_exists(o_key); });  // facts can read the world too
+
+    gmsa_plan_add_step(_d, "go_to_key", { requires : [["key_exists", true]] });
+    gmsa_plan_add_step(_d, "pick_up_key", { requires : [["key_exists", true]], effects : [["has_key", true], ["key_exists", false]] });
+    gmsa_plan_add_step(_d, "go_to_chest");
+    gmsa_plan_add_step(_d, "unlock", { requires : [["has_key", true]], effects : [["has_key", false]] });
+    gmsa_plan_add_step(_d, "smash");
+
+    var _key = gmsa_plan_add_task(_d, "get_key");
+    gmsa_plan_add_method(_key, "have_it", { requires : [["has_key", true]], subtasks : [] });  // nothing to do
+    gmsa_plan_add_method(_key, "fetch", { requires : [["key_exists", true]], subtasks : ["go_to_key", "pick_up_key"] });
+
+    var _raid = gmsa_plan_add_task(_d, "raid_chest");
+    gmsa_plan_add_method(_raid, "unlock", { subtasks : ["get_key", "go_to_chest", "unlock"] });
+    gmsa_plan_add_method(_raid, "smash", { subtasks : ["go_to_chest", "smash"] });  // slow, so it's the last resort
+    return gmsa_plan_domain_build(_d);
+}
+```
+
+`requires` says what must be true before a step, `effects` how the step changes the facts. Methods are tried in the order you add them: the first one that leads to a whole plan wins. If there's no key, `get_key` has no method that works, so `unlock` can't work either, and the planner falls back to `smash`.
+
+```gml
+// o_controller > Create (add)
+global.raid_domain = __raid_domain_build();
+```
+
+**Each goblin gets a planner**, its own plan and progress:
+
+```gml
+// o_goblin > Create (add)
+has_key = false;
+smash_time = 0;
+planner = gmsa_plan_planner_create(global.raid_domain, id);  // facts are read from this goblin
+```
+
+**Utility picks the goal.** Raiding is an ordinary action in the profile, chosen when nothing better is around:
+
+```gml
+// __goblin_profile_build, with the other actions
+gmsa_profile_add_action(_p, "raid", {
+    weight  : 0.3,
+    targets : function(_agent) { return instance_exists(o_chest) ? [instance_find(o_chest, 0)] : undefined; },
+});
+```
+
+When the goblin chooses it, the game asks for a plan. When it chooses anything else, the plan is dropped:
+
+```gml
+// o_goblin > Step, where it acts on a fresh decision, replace the else branch
+} else {
+    gmsa_agent_set_current_option(agent, _option);
+    if (_option.action.name == "raid") {
+        goal = noone;  // the plan does the walking
+        if (gmsa_plan_get_status(planner) != gmsa_plan_status.RUNNING) gmsa_plan_make(planner, "raid_chest");
+    } else {
+        gmsa_plan_stop(planner);
+        goal = _option.target;
+    }
+}
+```
+
+Keep the line from [chapter 13](#13-learning-what-works) that takes a ticket after `gmsa_agent_set_current_option`.
+
+**The goblin does one step at a time** and reports how it went. Wrap the old movement block so it only runs without a plan, and add the plan's steps:
+
+```gml
+// o_goblin > Step, wrap the movement block
+if (gmsa_plan_current(planner) == undefined) {
+    // the movement block from chapter 7, unchanged
+}
+
+// o_goblin > Step, after it
+var _step = gmsa_plan_current(planner);
+if (_step != undefined && !instance_exists(o_chest)) {
+    gmsa_plan_stop(planner);  // another goblin got there first
+    gmsa_agent_clear_current(agent);
+    _step = undefined;
+}
+if (_step != undefined) {
+    var _chest = instance_find(o_chest, 0);
+    switch (_step) {
+        case "go_to_key":
+            if (!instance_exists(o_key)) {
+                gmsa_plan_step_failed(planner);  // someone was faster
+            } else if (point_distance(x, y, o_key.x, o_key.y) > 2) {
+                move_towards_point(o_key.x, o_key.y, 2);
+            } else {
+                speed = 0;
+                gmsa_plan_step_done(planner);
+            }
+            break;
+        case "pick_up_key":
+            if (!instance_exists(o_key)) {
+                gmsa_plan_step_failed(planner);
+                break;
+            }
+            instance_destroy(o_key);
+            has_key = true;  // change the facts first, then report the step done
+            gmsa_plan_step_done(planner);
+            break;
+        case "go_to_chest":
+            if (point_distance(x, y, _chest.x, _chest.y) > 2) {
+                move_towards_point(_chest.x, _chest.y, 2);
+            } else {
+                speed = 0;
+                gmsa_plan_step_done(planner);
+            }
+            break;
+        case "unlock":
+            has_key = false;
+            instance_destroy(_chest);
+            gmsa_plan_step_done(planner);
+            break;
+        case "smash":
+            smash_time++;
+            if (smash_time >= 180) {  // three seconds of banging
+                smash_time = 0;
+                instance_destroy(_chest);
+                gmsa_plan_step_done(planner);
+            }
+            break;
+    }
+}
+```
+
+And show the plan under the debug list:
+
+```gml
+// o_goblin > Draw GUI (add)
+draw_text(10, 300, gmsa_plan_explain(planner));
+```
+
+Place one `o_key` and one `o_chest` in the room, clear it of coins, and run it with a few goblins.
+
+```
+raid_chest (running, step 1 of 4)
+  raid_chest: unlock
+    get_key: fetch
+      have_it skipped: has_key is false, needs true
+    > go_to_key
+      pick_up_key
+    go_to_chest
+    unlock
+```
+
+They all head for the key, and one gets it. The others' `go_to_key` fails, and you report it. The plan **repairs itself**: the smallest task around the broken step, `get_key`, is planned again from the real facts. It has no method left, so the planner tries the next larger task, `raid_chest`, and switches to smashing:
+
+```
+raid_chest (running, step 1 of 2)
+  raid_chest: smash
+    unlock skipped: get_key didn't work out
+  > go_to_chest
+    smash
+```
+
+Drop a coin next to a goblin while it's walking. Utility picks the coin, the plan is dropped, and the goblin picks it up. If it was holding the key, it still is: next time it raids, `get_key: have_it` skips straight to the chest.
+
+Three things to remember:
+
+- **Change facts before reporting a step done.** Before each step the planner reads the facts again and checks the rest of the plan. A fact that's still old makes the plan look broken.
+- **A failure needs a fact that explains it.** The `key_exists` fact is why the others switch to smashing at once. Without it, the planner could only try fetching the key again, until its retries run out.
+- **Report changes during a step.** Here the goblins notice the missing key themselves. When something else changes the world mid-step, call `gmsa_plan_refresh(planner)`. A plan that still works carries on, a broken one is repaired.
+
+The [API Reference](ApiReference.md#plan) has scored methods (letting the situation pick the recipe), targets for steps, how repairs work and the costs. Demo 9, the goblin heist, lets you break a goblin's plan with the mouse and watch it recover.
+
+---
+
+## 15. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -877,6 +1066,18 @@ Its `learn_rate` is too low for its `half_life`: old evidence fades faster than 
 
 **The model never makes the agent do something.**
 That's the rule: it can only push options down. If your curves score that option at or near zero, see [Learning From the Player](#11-learning-from-the-player) on leaving room.
+
+**`gmsa_plan_make` returns false.**
+No plan works with the facts as they are, or the search ran out of budget. `gmsa_plan_explain(planner)` lists each of the goal's methods and why it didn't work. If it says the budget ran out, raise `budget` in `gmsa_plan_planner_create`.
+
+**A plan repairs itself when nothing is wrong.**
+A fact changed halfway through a step. Change facts when the step ends, right before `gmsa_plan_step_done`.
+
+**A goblin repeats the same failing step, then gives up.**
+Nothing in its facts explains the failure, so every repair finds the same plan. Add a fact for the cause, like `key_exists`, and require it in the step.
+
+**A plan never finishes a step.**
+Every step needs a `gmsa_plan_step_done` or `gmsa_plan_step_failed` from your game, including instant ones like picking something up.
 
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.

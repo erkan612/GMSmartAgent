@@ -9,7 +9,9 @@ A pure GML utility AI framework. Your agents score every option they have, every
 
 GMSmartAgent replaces hand-written `if` chains and rigid state machines with **utility scoring**. Every possible action an agent could take gets a score between 0 and 1 based on what the agent knows right now (its health, the distance to a target, whether it holds a key), and the highest-scoring option wins. Add a new behavior by adding an action, not by rewriting the decision tree.
 
-GMSmartAgent is a **scoring engine only**. It never moves anything, never queries your room, never owns collision or spatial data. Your game hands it numbers, GMSmartAgent hands back a ranked list of options. What the agent does with its choice is up to you.
+For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks the goal, planning works out how.
+
+GMSmartAgent **only decides**. It never moves anything, never queries your room, never owns collision or spatial data. Your game hands it numbers, GMSmartAgent hands back a ranked list of options, or a plan one step at a time. What the agent does with it is up to you.
 
 ---
 
@@ -60,6 +62,14 @@ GMSmartAgent is a **scoring engine only**. It never moves anything, never querie
 - **Small feed-forward networks** - Dense layers, backpropagation, SGD or Adam, the building block under RankNet and usable on their own
 - **Sparse inputs** - One-hot codes cost only the values that aren't zero
 - **Deterministic and allocation-free** - Seeded starting weights, every buffer allocated once at creation
+### Planning
+- **Goals that take several steps** - A hierarchical task network planner: you write the recipes, the planner picks the ones that work right now, utility picks the goal
+- **Facts as data** - What each step requires and changes is declared, checked at build, and planned without allocating
+- **Self-repairing plans** - Before each step the facts are read again, and a broken plan is replanned from the smallest task around the break, keeping the rest
+- **Scored recipes** - Let the situation choose between "steal the key" and "buy the key"
+- **Targets per step** - Your game offers candidates when a step starts, scoring picks the best one
+- **Bounded cost** - A node budget per planning call and a depth cap for tasks that use themselves
+- **Explain** - The plan as a tree, with the reason every skipped recipe didn't work
 ### Developer Tools
 - **Debug view** - Ranked options with scores, probabilities and every consideration's value, drawn or as text, with the designer's score shown wherever learning changed it
 - **Test module** - Assertions, a runner, stubs, a fake clock, and scenario tests to lock in your profile tuning
@@ -82,6 +92,17 @@ inputs (pull or push)
 ```
  
 Each agent thinks inside a scheduler. The scheduler gives each step a time budget, walks priority tiers highest first, takes turns fairly within a tier, and stops when the budget is spent. Agents it didn't reach continue next step.
+
+When the chosen action is a goal that takes several steps, a planner breaks it down:
+
+```
+goal (a task)
+   -> its methods tried in order, or best score first
+   -> each method's steps and smaller tasks, effects imagined along the way
+   -> backtracking to the next method when something can't be done
+   -> a plan, handed to you one step at a time
+   -> facts read again before each step, broken parts replanned
+```
 
 ---
 
@@ -269,6 +290,51 @@ gmsa_learn_reward(global.tactics, agent, -0.5);  // took damage just now
 ```
 
 ---
+
+## Plans That Take Several Steps
+
+Write the recipes once. Each step declares what it requires and what it changes, each task lists the ways to do it:
+
+```gml
+var _d = gmsa_plan_domain_create("goblin");
+gmsa_plan_add_fact(_d, "has_key",    function(_owner) { return _owner.has_key; });
+gmsa_plan_add_fact(_d, "key_exists", function(_owner) { return instance_exists(o_key); });
+gmsa_plan_add_fact(_d, "gold",       function(_owner) { return _owner.gold; });
+
+gmsa_plan_add_step(_d, "go_to_key",   { requires : [["key_exists", true]] });
+gmsa_plan_add_step(_d, "pick_up_key", { requires : [["key_exists", true]], effects : [["has_key", true], ["key_exists", false]] });
+gmsa_plan_add_step(_d, "buy_key",     { requires : [["gold", ">=", 10]], effects : [["gold", "-", 10], ["has_key", true]] });
+gmsa_plan_add_step(_d, "open_chest",  { requires : [["has_key", true]] });
+
+var _loot = gmsa_plan_add_task(_d, "loot_chest");
+gmsa_plan_add_method(_loot, "have_key", { requires : [["has_key", true]], subtasks : ["open_chest"] });
+gmsa_plan_add_method(_loot, "fetch",    { requires : [["key_exists", true]], subtasks : ["go_to_key", "pick_up_key", "open_chest"] });
+gmsa_plan_add_method(_loot, "buy",      { subtasks : ["buy_key", "open_chest"] });
+global.goblin_domain = gmsa_plan_domain_build(_d);
+```
+
+Each goblin gets a planner. Your game does the current step and reports how it went:
+
+```gml
+planner = gmsa_plan_planner_create(global.goblin_domain, id);
+gmsa_plan_make(planner, "loot_chest");  // when utility picks the loot action
+
+// Step
+if (gmsa_plan_current(planner) == "go_to_key" && move_towards(key_x, key_y)) gmsa_plan_step_done(planner);
+```
+
+When the player snatches the key on the way, `gmsa_plan_refresh` repairs the plan: the goblin buys a key instead, if it can afford one. `gmsa_plan_explain` shows why:
+
+```
+loot_chest (running, step 1 of 2)
+  loot_chest: buy
+    have_key skipped: has_key is false, needs true
+    fetch skipped: key_exists is false, needs true
+  > buy_key
+    open_chest
+```
+
+---
  
 ## Performance
  
@@ -299,6 +365,8 @@ Learning models add their own cost to every re-ranked think, at 3 options:
 
 LambdaMART trains inside a budget you set, with a measured overshoot under 130 us at 2 ms. Learning from outcomes costs about 25 us per reported result with Count, Linear or LambdaMART, and about 180 us with RankNet. The [API Reference](ApiReference.md#what-models-cost) has the full table.
 
+Planning costs about 9 to 18 us per node searched. A plan of around ten steps takes about 0.4 ms to make, and each step after that about 30 us to check and hand over. The default budget of 250 nodes keeps a hopeless search to a few milliseconds. See [What planning costs](ApiReference.md#what-planning-costs).
+
 Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents or heavier models slows how often each one re-decides, never the game.
  
 ---
@@ -311,21 +379,24 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 - **Deterministic.** Same seed and same inputs give the same decisions, so tests and replays are repeatable.
 - **Allocation-free thinking.** Decisions and options are reused, so many agents don't churn the garbage collector.
 - **Learning stays under the designer.** Models reorder options within what the designer's scoring allows. They can't bring back a vetoed option or lift a score above the designer's, and agents only experiment among the options your scoring ranks highest.
+- **Plans are made of your recipes.** The planner only combines the steps and methods you wrote, it never invents an action. It hands your game one step at a time and never performs anything itself.
+
 ---
  
 ## Roadmap
 
-- **v1.4: Planning** - A Plan module where utility scoring picks the goal and a hierarchical task network planner works out the steps.
 - **v1.5: Planning across frames** - Resumable planning inside the scheduler budget, and the plan tree in the debug view.
-- **v1.6: More choice models** - A sequence model that learns what the player does next after what they just did, Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
-- **v1.7: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
-- **Later** - GMNav input providers such as path cost and reachability, and a full debug view with overlays and a scheduler budget view.
+- **v1.6: Planning meets learning** - Learned method scores, so agents find out which recipe works in which situation, learned step reliability, so plans route around steps that keep failing, and choice models as facts, so plans anticipate the player.
+- **v1.7: GOAP** - The planner composes its own plans from what each action requires and does, guided by learned costs and success chances.
+- **v1.8: More choice models** - A sequence model that learns what the player does next after what they just did, Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
+- **v1.9: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
+- **Later** - GMNav input providers such as path cost and reachability, a full debug view with overlays and a scheduler budget view, and YYC benchmarks.
 
 ---
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, and a crowd that learns which coins bite
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, and goblins that plan their way into a locked chest
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
@@ -354,6 +425,14 @@ Cao, Z., Qin, T., Liu, T-Y., Tsai, M-F. and Li, H. (2007) "[Learning to Rank: Fr
 Burges, C. J. C. (2010) "[From RankNet to LambdaRank to LambdaMART: An Overview](https://www.microsoft.com/en-us/research/publication/from-ranknet-to-lambdarank-to-lambdamart-an-overview/)", Microsoft Research Technical Report MSR-TR-2010-82
 
 Wu, Q., Burges, C. J. C., Svore, K. M. and Gao, J. (2010) "[Adapting Boosting for Information Retrieval Measures](https://www.microsoft.com/en-us/research/publication/adapting-boosting-information-retrieval-measures/)", Information Retrieval, 13(3), 254-270
+
+**HTN planning** Nau, D., Cao, Y., Lotem, A. and Muñoz-Avila, H. (1999) "[SHOP: Simple Hierarchical Ordered Planner](https://mlanthology.org/ijcai/1999/nau1999ijcai-shop/)", IJCAI-99, 968-975
+
+Nau, D., Au, T-C., Ilghami, O., Kuter, U., Murdock, J. W., Wu, D. and Yaman, F. (2003) "[SHOP2: An HTN Planning System](https://arxiv.org/abs/1106.4869)", Journal of Artificial Intelligence Research, 20, 379-404
+
+Humphreys, T. (2013) "[Exploring HTN Planners through Example](http://www.gameaipro.com/GameAIPro/GameAIPro_Chapter12_Exploring_HTN_Planners_through_Example.pdf)", in Rabin, S. (ed.) Game AI Pro, CRC Press
+
+urosidoki "[htn_planner](https://github.com/urosidoki/htn_planner)", a hierarchical task network planner for game AI
 
 **Neural networks** Rumelhart, D. E., Hinton, G. E. and Williams, R. J. (1986) "[Learning Representations by Back-Propagating Errors](https://doi.org/10.1038/323533a0)", Nature, 323, 533-536
 

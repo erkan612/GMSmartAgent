@@ -20,6 +20,7 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [Learn](#learn)
 - [Learning From Outcomes](#learning-from-outcomes)
 - [Net](#net)
+- [Plan](#plan)
 - [Test](#test)
 - [Data Structures](#data-structures)
 - [Callback Signatures](#callback-signatures)
@@ -113,6 +114,26 @@ How a network applies its gradients.
 | --- | --- |
 | `gmsa_net_optimizer.SGD` | Plain gradient descent, with optional momentum |
 | `gmsa_net_optimizer.ADAM` | Adam, adapts the step size per weight |
+
+### gmsa_plan_status
+Where a planner's plan is, see [Plan](#plan).
+
+| Element | Meaning |
+| --- | --- |
+| `gmsa_plan_status.IDLE` | No plan, before the first `gmsa_plan_make` or after `gmsa_plan_stop` |
+| `gmsa_plan_status.RUNNING` | A plan is running, `gmsa_plan_current` is the step to do |
+| `gmsa_plan_status.DONE` | Every step of the plan is done |
+| `gmsa_plan_status.FAILED` | No plan was found, or the plan broke and couldn't be repaired |
+
+### gmsa_plan_result
+How the last planning call went, see [Plan](#plan).
+
+| Element | Meaning |
+| --- | --- |
+| `gmsa_plan_result.NONE` | Nothing planned yet |
+| `gmsa_plan_result.FOUND` | A plan was found |
+| `gmsa_plan_result.NO_PLAN` | No method combination works with the facts as they are |
+| `gmsa_plan_result.OUT_OF_BUDGET` | The search used its node budget before finding a plan |
 
 ### gmsa_test_status
 Result of a test case, see [Test](#test).
@@ -1503,6 +1524,415 @@ Cost on the VM: 6 inputs with `[8, 1]` take 30 us per forward and 155 us per tra
 
 ---
 
+## Plan
+
+Planning for goals that take several steps: get the key, get through the door, open the chest. Utility scoring decides *what* an agent wants, Plan works out *how*, as a hierarchical task network (HTN): the designer writes recipes, the planner picks the ones that work right now and keeps the plan working while the world changes.
+
+The Plan module depends on Core only, Core never depends on it. It never touches your game: it reads facts through your callbacks, hands you one step at a time, and you report how it went. Inspired by [urosidoki/htn_planner](https://github.com/urosidoki/htn_planner).
+
+**Words used here:**
+- A **fact** is a number or a bool the planner reasons with, read from your game by a callback (`gold`, `has_key`).
+- A **step** is something your game performs (`pick_up_key`). It can require facts and change them.
+- A **task** is a goal (`loot_chest`). Its **methods** are the recipes for it, each a list of steps and smaller tasks.
+- A **plan** is the steps the planner chose, in order.
+
+```gml
+// once, shared by every goblin
+var _d = gmsa_plan_domain_create("goblin");
+gmsa_plan_add_fact(_d, "has_key", function(_owner) { return _owner.has_key; });
+gmsa_plan_add_fact(_d, "gold",    function(_owner) { return _owner.gold; });
+
+gmsa_plan_add_step(_d, "go_to_key");
+gmsa_plan_add_step(_d, "pick_up_key", { effects : [["has_key", true]] });
+gmsa_plan_add_step(_d, "buy_key",     { requires : [["gold", ">=", 10]], effects : [["gold", "-", 10], ["has_key", true]] });
+gmsa_plan_add_step(_d, "open_chest",  { requires : [["has_key", true]] });
+
+var _loot = gmsa_plan_add_task(_d, "loot_chest");
+gmsa_plan_add_method(_loot, "have_key", { requires : [["has_key", true]], subtasks : ["open_chest"] });
+gmsa_plan_add_method(_loot, "buy",      { subtasks : ["buy_key", "open_chest"] });
+gmsa_plan_add_method(_loot, "fetch",    { subtasks : ["go_to_key", "pick_up_key", "open_chest"] });
+global.goblin_domain = gmsa_plan_domain_build(_d);
+
+// Create: one planner per goblin, facts are read from the goblin
+planner = gmsa_plan_planner_create(global.goblin_domain, id);
+gmsa_plan_make(planner, "loot_chest");
+
+// Step: do the current step, report when it's over
+switch (gmsa_plan_current(planner)) {
+    case "go_to_key":
+        if (move_towards(key_x, key_y)) gmsa_plan_step_done(planner);
+        break;
+    case "pick_up_key":
+        has_key = true;
+        gmsa_plan_step_done(planner);
+        break;
+    // ...
+}
+```
+
+### The workflow
+
+1. **Build a domain once** and share it, like a profile: facts, steps, tasks and their methods.
+2. **Create a planner per owner.** The owner is your instance or struct, facts are read from it.
+3. **Make a plan** with `gmsa_plan_make` when the agent wants the goal.
+4. **Do the current step** in your game. Report it with `gmsa_plan_step_done` or `gmsa_plan_step_failed`. Change the facts the step changes before reporting it done.
+5. **Refresh** with `gmsa_plan_refresh` when the world changes under a step (the player took the key). The plan repairs itself.
+6. **Stop** with `gmsa_plan_stop` when the agent wants something else.
+
+### Working with utility
+
+Utility picks the goal, the game asks for the plan. Core never knows Plan exists, the bridge is one call in your code:
+
+```gml
+var _decision = gmsa_agent_consume(agent);
+if (_decision != undefined) {
+    var _option = gmsa_decision_get_chosen(_decision);
+    if (_option != undefined) {
+        gmsa_agent_set_current_option(agent, _option);
+        if (_option.action.name == "loot") {
+            // keep a running plan, utility choosing loot again isn't a reason to start over
+            if (gmsa_plan_get_status(planner) != gmsa_plan_status.RUNNING) gmsa_plan_make(planner, "loot_chest");
+        } else {
+            gmsa_plan_stop(planner);  // fleeing beats looting, drop the plan
+        }
+    }
+}
+```
+
+Holding two plans at once (one paused, one running) is two planners.
+
+### gmsa_plan_domain_create
+
+```gml
+gmsa_plan_domain_create(name) -> domain
+```
+
+A new, empty domain. **Throws** when `name` isn't a non-empty string.
+
+### gmsa_plan_add_fact
+
+```gml
+gmsa_plan_add_fact(domain, name, read) -> domain
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `name` | string | The fact's name, used in conditions and effects |
+| `read` | function | `function(owner)` returning a number or a bool, called when planning and before each step |
+
+**Throws** when the domain is built, the name is empty or `read` isn't callable.
+
+### gmsa_plan_add_step
+
+```gml
+gmsa_plan_add_step(domain, name, [params]) -> step
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `requires` | array | `[]` | Conditions that must hold before the step, see [Conditions and effects](#conditions-and-effects) |
+| `effects` | array | `[]` | How the step changes facts when it's done |
+| `check` | function | undefined | `function(state)` returning true when the step can be done, for conditions data can't express. See [Check functions](#check-functions) |
+| `targets` | function | undefined | `function(owner)` returning an array of candidates, read when the step becomes current |
+| `score` | function | undefined | `function(owner, target)` returning a number, picks the target. See [Targets](#targets) |
+
+**Throws** when the domain is built or the name is empty. Everything else is checked at build.
+
+### gmsa_plan_add_task
+
+```gml
+gmsa_plan_add_task(domain, name) -> task
+```
+
+A goal, broken down by the methods you add to it. Step and task names share one namespace, each must be unique.
+
+### gmsa_plan_add_method
+
+```gml
+gmsa_plan_add_method(task, name, params) -> method
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `subtasks` | array | `[]` | Names of steps and tasks, in order. Empty for "nothing to do", such as a method for when the key is already in hand |
+| `requires` | array | `[]` | Conditions for using this method |
+| `check` | function | undefined | `function(state)`, like a step's |
+| `score` | function | undefined | `function(owner, state)` returning a number. See [Method order](#method-order) |
+
+A method may use its own task in `subtasks` ("grab a coin, then grab the rest"), the planner's depth cap stops endless recursion.
+
+**Throws** when `task` doesn't come from `gmsa_plan_add_task`, its domain is built or the name is empty.
+
+### gmsa_plan_domain_build
+
+```gml
+gmsa_plan_domain_build(domain) -> domain
+```
+
+Checks the whole domain, turns every name into an index and locks it. Nothing changes unless all of it is valid.
+
+**Throws** when the domain has no steps, a name is used twice, a condition or effect is malformed or uses an unknown fact, a method uses an unknown step or task, a task has no methods, or a callback isn't callable.
+
+### gmsa_plan_fact_index
+
+```gml
+gmsa_plan_fact_index(domain, name) -> integer
+```
+
+A fact's position in the state array check functions receive, -1 when unknown. Available after build.
+
+### Conditions and effects
+
+Both are arrays of small arrays, built into flat number arrays so planning allocates nothing.
+
+| Form | Meaning |
+| --- | --- |
+| `["has_key", true]` | Condition: the fact equals the value |
+| `["gold", ">=", 10]` | Condition with an operator: `==`, `!=`, `<`, `<=`, `>`, `>=` |
+| `["has_key", true]` in `effects` | Effect: the fact becomes the value |
+| `["gold", "-", 10]` | Effect with an operator: `=`, `+`, `-` |
+
+Values are numbers or bools, bools are stored as 1 and 0. Every condition of a list must hold.
+
+### Check functions
+
+For conditions data can't express. A check receives the imagined state as an array of numbers, one per fact in the order they were added. Read it, never write it:
+
+```gml
+var _gold = 1;  // gold was the second fact added, or use gmsa_plan_fact_index after build
+gmsa_plan_add_step(_d, "bribe_guard", {
+    check : method({ gold : _gold }, function(_state) { return _state[gold] >= global.bribe_price; }),
+});
+```
+
+A check is invisible to [gmsa_plan_explain](#gmsa_plan_explain) beyond "its check failed", so prefer `requires` when it can say the same.
+
+### gmsa_plan_planner_create
+
+```gml
+gmsa_plan_planner_create(domain, owner, [params]) -> planner
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `domain` | struct | A built domain |
+| `owner` | instance or struct | What facts, targets and scores read from |
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `budget` | integer | 250 | Nodes one planning call may use, see [What planning costs](#what-planning-costs) |
+| `depth` | integer | 32 | How deep tasks may nest, the cap for tasks that use themselves |
+| `retries` | integer | 3 | Failed steps in a row before the plan fails. A done step resets the count |
+
+**Throws** when the domain isn't built or a param is out of range.
+
+### gmsa_plan_make
+
+```gml
+gmsa_plan_make(planner, name) -> bool
+```
+
+Reads the facts, plans the named task (or a single step) and starts the plan, replacing whatever was running. **Returns** true when the plan started. When it didn't, `gmsa_plan_last_result` and `gmsa_plan_explain` say why.
+
+**Throws** when the domain has no step or task with that name.
+
+### gmsa_plan_current
+
+```gml
+gmsa_plan_current(planner) -> string
+```
+
+The name of the step your game should be doing, undefined unless a plan is running.
+
+### gmsa_plan_target
+
+```gml
+gmsa_plan_target(planner) -> any
+```
+
+The target picked for the current step, undefined when the step has no targets or no plan is running.
+
+### gmsa_plan_step_done
+
+```gml
+gmsa_plan_step_done(planner) -> gmsa_plan_status
+```
+
+The current step is finished. The facts are read again and the rest of the plan is checked against them, a broken plan is repaired. **Returns** the new status. Does nothing when no plan is running, so a late report after `gmsa_plan_stop` is harmless.
+
+### gmsa_plan_step_failed
+
+```gml
+gmsa_plan_step_failed(planner) -> gmsa_plan_status
+```
+
+The current step couldn't be done. The smallest task around it is planned again from the real facts. Each failure in a row uses one retry. **Returns** the new status.
+
+### gmsa_plan_refresh
+
+```gml
+gmsa_plan_refresh(planner) -> gmsa_plan_status
+```
+
+Reads the facts now and repairs the plan if they broke it. Call it when something changed during a step, such as the player taking the key the goblin is walking to. Facts that changed without breaking the plan change nothing. **Returns** the status.
+
+### gmsa_plan_stop
+
+```gml
+gmsa_plan_stop(planner)
+```
+
+Drops the plan. The status becomes `IDLE`.
+
+### gmsa_plan_get_status
+
+```gml
+gmsa_plan_get_status(planner) -> gmsa_plan_status
+```
+
+### gmsa_plan_last_result
+
+```gml
+gmsa_plan_last_result(planner) -> gmsa_plan_result
+```
+
+How the last planning call (a make or a repair) went.
+
+### gmsa_plan_position
+
+```gml
+gmsa_plan_position(planner) -> integer
+```
+
+How many steps of the plan come before the current one.
+
+### gmsa_plan_length
+
+```gml
+gmsa_plan_length(planner) -> integer
+```
+
+Steps in the plan, done ones included, 0 when there's none. After a repair it counts the repaired plan.
+
+### gmsa_plan_step_at
+
+```gml
+gmsa_plan_step_at(planner, index) -> string
+```
+
+The name of the plan's step at `index`, undefined when out of range.
+
+### gmsa_plan_nodes_used
+
+```gml
+gmsa_plan_nodes_used(planner) -> integer
+```
+
+Nodes the last planning call used, for tuning the budget.
+
+### gmsa_plan_explain
+
+```gml
+gmsa_plan_explain(planner) -> string
+```
+
+The goal, the status and the plan as a tree: each task with the method it uses, the methods tried before it with the reason they didn't work, the steps marked done, and `>` on the current one. Every line keeps a two character slot for the arrow, so indentation always shows the nesting.
+
+```
+loot_chest (running, step 2 of 3)
+  loot_chest: fetch
+    have_key skipped: has_key is false, needs true
+    buy skipped: buy_key: gold is 3, needs at least 10
+    go_to_key, done
+  > pick_up_key
+    open_chest
+```
+
+Reasons are judged on the facts as they were when that task was planned. A skipped method shows its first failing condition, otherwise its first step that couldn't be done, otherwise that the rest of the plan didn't work with it. Methods ruled out by a score of 0 are listed as such, and the chosen method shows its score when the task has scored methods.
+
+When no plan was found, it lists each of the goal's methods with its reason instead.
+
+### Method order
+
+A task's methods are tried in the order you added them, the first that leads to a whole plan wins. Give methods a `score` and they're tried best first instead, so the situation decides between "steal the key" and "buy the key":
+
+```gml
+gmsa_plan_add_method(_get_key, "steal", { score : function(_owner, _state) { return _owner.sneaky; }, subtasks : ["sneak", "steal_key"] });
+gmsa_plan_add_method(_get_key, "buy",   { score : function(_owner, _state) { return 1 - _owner.sneaky; }, subtasks : ["buy_key"] });
+```
+
+- A method without a score counts as 1. Ties keep your order.
+- A score of 0 or less rules the method out, like a 0 in utility scoring.
+- Scores are read in the imagined state, when the planner reaches the task. A method early in the plan sees today's facts, one later sees the facts the plan expects by then.
+
+### How planning works
+
+The planner goes depth first: it breaks the goal into its first method's subtasks, then the first of those, and so on, imagining each step's effects. When a step or method can't be used in the imagined state, it backs up to the latest task that has another method left and tries that. This can undo a task that already looked finished, when a later step needs it done differently.
+
+- **Nodes.** Every step and every method tried costs one node. A planning call stops with `OUT_OF_BUDGET` when it has used its budget, it never goes over.
+- **Depth.** A task nested deeper than the planner's `depth` fails that branch only, the search goes on elsewhere.
+- **No allocations.** The imagined state, the to-do list, the choices and the plan live in arrays the planner reuses. Planning allocates nothing after its first calls.
+
+### How a running plan repairs itself
+
+Before each step the planner reads the facts again and checks the rest of the plan against them. When the plan still works, nothing changes, even when facts did (the goblin found gold, but it's already fetching the key). When a step can't be done anymore, or your game reports a failure:
+
+1. The smallest task around the broken step is planned again. A task later in the plan is planned as if the steps before it were done, and the current step carries on. A task the current step belongs to starts over from the real facts.
+2. The new part is kept only if the rest of the plan still works after it.
+3. Otherwise the next larger task is tried, up to the goal. If the goal can't be planned, the plan fails.
+
+Repairs share one budget per call. `gmsa_plan_make` plans from scratch instead, which can pick a better plan than the one being repaired.
+
+### Targets
+
+A step with a `targets` callback asks your game for candidates when it becomes current, never while planning:
+
+```gml
+gmsa_plan_add_step(_d, "grab_coin", {
+    targets : function(_owner) { return _owner.coins_in_reach; },
+    score : function(_owner, _coin) { return 1 / (1 + point_distance(_owner.x, _owner.y, _coin.x, _coin.y)); },
+});
+```
+
+- The best score wins. Without a score the first target wins. A score of 0 or less rules a target out.
+- No target at all counts as a failed step: the plan is repaired, using a retry.
+- When the target disappears during the step, report `gmsa_plan_step_failed`.
+
+### Facts and your game
+
+- **Change facts when a step ends,** then report it done. The rest of the plan is checked against the facts from the current step on, so a fact that changes halfway through a step (the gold is spent, the key isn't in hand yet) can make the plan look broken.
+- **A failure needs a fact that explains it.** When the key vanishes and no fact says so, the planner can only try the same plan again, until the retries run out. A `key_exists` fact lets it pick a different method at once.
+- **Facts are about the owner and the world as one set of numbers.** Per-target questions (is this coin reachable?) belong in `targets` and `score`.
+
+### What planning costs
+
+| Measure | VM |
+| --- | --- |
+| Making an 11 step plan | 425 us, 23 nodes |
+| Making a 101 step plan | 3.8 ms, 203 nodes |
+| Backtracking through 19 wrong methods | 898 us, 98 nodes |
+| One node | about 9 us of search, about 18 us counting make's fixed work |
+| `gmsa_plan_step_done` | about 5 us per step left in the plan |
+| `gmsa_plan_refresh` | 96 us with a repair, 16 us with nothing broken |
+| `gmsa_plan_explain`, 4 step plan | 41 us |
+
+The default budget of 250 nodes keeps a hopeless search to a few milliseconds on the VM, many times what typical domains use. Raise it for large domains. Game plans usually have under 20 steps, where every running call stays well under 0.1 ms.
+
+### Planner fields
+
+| Field | Description |
+| --- | --- |
+| `domain`, `owner` | As given to `gmsa_plan_planner_create` |
+| `budget`, `depth`, `retries` | Settings |
+| `goal` | The name given to the last `gmsa_plan_make` |
+| `status`, `result` | `gmsa_plan_status` and `gmsa_plan_result` |
+| `nodes` | Nodes the last planning call used |
+| `depth_cut` | True when the depth cap cut a branch in the last planning call |
+| `target` | The current step's target |
+| `failures` | Failed steps in a row |
+
+---
+
 ## Test
 
 The Test module ships with GMSmartAgent so you can test your own profiles. It depends on Core, Core never depends on it.
@@ -1710,6 +2140,10 @@ Fields you can read. Fields starting with `__` are internal.
 
 See [Model fields](#model-fields) in Learn.
 
+### Planner
+
+See [Planner fields](#planner-fields) in Plan.
+
 ---
 
 ## Callback Signatures
@@ -1729,6 +2163,11 @@ See [Model fields](#model-fields) in Learn.
 | Custom model `load_data` | `function(data)` | Nothing |
 | Custom model `reset_data` | `function()` | Nothing |
 | Custom model `train` | `function(budget)` | True when finished |
+| Plan fact `read` | `function(owner)` | A number or a bool |
+| Plan step or method `check` | `function(state)` | True when it can be used. `state` is read only |
+| Plan step `targets` | `function(owner)` | Array of targets |
+| Plan step `score` | `function(owner, target)` | A number, 0 or less rules the target out |
+| Plan method `score` | `function(owner, state)` | A number, 0 or less rules the method out |
 
 Custom model methods run with the model as `self`, see [gmsa_learn_custom](#gmsa_learn_custom).
 
