@@ -18,7 +18,7 @@
   "name":"rm_demo7",
   "parent":{
     "name":"7",
-    "path":"folders/demos/7.yy",
+    "path":"folders/demos/1-9/7.yy",
   },
   "parentRoom":null,
   "physicsSettings":{

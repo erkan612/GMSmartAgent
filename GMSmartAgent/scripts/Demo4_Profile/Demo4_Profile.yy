@@ -6,7 +6,7 @@
   "name":"Demo4_Profile",
   "parent":{
     "name":"4",
-    "path":"folders/demos/4.yy",
+    "path":"folders/demos/1-9/4.yy",
   },
   "resourceType":"GMScript",
   "resourceVersion":"2.0",
