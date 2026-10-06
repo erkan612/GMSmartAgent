@@ -130,6 +130,22 @@ function test_plan_run() {
             gmsa_test_assert_equal(gmsa_plan_length(_p), 0, "no plan");
             gmsa_test_assert_equal(gmsa_plan_step_done(_p), gmsa_plan_status.IDLE, "late reports are ignored");
         });
+		
+        gmsa_test_case("methods with nothing to do", function() {
+            var _d = __test_plan_key_domain();
+            var _t = gmsa_plan_add_task(_d, "ensure_key");
+            gmsa_plan_add_method(_t, "have_it", { requires : [["has_key", true]], subtasks : [] });
+            gmsa_plan_add_method(_t, "fetch", { subtasks : ["go_to_key", "pick_up_key"] });
+            gmsa_plan_domain_build(_d);
+            var _owner = { has_key : true, gold : 0 };
+            var _p = gmsa_plan_planner_create(_d, _owner);
+            gmsa_test_assert_equal(gmsa_plan_make(_p, "ensure_key"), true, "nothing to do is a plan");
+            gmsa_test_assert_equal(gmsa_plan_length(_p), 0, "no steps");
+            gmsa_test_assert_equal(gmsa_plan_get_status(_p), gmsa_plan_status.DONE, "done at once");
+            _owner.has_key = false;
+            gmsa_plan_make(_p, "ensure_key");
+            gmsa_test_assert_equal(__test_plan_names(_p), "go_to_key,pick_up_key", "fetches");
+        });
     });
 }
 

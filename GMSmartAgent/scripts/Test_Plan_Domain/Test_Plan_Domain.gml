@@ -38,7 +38,7 @@ function test_plan_domain() {
                 function(_d) { gmsa_plan_add_step(_d, "open_chest"); },
                 function(_d) { gmsa_plan_add_task(_d, "empty"); },
                 function(_d) { var _t = gmsa_plan_add_task(_d, "x"); gmsa_plan_add_method(_t, "m", { subtasks : ["nowhere"] }); },
-                function(_d) { var _t = gmsa_plan_add_task(_d, "x"); gmsa_plan_add_method(_t, "m", { subtasks : [] }); },
+                function(_d) { var _t = gmsa_plan_add_task(_d, "x"); gmsa_plan_add_method(_t, "m", { subtasks : "open_chest" }); },
                 function(_d) { gmsa_plan_add_fact(_d, "gold", function(_o) { return 0; }); },
             ];
             for (var _i = 0; _i < array_length(_cases); _i++) {

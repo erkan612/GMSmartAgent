@@ -99,7 +99,7 @@ function gmsa_plan_domain_build(_domain) {
             var _at = "method '" + _t.name + "." + _md.name + "'";
             __gmsa_plan_check_callable(_md.check, _at + " check");
             __gmsa_plan_check_callable(_md.score, _at + " score");
-            if (!is_array(_md.subtasks) || array_length(_md.subtasks) == 0) throw "GMSA: plan " + _at + " has no subtasks";
+            if (!is_array(_md.subtasks)) throw "GMSA: plan " + _at + " subtasks must be an array";
             var _subs = array_create(array_length(_md.subtasks), undefined);
             for (var _k = 0; _k < array_length(_md.subtasks); _k++) {
                 var _sub = _md.subtasks[_k];
