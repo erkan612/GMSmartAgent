@@ -166,6 +166,54 @@ function test_plan_goal_search() {
             gmsa_test_assert_equal(gmsa_plan_get_status(_p), gmsa_plan_status.RUNNING);
             gmsa_test_assert_equal(gmsa_plan_current(_p), "camp");
         });
+		
+        gmsa_test_case("no variety: every seed plans the same", function() {
+            var _d = __test_plan_camp_live();
+            var _first = undefined;
+            for (var _seed = 1; _seed <= 10; _seed++) {
+                var _p = gmsa_plan_planner_create(_d, __test_plan_camper(), { seed : _seed });
+                gmsa_plan_make(_p, "warm");
+                if (_first == undefined) _first = __test_plan_names(_p);
+                gmsa_test_assert_equal(__test_plan_names(_p), _first, "seed " + string(_seed));
+            }
+        });
+
+        gmsa_test_case("variety: close routes get mixed between planners, the same seed plans the same", function() {
+            var _d = __test_plan_camp_varied(0.5);
+            var _o = __test_plan_camper();
+            _o.walk_cost = 6; // the axe route costs 12, camping 13: close enough to mix
+            var _axe = 0;
+            var _camp = 0;
+            for (var _seed = 1; _seed <= 40; _seed++) {
+                var _p = gmsa_plan_planner_create(_d, _o, { seed : _seed });
+                gmsa_plan_make(_p, "warm");
+                var _names = __test_plan_names(_p);
+                if (_names == "get_axe,walk_to_tree,chop,build_fire") _axe += 1;
+                if (_names == "camp,chop,build_fire") _camp += 1;
+            }
+            gmsa_test_assert_equal(_axe + _camp, 40, "always one of the two routes");
+            gmsa_test_assert_true(_axe > _camp, "the cheaper route still wins more often");
+            gmsa_test_assert_true(_camp > 0, "but not always");
+
+            var _p1 = gmsa_plan_planner_create(_d, _o, { seed : 7 });
+            var _p2 = gmsa_plan_planner_create(_d, _o, { seed : 7 });
+            gmsa_plan_make(_p1, "warm");
+            gmsa_plan_make(_p2, "warm");
+            gmsa_test_assert_equal(__test_plan_names(_p1), __test_plan_names(_p2));
+        });
+
+        gmsa_test_case("bad variety throws at build", function() {
+            var _bad = [-1, "lots"];
+            for (var _i = 0; _i < array_length(_bad); _i++) {
+                gmsa_test_assert_throws(method({ v : _bad[_i] }, function() {
+                    var _d = gmsa_plan_domain_create("bad variety");
+                    gmsa_plan_add_fact(_d, "fire", function(_o) { return false; });
+                    gmsa_plan_add_step(_d, "light", { effects : [["fire", true]] });
+                    gmsa_plan_add_goal(_d, "warm", { conditions : [["fire", true]], variety : v });
+                    gmsa_plan_domain_build(_d);
+                }), "variety " + string(_bad[_i]));
+            }
+        });
     });
 }
 
@@ -198,4 +246,19 @@ function __test_plan_camp_do(_o, _step) {
         case "build_fire": _o.fire = true; _o.has_wood = false; break;
         case "camp": _o.has_axe = true; _o.at_tree = true; break;
     }
+}
+
+function __test_plan_camp_varied(_variety) {
+    var _d = gmsa_plan_domain_create("varied camp");
+    gmsa_plan_add_fact(_d, "has_axe", function(_o) { return _o.has_axe; });
+    gmsa_plan_add_fact(_d, "at_tree", function(_o) { return _o.at_tree; });
+    gmsa_plan_add_fact(_d, "has_wood", function(_o) { return _o.has_wood; });
+    gmsa_plan_add_fact(_d, "fire", function(_o) { return _o.fire; });
+    gmsa_plan_add_step(_d, "get_axe", { effects : [["has_axe", true]], cost : 2 });
+    gmsa_plan_add_step(_d, "walk_to_tree", { effects : [["at_tree", true]], cost : function(_o, _s) { return _o.walk_cost; } });
+    gmsa_plan_add_step(_d, "chop", { requires : [["has_axe", true], ["at_tree", true]], effects : [["has_wood", true]], cost : 3 });
+    gmsa_plan_add_step(_d, "build_fire", { requires : [["has_wood", true]], effects : [["fire", true], ["has_wood", false]] });
+    gmsa_plan_add_step(_d, "camp", { effects : [["has_axe", true], ["at_tree", true]], cost : 9 });
+    gmsa_plan_add_goal(_d, "warm", { conditions : [["fire", true]], variety : _variety });
+    return gmsa_plan_domain_build(_d);
 }

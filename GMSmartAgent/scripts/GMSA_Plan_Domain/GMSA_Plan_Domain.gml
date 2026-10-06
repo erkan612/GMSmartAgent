@@ -73,6 +73,7 @@ function gmsa_plan_add_goal(_domain, _name, _params = {}) {
         name       : _name,
         conditions : __gmsa_param(_params, "conditions", []),
         actions    : __gmsa_param(_params, "actions", undefined), // names of the steps the search may use, every step when undefined
+        variety    : __gmsa_param(_params, "variety", 0),         // each search multiplies action costs by 1 to 1 + variety
     };
     array_push(_domain.goals, _goal);
     return _goal;
@@ -164,6 +165,7 @@ function gmsa_plan_domain_build(_domain) {
         var _at = "goal '" + _g.name + "'";
         var _cond = __gmsa_plan_compile(_facts, _g.conditions, false, _at + " conditions");
         if (_cond.count == 0) throw "GMSA: plan " + _at + " needs at least one condition";
+        if (!is_numeric(_g.variety) || _g.variety < 0) throw "GMSA: plan " + _at + " variety must be a number of 0 or more";
         var _acts;
         if (_g.actions == undefined) {
             _acts = array_create(array_length(_steps), 0);
@@ -198,7 +200,7 @@ function gmsa_plan_domain_build(_domain) {
             _most = max(_most, _n);
         }
         _goals[_i] = {
-            name : _g.name, index : _i, conditions : _cond, actions : _acts,
+            name : _g.name, index : _i, conditions : _cond, actions : _acts, variety : _g.variety,
             most : max(1, _most), cheapest : (_cheapest == infinity) ? 0 : _cheapest, changed : _changed,
         };
     }

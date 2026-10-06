@@ -137,8 +137,8 @@
   "resourceType":"GMProject",
   "resourceVersion":"2.0",
   "RoomOrderNodes":[
-    {"roomId":{"name":"rm_demo_13","path":"rooms/rm_demo_13/rm_demo_13.yy",},},
     {"roomId":{"name":"rm_test","path":"rooms/rm_test/rm_test.yy",},},
+    {"roomId":{"name":"rm_demo_13","path":"rooms/rm_demo_13/rm_demo_13.yy",},},
     {"roomId":{"name":"rm_demo_12","path":"rooms/rm_demo_12/rm_demo_12.yy",},},
     {"roomId":{"name":"rm_demo_11","path":"rooms/rm_demo_11/rm_demo_11.yy",},},
     {"roomId":{"name":"rm_demo10","path":"rooms/rm_demo10/rm_demo10.yy",},},

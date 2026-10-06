@@ -54,7 +54,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         // goals: an A* search over imagined states, stored flat and found again through a hash table
         __g_active : false, __g_goal : 0, __g_undo : 0, __g_start : 0, __g_found : -1, __g_expand : -1, __g_next : 0,
         __g_count : 0, __g_state : [], __g_parent : [], __g_action : [], __g_cost : [], __g_depth : [], __g_hash : [], __g_closed : [],
-        __g_heap : 0, __g_hf : [], __g_hg : [], __g_hn : [], __g_table_node : [], __g_table_stamp : [], __g_mask : 0, __g_stamp : 0, __g_path : [],
+        __g_heap : 0, __g_hf : [], __g_hg : [], __g_hn : [], __g_table_node : [], __g_table_stamp : [], __g_mask : 0, __g_stamp : 0, __g_path : [], __g_vary : [],
     };
     _p.__report.planner = _p;
     _p.__report.state = _p.state; // filled with the facts the report is about, during the call
@@ -924,6 +924,11 @@ function __gmsa_plan_goal_begin(_p, _goal) {
     _p.__g_heap = 0;
     _p.__g_expand = -1;
     _p.__g_next = 0;
+    // variety: one cost factor per action for this search, at least 1, so the guess still never overestimates
+    var _goal_s = _p.domain.goals[_goal];
+    if (_goal_s.variety > 0) {
+        for (var _k = 0; _k < array_length(_goal_s.actions); _k++) _p.__g_vary[_k] = 1 + gmsa_rng_next(_p.rng) * _goal_s.variety;
+    }
     __gmsa_plan_goal_add(_p, _p.domain.goals[_goal], -1, -1, 0, 0, __gmsa_plan_goal_hash(_p)); // the start: the imagined state as it is now
 }
 
@@ -961,7 +966,8 @@ function __gmsa_plan_goal_search(_p) {
             if (_p.nodes >= _p.budget) return gmsa_plan_result.OUT_OF_BUDGET;
             if (_any && __gmsa_plan_time_up(_p)) return __GMSA_PLAN_PAUSED;
             _any = true;
-            var _step = _d.steps[_acts[_p.__g_next]];
+            var _ai = _p.__g_next;
+            var _step = _d.steps[_acts[_ai]];
             _p.__g_next += 1;
             _p.nodes += 1;
             if (!__gmsa_plan_met(_p.state, _step.requires)) continue;
@@ -978,6 +984,7 @@ function __gmsa_plan_goal_search(_p) {
                 if (!(_chance * 1000000000000 > 0)) continue;
                 _cost /= _chance;
             }
+            if (_goal.variety > 0) _cost *= _p.__g_vary[_ai];
             var _g = _p.__g_cost[_from] + _cost;
             var _mark = _p.undo_count;
             __gmsa_plan_apply(_p, _step.effects);
