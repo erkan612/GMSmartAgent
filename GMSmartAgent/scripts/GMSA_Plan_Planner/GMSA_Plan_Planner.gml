@@ -30,7 +30,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __base : array_create(_facts, 0),          // the state a search starts from
         __fact_bool : array_create(_facts, false), // which facts read as bools, for explain
         // planning in slices: when this call must stop, where the search paused, and whether it's a make (0) or a repair (1)
-        __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0, __work : undefined,
+        __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0, __work : undefined, __fresh_from : -1, __fresh_to : -1,
         // a repair's climb: the task being replanned, its entries s to e, and how to search it
         __repair_s : 0, __repair_e : 0, __repair_kind : 0, __repair_index : 0, __repair_depth : 0,
         // plans are entries: kind 0 a step, 1 a task begins (with its method and a trace record), 2 a task ends
@@ -65,6 +65,8 @@ function gmsa_plan_make(_planner, _name) {
     _planner.__run_steps = 0;
     _planner.__plan_trace_top = 0;
     _planner.__paused_once = false;
+    _planner.__fresh_from = -1;
+    _planner.__fresh_to = -1;
 	_planner.__mode = 0;
     _planner.nodes = 0;
     __gmsa_plan_read_real(_planner);
@@ -100,6 +102,8 @@ function gmsa_plan_step_done(_planner) {
     if (_planner.status != gmsa_plan_status.RUNNING) return _planner.status;
     _planner.at += 1;
     _planner.failures = 0;
+    _planner.__fresh_from = -1;
+    _planner.__fresh_to = -1;
     __gmsa_plan_start_slice(_planner, __gmsa_plan_own_slice(_planner));
     __gmsa_plan_settle(_planner, false, true);
     _planner.__deadline = undefined;
@@ -567,6 +571,8 @@ function __gmsa_plan_repair_result(_p, _r) {
     }
     if (_r == gmsa_plan_result.FOUND && __gmsa_plan_splice(_p, _p.__repair_s, _p.__repair_e)) {
         _p.result = _r;
+        _p.__fresh_from = _p.__repair_s;
+        _p.__fresh_to = _p.__repair_s + _p.__out_count;
         return 1;
     }
     if (_p.__repair_kind == 0) {

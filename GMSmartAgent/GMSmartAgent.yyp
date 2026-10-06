@@ -98,6 +98,7 @@
     {"id":{"name":"Test_Observe","path":"scripts/Test_Observe/Test_Observe.yy",},},
     {"id":{"name":"Test_Plan_Domain","path":"scripts/Test_Plan_Domain/Test_Plan_Domain.yy",},},
     {"id":{"name":"Test_Plan_Explain","path":"scripts/Test_Plan_Explain/Test_Plan_Explain.yy",},},
+    {"id":{"name":"Test_Plan_Lines","path":"scripts/Test_Plan_Lines/Test_Plan_Lines.yy",},},
     {"id":{"name":"Test_Plan_Planner","path":"scripts/Test_Plan_Planner/Test_Plan_Planner.yy",},},
     {"id":{"name":"Test_Plan_Run","path":"scripts/Test_Plan_Run/Test_Plan_Run.yy",},},
     {"id":{"name":"Test_Plan_Schedule","path":"scripts/Test_Plan_Schedule/Test_Plan_Schedule.yy",},},

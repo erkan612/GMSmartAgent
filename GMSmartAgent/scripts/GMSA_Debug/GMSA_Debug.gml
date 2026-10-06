@@ -61,3 +61,62 @@ function __gmsa_debug_target_text(_target, _namer) {
     if (_namer != undefined) return string(_namer(_target));
     return is_struct(_target) ? "struct" : string(_target);
 }
+
+function gmsa_debug_draw_tree(_lines, _x, _y, _max = 40) {
+    var _h = string_height("M");
+    var _old = draw_get_colour();
+    var _old_alpha = draw_get_alpha();
+    var _total = array_length(_lines);
+    var _n = min(_total, _max);
+    var _yy = _y;
+    for (var _i = 0; _i < _n; _i++) {
+        var _line = _lines[_i];
+        var _text = __gmsa_debug_tree_text(_line);
+        if (__gmsa_param(_line, "repaired", false)) {
+            // what the last repair put in
+            draw_set_alpha(0.3);
+            draw_set_colour(c_yellow);
+            draw_rectangle(_x - 2, _yy, _x + string_width(_text) + 2, _yy + _h - 1, false);
+            draw_set_alpha(_old_alpha);
+        }
+        draw_set_colour(__gmsa_debug_tree_colour(_line.kind));
+        draw_text(_x, _yy, _text);
+        _yy += _h;
+        var _progress = __gmsa_param(_line, "progress", undefined);
+        if (_progress != undefined) {
+            var _w = max(120, string_width(_text));
+            draw_set_colour(c_dkgray);
+            draw_rectangle(_x, _yy + 2, _x + _w, _yy + 6, false);
+            draw_set_colour(c_lime);
+            draw_rectangle(_x, _yy + 2, _x + _w * clamp(_progress, 0, 1), _yy + 6, false);
+            _yy += 10;
+        }
+    }
+    if (_total > _n) {
+        draw_set_colour(c_white);
+        draw_text(_x, _yy, "  ... " + string(_total - _n) + " more");
+        _yy += _h;
+    }
+    draw_set_colour(_old);
+    draw_set_alpha(_old_alpha);
+    return _yy - _y;
+}
+
+function __gmsa_debug_tree_text(_line) {
+    var _indent = string_repeat("  ", _line.depth);
+    switch (_line.kind) {
+        case "title": case "note": return _line.text;
+        case "current": return _indent + "> " + _line.text;
+        case "done": return _indent + "  " + _line.text + ", done";
+    }
+    return _indent + "  " + _line.text;
+}
+
+function __gmsa_debug_tree_colour(_kind) {
+    switch (_kind) {
+        case "current": return c_lime;
+        case "done": return c_gray;
+        case "skipped": case "reason": return c_orange;
+    }
+    return c_white;
+}
