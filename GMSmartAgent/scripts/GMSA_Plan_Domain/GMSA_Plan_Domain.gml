@@ -2,7 +2,7 @@ enum gmsa_plan_op { EQ, NE, LT, LE, GT, GE, SET, ADD, SUB }
 
 function gmsa_plan_domain_create(_name) {
     if (!is_string(_name) || _name == "") throw "GMSA: plan domain needs a name";
-    return { name : _name, facts : [], steps : [], tasks : [], built : false, fact_lookup : {}, lookup : {}, listeners : [], step_chance : undefined };
+    return { name : _name, facts : [], steps : [], tasks : [], goals : [], built : false, fact_lookup : {}, lookup : {}, listeners : [], step_chance : undefined };
 }
 
 function gmsa_plan_add_fact(_domain, _name, _read, _params = {}) {
@@ -29,6 +29,7 @@ function gmsa_plan_add_step(_domain, _name, _params = {}) {
         check    : __gmsa_param(_params, "check", undefined),    // function(state), for conditions data can't express
         targets  : __gmsa_param(_params, "targets", undefined),  // function(owner), the game's candidates
         score    : __gmsa_param(_params, "score", undefined),    // function(owner, target), picks among them
+        cost     : __gmsa_param(_params, "cost", 1),             // a number above 0 or function(owner, state), used when a goal searches
     };
     array_push(_domain.steps, _step);
     return _step;
@@ -65,6 +66,18 @@ function gmsa_plan_add_method(_task, _name, _params) {
     return _method;
 }
 
+function gmsa_plan_add_goal(_domain, _name, _params = {}) {
+    __gmsa_plan_check_open(_domain);
+    if (!is_string(_name) || _name == "") throw "GMSA: plan goal needs a name";
+    var _goal = {
+        name       : _name,
+        conditions : __gmsa_param(_params, "conditions", []),
+        actions    : __gmsa_param(_params, "actions", undefined), // names of the steps the search may use, every step when undefined
+    };
+    array_push(_domain.goals, _goal);
+    return _goal;
+}
+
 function gmsa_plan_domain_build(_domain) {
     __gmsa_plan_check_open(_domain);
     var _where = "domain '" + _domain.name + "'";
@@ -76,6 +89,7 @@ function gmsa_plan_domain_build(_domain) {
         if (variable_struct_exists(_facts, _fname)) throw "GMSA: plan " + _where + " has two facts named '" + _fname + "'";
         _facts[$ _fname] = _i;
     }
+    // one namespace: kind 0 a step, 1 a task, 3 a goal (2 is the end of a task in the planner's to-do list)
     var _names = {};
     for (var _i = 0; _i < array_length(_domain.steps); _i++) {
         var _sname = _domain.steps[_i].name;
@@ -87,6 +101,11 @@ function gmsa_plan_domain_build(_domain) {
         if (variable_struct_exists(_names, _tname)) throw "GMSA: plan " + _where + " uses the name '" + _tname + "' twice";
         _names[$ _tname] = { kind : 1, index : _i };
     }
+    for (var _i = 0; _i < array_length(_domain.goals); _i++) {
+        var _gname = _domain.goals[_i].name;
+        if (variable_struct_exists(_names, _gname)) throw "GMSA: plan " + _where + " uses the name '" + _gname + "' twice";
+        _names[$ _gname] = { kind : 3, index : _i };
+    }
 
     // compile into new structures, the domain is only changed once all of it is valid
     var _steps = array_create(array_length(_domain.steps), undefined);
@@ -96,11 +115,22 @@ function gmsa_plan_domain_build(_domain) {
         __gmsa_plan_check_callable(_s.check, _at + " check");
         __gmsa_plan_check_callable(_s.targets, _at + " targets");
         __gmsa_plan_check_callable(_s.score, _at + " score");
+        var _cost = _s.cost;
+        var _cost_fn = undefined;
+        if (is_numeric(_cost)) {
+            if (!(_cost * 1000000000000 > 0)) throw "GMSA: plan " + _at + " cost must be above 0, or a function";
+        } else if (__gmsa_callable(_cost)) {
+            _cost_fn = _cost;
+            _cost = 1;
+        } else {
+            throw "GMSA: plan " + _at + " cost must be a number or a function";
+        }
         _steps[_i] = {
             name : _s.name, index : _i,
             requires : __gmsa_plan_compile(_facts, _s.requires, false, _at + " requires"),
             effects  : __gmsa_plan_compile(_facts, _s.effects, true, _at + " effects"),
             check : _s.check, targets : _s.targets, score : _s.score,
+            cost : _cost, cost_fn : _cost_fn, // cost_fn, when set, replaces cost
         };
     }
     var _tasks = array_create(array_length(_domain.tasks), undefined);
@@ -117,8 +147,8 @@ function gmsa_plan_domain_build(_domain) {
             var _subs = array_create(array_length(_md.subtasks), undefined);
             for (var _k = 0; _k < array_length(_md.subtasks); _k++) {
                 var _sub = _md.subtasks[_k];
-                if (!is_string(_sub) || !variable_struct_exists(_names, _sub)) throw "GMSA: plan " + _at + " uses unknown step or task '" + string(_sub) + "'";
-                _subs[_k] = _names[$ _sub]; // { kind : 0 step or 1 task, index }
+                if (!is_string(_sub) || !variable_struct_exists(_names, _sub)) throw "GMSA: plan " + _at + " uses unknown step, task or goal '" + string(_sub) + "'";
+                _subs[_k] = _names[$ _sub]; // { kind : 0 step, 1 task or 3 goal, index }
             }
             _methods[_m] = {
                 name : _md.name, task : _i, index : _m, subtasks : _subs,
@@ -128,11 +158,56 @@ function gmsa_plan_domain_build(_domain) {
         }
         _tasks[_i] = { name : _t.name, index : _i, methods : _methods, select : _t.select, top_n : _t.top_n, adjust : _t.adjust };
     }
+    var _goals = array_create(array_length(_domain.goals), undefined);
+    for (var _i = 0; _i < array_length(_domain.goals); _i++) {
+        var _g = _domain.goals[_i];
+        var _at = "goal '" + _g.name + "'";
+        var _cond = __gmsa_plan_compile(_facts, _g.conditions, false, _at + " conditions");
+        if (_cond.count == 0) throw "GMSA: plan " + _at + " needs at least one condition";
+        var _acts;
+        if (_g.actions == undefined) {
+            _acts = array_create(array_length(_steps), 0);
+            for (var _k = 0; _k < array_length(_steps); _k++) _acts[_k] = _k;
+        } else {
+            if (!is_array(_g.actions) || array_length(_g.actions) == 0) throw "GMSA: plan " + _at + " actions must be a non-empty array of step names";
+            _acts = array_create(array_length(_g.actions), 0);
+            var _seen = {};
+            for (var _k = 0; _k < array_length(_g.actions); _k++) {
+                var _an = _g.actions[_k];
+                if (!is_string(_an) || !variable_struct_exists(_names, _an) || _names[$ _an].kind != 0) throw "GMSA: plan " + _at + " action '" + string(_an) + "' isn't a step";
+                if (variable_struct_exists(_seen, _an)) throw "GMSA: plan " + _at + " lists the action '" + _an + "' twice";
+                _seen[$ _an] = true;
+                _acts[_k] = _names[$ _an].index;
+            }
+        }
+        var _most = 0;
+        var _cheapest = infinity;
+        var _changed = array_create(_cond.count, false);
+        for (var _a = 0; _a < array_length(_acts); _a++) {
+            var _st = _steps[_acts[_a]];
+            if (_st.cost_fn == undefined) _cheapest = min(_cheapest, _st.cost);
+            var _n = 0;
+            for (var _c = 0; _c < _cond.count; _c++) {
+                for (var _e = 0; _e < _st.effects.count; _e++) {
+                    if (_st.effects.fact[_e] != _cond.fact[_c]) continue;
+                    _n += 1;
+                    _changed[_c] = true;
+                    break;
+                }
+            }
+            _most = max(_most, _n);
+        }
+        _goals[_i] = {
+            name : _g.name, index : _i, conditions : _cond, actions : _acts,
+            most : max(1, _most), cheapest : (_cheapest == infinity) ? 0 : _cheapest, changed : _changed,
+        };
+    }
 
     _domain.fact_lookup = _facts;
     _domain.lookup = _names;
     _domain.steps = _steps;
     _domain.tasks = _tasks;
+    _domain.goals = _goals;
     _domain.built = true;
     return _domain;
 }
