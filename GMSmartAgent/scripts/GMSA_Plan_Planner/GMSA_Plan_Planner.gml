@@ -539,7 +539,7 @@ function __gmsa_plan_adopt(_p) {
     _a = _p.__run_index;      _p.__run_index = _p.__out_index;   _p.__out_index = _a;
     _a = _p.__run_method;     _p.__run_method = _p.__out_method; _p.__out_method = _a;
     _a = _p.__run_aux;        _p.__run_aux = _p.__out_aux;       _p.__out_aux = _a;
-    _a = _p.__plan_trace;     _p.__plan_trace = _p.__trace;      _p.__trace = _a;  // explain records travel with their plan
+    _a = _p.__plan_trace;     _p.__plan_trace = _p.__trace;      _p.__trace = _a;
     _p.__run_count = _p.__out_count;
     _p.__plan_trace_top = _p.__trace_top;
     _p.at = 0;
