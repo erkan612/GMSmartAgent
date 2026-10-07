@@ -214,6 +214,7 @@ function __test_ngram_shopper() {
 function __test_ngram_buy(_model, _agent, _hp, _item) {
     gmsa_agent_set_input(_agent, "hp", _hp);
     gmsa_learn_observe(_model, gmsa_observe(_agent, ["sword", "shield", "potion"], _item));
+    gmsa_learn_train(_model); // learners with replays: train them now (the others return at once)
 }
 
 function __test_ngram_guess(_model, _agent, _hp) {

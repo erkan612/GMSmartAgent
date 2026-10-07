@@ -37,5 +37,6 @@ function gmsa_tests_all(_verbose = false) {
     test_learn_sure();
     test_learn_ngram();
     test_learn_tdnn();
+    test_learn_schedule();
     return gmsa_test_run(_verbose);
 }

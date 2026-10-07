@@ -10,9 +10,10 @@ function gmsa_bench_all() {
     //__gmsa_bench_lambdamart_train([100, 500], 2000);
     //__gmsa_bench_outcomes([3, 10]);
     //__gmsa_bench_plan([10, 100]);
-    __gmsa_bench_plan_slices();
-	__gmsa_bench_plan_learn();
-	__gmsa_bench_plan_goap();
+    //__gmsa_bench_plan_slices();
+	//__gmsa_bench_plan_learn();
+	//__gmsa_bench_plan_goap();
+	__gmsa_bench_learn_sequences();
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -775,4 +776,93 @@ function __gmsa_bench_goap_make(_p, _name, _runs) {
         gmsa_plan_stop(_p);
     }
     return _total / _runs;
+}
+
+function __gmsa_bench_learn_sequences(_runs = 300) {
+    show_debug_message("Learn sequence benchmarks, " + string(_runs) + " choices each after 500 to warm up, average per call");
+    var _cases = [
+        { kind : "ngram", length : 1, inputs : 1, actions : 4 },
+        { kind : "ngram", length : 3, inputs : 1, actions : 4 },
+        { kind : "ngram", length : 8, inputs : 1, actions : 4 },
+        { kind : "ngram", length : 3, inputs : 4, actions : 4 },
+        { kind : "ngram", length : 3, inputs : 1, actions : 12 },
+        { kind : "ngram", length : 8, inputs : 4, actions : 12 },
+        { kind : "tdnn", length : 3, inputs : 1, actions : 4, replay : 0 },
+        { kind : "tdnn", length : 3, inputs : 1, actions : 4, replay : 4 },
+        { kind : "tdnn", length : 3, inputs : 1, actions : 4, replay : 8 },
+        { kind : "tdnn", length : 8, inputs : 1, actions : 4, replay : 4 },
+        { kind : "tdnn", length : 3, inputs : 4, actions : 4, replay : 4 },
+        { kind : "tdnn", length : 3, inputs : 1, actions : 12, replay : 4 },
+        { kind : "tdnn", length : 3, inputs : 1, actions : 4, replay : 4, layers : [32, 16] },
+    ];
+    for (var _k = 0; _k < array_length(_cases); _k++) __gmsa_bench_seq_case(_cases[_k], _runs);
+}
+
+function __gmsa_bench_seq_case(_c, _runs) {
+    var _b = __gmsa_bench_seq_agent(_c.inputs, _c.actions);
+    var _layers = variable_struct_exists(_c, "layers") ? _c.layers : [16];
+    var _m = (_c.kind == "ngram") ? gmsa_learn_ngram_create({ length : _c.length })
+        : gmsa_learn_tdnn_create({ length : _c.length, replay : _c.replay, layers : _layers });
+    var _rng = gmsa_rng_create(11);
+    var _last = 0;
+    var _obs = 0;
+    var _worst = 0;
+    var _pred = 0;
+    var _train = 0;
+    var _train_worst = 0;
+    for (var _i = 0; _i < 500 + _runs; _i++) {
+        for (var _j = 0; _j < _c.inputs; _j++) gmsa_agent_set_input(_b.agent, _b.inputs[_j], gmsa_rng_next(_rng));
+        // a habit: usually the action after the last one, sometimes anything
+        var _pick = (gmsa_rng_next(_rng) < 0.7) ? (_last + 1) mod _c.actions : floor(gmsa_rng_next(_rng) * _c.actions);
+        if (_i >= 500) {
+            var _e = gmsa_agent_evaluate(_b.agent);
+            var _t = get_timer();
+            gmsa_learn_predict(_m, _e);
+            _pred += get_timer() - _t;
+        }
+        var _d = gmsa_observe(_b.agent, _b.actions, _pick);
+        var _t2 = get_timer();
+        gmsa_learn_observe(_m, _d);
+        var _dt = get_timer() - _t2;
+        var _t3 = get_timer();
+        gmsa_learn_train(_m);
+        var _dt3 = get_timer() - _t3;
+        if (_i >= 500) {
+            _obs += _dt;
+            _worst = max(_worst, _dt);
+            _train += _dt3;
+            _train_worst = max(_train_worst, _dt3);
+        }
+        _last = _pick;
+    }
+    var _name = ((_c.kind == "ngram") ? "n-gram" : "TDNN") + " length " + string(_c.length) + ", " + string(_c.inputs)
+        + ((_c.inputs == 1) ? " input, " : " inputs, ") + string(_c.actions) + " actions";
+    if (_c.kind == "tdnn") {
+        var _ls = "";
+        for (var _i = 0; _i < array_length(_layers); _i++) _ls += ((_i > 0) ? "," : "") + string(_layers[_i]);
+        _name += ", replay " + string(_c.replay) + ", layers [" + _ls + "]";
+    }
+    var _extra = (_c.kind == "ngram") ? ", " + string(_m.data.count) + " contexts"
+        : ", replays " + string_format(_train / _runs, 1, 1) + " us (slowest " + string(_train_worst) + " us)";
+    show_debug_message(_name + ": predict " + string_format(_pred / _runs, 1, 1) + " us, observe "
+        + string_format(_obs / _runs, 1, 1) + " us (slowest " + string(_worst) + " us)" + _extra);
+}
+
+function __gmsa_bench_seq_agent(_inputs, _actions) {
+    static _count = 0;
+    _count += 1;
+    var _p = gmsa_profile_create("bench sequences " + string(_count));
+    var _names = [];
+    for (var _i = 0; _i < _inputs; _i++) {
+        gmsa_profile_add_input(_p, gmsa_input_push("in" + string(_i), 0, 1, 0.5));
+        array_push(_names, "in" + string(_i));
+    }
+    gmsa_profile_set_features(_p, _names);
+    var _acts = [];
+    for (var _a = 0; _a < _actions; _a++) {
+        gmsa_profile_add_action(_p, "act" + string(_a));
+        array_push(_acts, "act" + string(_a));
+    }
+    gmsa_profile_build(_p);
+    return { agent : gmsa_agent_create(_p), actions : _acts, inputs : _names };
 }

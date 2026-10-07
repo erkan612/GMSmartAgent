@@ -36,6 +36,8 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
         load_data     : undefined,     // function(data)
         reset_data    : undefined,     // function(), also called once at creation
         train         : undefined,     // function(budget), returns true when finished, batch tiers only
+        waiting       : undefined,     // function(), true when train has work, so gmsa_learn_schedule skips idle models
+        __work        : undefined,     // the scheduler work from gmsa_learn_schedule
         __bindings    : [],
         __sample      : { situation : [], options : [], chosen : -1, weight : 1, reward : undefined, agent : undefined, from : undefined },
         __pool        : [],
@@ -49,7 +51,7 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
 function gmsa_learn_custom(_methods, _params = {}) {
     if (!is_struct(_methods)) throw "GMSA: learn custom needs a struct of methods";
     var _model = __gmsa_learn_model_create(gmsa_learn_tier.CUSTOM, __gmsa_param(_params, "name", "custom"), _params);
-    var _names = ["observe", "predict", "explain", "save_data", "load_data", "reset_data", "train"];
+    var _names = ["observe", "predict", "explain", "save_data", "load_data", "reset_data", "train", "waiting"];
     for (var _i = 0; _i < array_length(_names); _i++) {
         var _fn = __gmsa_param(_methods, _names[_i], undefined);
         if (_fn == undefined) continue;
@@ -465,4 +467,39 @@ function __gmsa_learn_sample(_model, _decision, _chosen) {
     _sample.weight = 1;
     _sample.reward = undefined;
     return _sample;
+}
+
+function __gmsa_learn_forget_oldest(_entries, _keep) {
+    var _names = variable_struct_get_names(_entries);
+    var _n = array_length(_names);
+    var _need = _n - _keep;
+    if (_need <= 0) return _n;
+    var _lasts = array_create(_n, 0);
+    var _lo = infinity;
+    var _hi = -infinity;
+    for (var _i = 0; _i < _n; _i++) {
+        var _l = _entries[$ _names[_i]].last;
+        _lasts[_i] = _l;
+        _lo = min(_lo, _l);
+        _hi = max(_hi, _l);
+    }
+    var _span = _hi - _lo + 1;
+    var _B = min(256, ceil(_span));
+    var _hist = array_create(_B, 0);
+    for (var _i = 0; _i < _n; _i++) _hist[min(_B - 1, floor((_lasts[_i] - _lo) * _B / _span))] += 1;
+    var _sum = 0;
+    var _b = 0;
+    while (_b < _B && _sum < _need) {
+        _sum += _hist[_b];
+        _b += 1;
+    }
+    var _cut = _lo + _b * _span / _B; // the buckets below go
+    var _left = _n;
+    for (var _i = 0; _i < _n; _i++) {
+        if (_lasts[_i] < _cut) {
+            variable_struct_remove(_entries, _names[_i]);
+            _left -= 1;
+        }
+    }
+    return _left;
 }

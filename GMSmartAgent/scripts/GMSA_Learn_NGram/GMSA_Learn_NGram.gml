@@ -404,14 +404,7 @@ function __gmsa_learn_ngram_trim(_model) {
     var _d = _model.data;
     var _cap = _model.ngram.capacity;
     if (_d.count <= _cap) return;
-    var _names = variable_struct_get_names(_d.contexts);
-    var _n = array_length(_names);
-    var _list = array_create(_n, undefined);
-    for (var _i = 0; _i < _n; _i++) _list[_i] = { k : _names[_i], last : _d.contexts[$ _names[_i]].last };
-    array_sort(_list, function(_x, _y) { return _x.last - _y.last; });
-    var _drop = min(_n, _n - _cap + max(1, _cap div 10));
-    for (var _i = 0; _i < _drop; _i++) variable_struct_remove(_d.contexts, _list[_i].k);
-    _d.count = _n - _drop;
+    _d.count = __gmsa_learn_forget_oldest(_d.contexts, _cap - max(1, _cap div 10));
 }
 
 function __gmsa_learn_ngram_where(_model, _sample, _k, _r) {

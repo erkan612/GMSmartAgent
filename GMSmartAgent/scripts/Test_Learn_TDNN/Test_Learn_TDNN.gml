@@ -53,7 +53,7 @@ function test_learn_tdnn() {
         });
 
         gmsa_test_case("remember: after something expensive, the cheapest", function() {
-            var _m = gmsa_learn_tdnn_create({ remember : ["price"] });
+            var _m = gmsa_learn_tdnn_create({ remember : ["price"], layers : [32, 16] });
             var _ag = __test_tdnn_potion_shop();
             var _rng = gmsa_rng_create(5);
             var _last = 0;
@@ -143,11 +143,12 @@ function test_learn_tdnn() {
             var _boss = __test_ngram_boss();
             var _names = ["feint", "sweep", "heavy"];
             var _last = ["", ""];
-            repeat (300) {
+            repeat (450) {
                 var _move = _names[irandom(2)];
                 var _ticket = __test_ngram_boss_move(_boss, _move);
                 var _reward = (_move == "heavy") ? ((_last[0] == "feint" && _last[1] == "sweep") ? 1 : -1) : 0;
                 gmsa_learn_outcome(_m, _ticket, _reward);
+				gmsa_learn_train(_m);
                 _last[0] = _last[1];
                 _last[1] = _move;
             }
@@ -222,6 +223,7 @@ function __test_tdnn_shop_buy(_model, _agent, _potions, _pick) {
     for (var _i = 0; _i < array_length(_potions); _i++) array_push(_options, { action : "potion", target : _potions[_i] });
     var _chosen = (_pick < 0) ? 0 : _pick + ((_agent.sword != undefined) ? 1 : 0);
     gmsa_learn_observe(_model, gmsa_observe(_agent, _options, _chosen));
+	gmsa_learn_train(_model);
 }
 
 function __test_tdnn_shop_guess(_model, _agent, _potions) {

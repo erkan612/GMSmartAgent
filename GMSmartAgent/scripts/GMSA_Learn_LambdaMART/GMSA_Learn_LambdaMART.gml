@@ -33,6 +33,7 @@ function gmsa_learn_lambdamart_create(_params = {}) {
     _model.__s = [];
     _model.__p = [];
     _model.__job = undefined; // training in progress
+    _model.__trained = 0;     // observations the last training included
     _model.observe    = method(_model, __gmsa_learn_lambdamart_observe);
     _model.predict    = method(_model, __gmsa_learn_lambdamart_predict);
     _model.explain    = method(_model, __gmsa_learn_lambdamart_explain);
@@ -40,6 +41,7 @@ function gmsa_learn_lambdamart_create(_params = {}) {
     _model.load_data  = method(_model, __gmsa_learn_lambdamart_load);
     _model.reset_data = method(_model, __gmsa_learn_lambdamart_reset);
     _model.train      = method(_model, __gmsa_learn_lambdamart_train);
+    _model.waiting    = method(_model, __gmsa_learn_lambdamart_waiting);
     _model.reset_data();
     return _model;
 }
@@ -55,6 +57,7 @@ function __gmsa_learn_lambdamart_reset() {
         count  : 0,   // observations seen, ages the buffer
     };
     __job = undefined;
+    __trained = 0;
 }
 
 function __gmsa_learn_lambdamart_observe(_sample) {
@@ -147,6 +150,7 @@ function __gmsa_learn_lambdamart_load(_data) {
         buffer : _buffer, head : 0, count : _data.count,
     };
     __job = undefined;
+    __trained = _data.count; // the loaded trees already include the loaded buffer
 }
 
 function __gmsa_learn_lambdamart_train(_budget) {
@@ -154,6 +158,7 @@ function __gmsa_learn_lambdamart_train(_budget) {
     if (__job == undefined) {
         __job = __gmsa_learn_lambdamart_job(self);
         if (__job == undefined) return true; // nothing to learn from
+        __trained = data.count;  // the choices this training includes
     }
     if (!__gmsa_learn_lambdamart_work(self, __job, _limit)) return false;
     data.tree_count = lambdamart.trees;
@@ -163,6 +168,10 @@ function __gmsa_learn_lambdamart_train(_budget) {
     data.value      = __job.value;
     __job = undefined;
     return true;
+}
+
+function __gmsa_learn_lambdamart_waiting() {
+    return (__job != undefined) || (data.count > __trained);
 }
 
 // Internal

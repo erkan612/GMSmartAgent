@@ -2,7 +2,7 @@ function gmsa_learn_tdnn_create(_params = {}) {
     static _next_id = 0;
     var _length = __gmsa_param(_params, "length", 3);
     if (!__gmsa_net_whole(_length)) throw "GMSA: tdnn length must be a whole number of 1 or more";
-    var _hidden = __gmsa_param(_params, "layers", [32, 16]);
+    var _hidden = __gmsa_param(_params, "layers", [16]);
     if (!is_array(_hidden) || array_length(_hidden) == 0) throw "GMSA: tdnn layers must be a non-empty array of layer sizes";
     for (var _i = 0; _i < array_length(_hidden); _i++) {
         if (!__gmsa_net_whole(_hidden[_i])) throw "GMSA: tdnn layer sizes must be whole numbers of 1 or more";
@@ -65,6 +65,7 @@ function gmsa_learn_tdnn_create(_params = {}) {
     _model.__mem = [];   // replay memory: recent choices, encoded
     _model.__mem_next = 0;
     _model.__mem_count = 0;
+    _model.__queue = []; // replays waiting for training: places in the memory
     _model.__rng = gmsa_rng_create(_model.tdnn.seed);
     _model.observe    = method(_model, __gmsa_learn_tdnn_observe);
     _model.predict    = method(_model, __gmsa_learn_tdnn_predict);
@@ -72,6 +73,8 @@ function gmsa_learn_tdnn_create(_params = {}) {
     _model.save_data  = method(_model, __gmsa_learn_tdnn_save);
     _model.load_data  = method(_model, __gmsa_learn_tdnn_load);
     _model.reset_data = method(_model, __gmsa_learn_tdnn_reset);
+    _model.train      = method(_model, __gmsa_learn_tdnn_replay);
+    _model.waiting    = method(_model, __gmsa_learn_tdnn_waiting);
     _model.reset_data();
     return _model;
 }
@@ -94,6 +97,7 @@ function __gmsa_learn_tdnn_reset() {
              clock : 0, familiar : {}, familiar_count : 0 };
     __mem_next = 0;
     __mem_count = 0;
+    array_resize(__queue, 0);
     tdnn.gen += 1; // every agent's history for this model starts over
 }
 
@@ -104,15 +108,14 @@ function __gmsa_learn_tdnn_observe(_sample) {
     else __gmsa_learn_tdnn_use(self, _h);
     __gmsa_learn_tdnn_grow(self);
 
-    // learn from it, then from a few earlier ones in memory
+    // learn from it now, and pick a few earlier ones from memory to learn from again when training
     var _new = __gmsa_learn_tdnn_store(self, _sample);
-    __gmsa_learn_tdnn_train(self, __mem[_new]);
+    __gmsa_learn_tdnn_update(self, __mem[_new]);
     var _others = __mem_count - 1;
     if (_others > 0) {
-        repeat (min(tdnn.replay, _others)) {
-            var _pick = (_new + 1 + floor(gmsa_rng_next(__rng) * _others)) mod __mem_count;
-            __gmsa_learn_tdnn_train(self, __mem[_pick]);
-        }
+        repeat (min(tdnn.replay, _others)) array_push(__queue, (_new + 1 + floor(gmsa_rng_next(__rng) * _others)) mod __mem_count);
+        var _extra = array_length(__queue) - tdnn.memory;  // a backlog nobody trains: the oldest replays go
+        if (_extra > 0) array_delete(__queue, 0, _extra);
     }
 
     // how familiar this kind of moment is
@@ -240,7 +243,26 @@ function __gmsa_learn_tdnn_load(_data) {
              familiar_count : array_length(variable_struct_get_names(_data.familiar)) };
     __mem_next = 0;   // the replay memory isn't saved
     __mem_count = 0;
+    array_resize(__queue, 0);
     tdnn.gen += 1;    // histories aren't saved, the next choices start fresh
+}
+
+function __gmsa_learn_tdnn_replay(_budget) {
+    var _n = array_length(__queue);
+    if (_n == 0) return true;
+    var _limit = (_budget == undefined) ? infinity : get_timer() + _budget;
+    var _done = 0;
+    while (_done < _n) {
+        __gmsa_learn_tdnn_update(self, __mem[__queue[_done]]);
+        _done += 1;
+        if (get_timer() >= _limit) break;
+    }
+    array_delete(__queue, 0, _done);
+    return (array_length(__queue) == 0);
+}
+
+function __gmsa_learn_tdnn_waiting() {
+    return (array_length(__queue) > 0);
 }
 
 // Internal
@@ -350,7 +372,7 @@ function __gmsa_learn_tdnn_store(_model, _sample) {
     return _i;
 }
 
-function __gmsa_learn_tdnn_train(_model, _e) {
+function __gmsa_learn_tdnn_update(_model, _e) {
     var _net = _model.data.net;
     if (_model.learns == gmsa_learn_target.OUTCOMES) {
         var _out = gmsa_net_forward(_net, _e.xs[0]);
@@ -495,12 +517,5 @@ function __gmsa_learn_tdnn_trim(_model) {
     var _d = _model.data;
     var _cap = _model.tdnn.familiar_capacity;
     if (_d.familiar_count <= _cap) return;
-    var _names = variable_struct_get_names(_d.familiar);
-    var _n = array_length(_names);
-    var _list = array_create(_n, undefined);
-    for (var _i = 0; _i < _n; _i++) _list[_i] = { k : _names[_i], last : _d.familiar[$ _names[_i]].last };
-    array_sort(_list, function(_x, _y) { return _x.last - _y.last; });
-    var _drop = min(_n, _n - _cap + max(1, _cap div 10));
-    for (var _i = 0; _i < _drop; _i++) variable_struct_remove(_d.familiar, _list[_i].k);
-    _d.familiar_count = _n - _drop;
+    _d.familiar_count = __gmsa_learn_forget_oldest(_d.familiar, _cap - max(1, _cap div 10));
 }
