@@ -1,4 +1,4 @@
-enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET, LAMBDAMART, NGRAM, TDNN }
+enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET, LAMBDAMART, NGRAM, TDNN, BAYES }
 enum gmsa_learn_target { CHOICES, OUTCOMES }
 
 #macro GMSA_LEARN_ODDS_CLIP 10 // largest correction for rarely chosen options
