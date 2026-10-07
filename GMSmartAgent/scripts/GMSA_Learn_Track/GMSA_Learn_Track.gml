@@ -36,16 +36,16 @@ function gmsa_learn_history(_agent) {
     return __gmsa_learn_history_of(_agent).entries;
 }
 
-function gmsa_learn_outcome(_model, _ticket, _reward) {
+function gmsa_learn_outcome(_model, _ticket, _reward, _note = undefined) {
     __gmsa_learn_check_outcome(_model, _reward);
     if (!is_struct(_ticket) || !is_array(_ticket[$ "options"])) throw "GMSA: learn outcome needs a ticket from gmsa_learn_remember";
     if (_model.frozen) return false;
-    __gmsa_learn_outcome_one(_model, _ticket, _reward, 1);
+    __gmsa_learn_outcome_one(_model, _ticket, _reward, 1, _note);
     __gmsa_learn_invalidate(_model);
     return true;
 }
 
-function gmsa_learn_reward(_model, _agent, _reward) {
+function gmsa_learn_reward(_model, _agent, _reward, _note = undefined) {
     __gmsa_learn_check_outcome(_model, _reward);
     var _history = __gmsa_learn_history_of(_agent);
     if (_model.frozen) return 0;
@@ -57,7 +57,7 @@ function gmsa_learn_reward(_model, _agent, _reward) {
         var _entry = _entries[_i];
         var _age = _entry.active ? 0 : _now - _entry.last;
         if (_age >= _window) continue;
-        __gmsa_learn_outcome_one(_model, _entry, _reward, 1 - _age / _window);
+        __gmsa_learn_outcome_one(_model, _entry, _reward, 1 - _age / _window, _note);
         _count += 1;
     }
     if (_count > 0) __gmsa_learn_invalidate(_model);
@@ -123,13 +123,14 @@ function __gmsa_learn_check_outcome(_model, _reward) {
     if (!is_numeric(_reward) || is_nan(_reward)) throw "GMSA: learn outcome reward must be a number";
 }
 
-function __gmsa_learn_outcome_one(_model, _entry, _reward, _credit) {
+function __gmsa_learn_outcome_one(_model, _entry, _reward, _credit, _note = undefined) {
     var _sample = __gmsa_learn_sample(_model, _entry, _entry.chosen);
     // options the agent rarely picks count more when they are picked, so they aren't misjudged from little data
     var _p = _entry.probability;
     var _odds = (_p * GMSA_LEARN_ODDS_CLIP > 1) ? 1 / _p : GMSA_LEARN_ODDS_CLIP;
     _sample.weight = _credit * _odds;
     _sample.reward = _reward;
+    _sample.note = __gmsa_learn_note(_note);
     _model.samples = _model.samples * _model.decay + _credit;
     _model.observe(_sample);
 }

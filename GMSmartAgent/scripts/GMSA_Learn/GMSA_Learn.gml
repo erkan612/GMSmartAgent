@@ -1,4 +1,4 @@
-enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET, LAMBDAMART, NGRAM, TDNN, BAYES }
+enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET, LAMBDAMART, NGRAM, TDNN, BAYES, NEIGHBOR }
 enum gmsa_learn_target { CHOICES, OUTCOMES }
 
 #macro GMSA_LEARN_ODDS_CLIP 10 // largest correction for rarely chosen options
@@ -64,13 +64,14 @@ function gmsa_learn_custom(_methods, _params = {}) {
 }
 
 // Training and prediction
-function gmsa_learn_observe(_model, _decision) {
+function gmsa_learn_observe(_model, _decision, _note = undefined) {
     if (_model.learns != gmsa_learn_target.CHOICES) {
         throw "GMSA: this model learns from outcomes, report them with gmsa_learn_outcome or gmsa_learn_reward";
     }
     if (_model.frozen) return false;
     if (_decision.chosen < 0) throw "GMSA: learn observe needs a decision with a chosen option";
     var _sample = __gmsa_learn_sample(_model, _decision, _decision.chosen);
+    _sample.note = __gmsa_learn_note(_note);
     _model.samples = _model.samples * _model.decay + 1;
     _model.observe(_sample);
     __gmsa_learn_invalidate(_model);
@@ -466,6 +467,7 @@ function __gmsa_learn_sample(_model, _decision, _chosen) {
     _sample.from = _decision;
     _sample.weight = 1;
     _sample.reward = undefined;
+    _sample.note = undefined;
     return _sample;
 }
 
@@ -502,4 +504,8 @@ function __gmsa_learn_forget_oldest(_entries, _keep) {
         }
     }
     return _left;
+}
+
+function __gmsa_learn_note(_note) {
+    return (_note == undefined) ? undefined : string(_note);
 }

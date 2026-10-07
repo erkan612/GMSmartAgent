@@ -37,15 +37,15 @@ function gmsa_learn_space_predict(_model, _space, _options) {
     return gmsa_learn_predict(_model, __gmsa_learn_space_fill(_space, _options));
 }
 
-function gmsa_learn_space_observe(_model, _space, _options, _chosen) {
+function gmsa_learn_space_observe(_model, _space, _options, _chosen, _note = undefined) {
     __gmsa_learn_check_model(_model);
     var _d = __gmsa_learn_space_fill(_space, _options);
     __gmsa_learn_space_check_chosen(_space, _d, _chosen);
     _d.chosen = _chosen;
-    return gmsa_learn_observe(_model, _d);
+    return gmsa_learn_observe(_model, _d, _note);
 }
 
-function gmsa_learn_space_outcome(_model, _space, _options, _chosen, _probability, _reward, _credit = 1) {
+function gmsa_learn_space_outcome(_model, _space, _options, _chosen, _probability, _reward, _credit = 1, _note = undefined) {
     __gmsa_learn_check_outcome(_model, _reward);
     if (!__gmsa_net_above_zero(_probability) || _probability > 1) throw "GMSA: learn space probability must be above 0 and at most 1";
     if (!__gmsa_net_above_zero(_credit) || _credit > 1) throw "GMSA: learn space credit must be above 0 and at most 1";
@@ -56,7 +56,7 @@ function gmsa_learn_space_outcome(_model, _space, _options, _chosen, _probabilit
     _e.options = _d.options;
     _e.chosen = _chosen;
     _e.probability = _probability;
-    __gmsa_learn_outcome_one(_model, _e, _reward, _credit);
+    __gmsa_learn_outcome_one(_model, _e, _reward, _credit, _note);
     __gmsa_learn_invalidate(_model);
     return true;
 }
