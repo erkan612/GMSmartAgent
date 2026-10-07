@@ -46,6 +46,28 @@ function test_learn_ngram() {
             gmsa_test_assert_equal(__test_ngram_guess(_m, _ag, 15).best, 2, "hurt: a potion");
             gmsa_test_assert_equal(__test_ngram_guess(_m, _ag, 85).best, 0, "healthy, same history: a sword");
         });
+		
+        gmsa_test_case("one model, habits that disagree: hurt means a potion, whatever came before", function() {
+            var _m = gmsa_learn_ngram_create();
+            var _ag = __test_ngram_shopper();
+            var _last = -1;
+            // sword then shield, shield then sword, a potion then a sword, but always a potion when hurt
+            for (var _i = 0; _i < 300; _i++) {
+                var _hp = (_i * 37) mod 100;
+                var _item = (_hp < 20) ? 2 : ((_last == 0) ? 1 : 0);
+                __test_ngram_buy(_m, _ag, _hp, _item);
+                _last = _item;
+            }
+            __test_ngram_buy(_m, _ag, 10, 2);
+            __test_ngram_buy(_m, _ag, 80, 0);
+            var _g = __test_ngram_guess(_m, _ag, 10);
+            gmsa_test_assert_equal(_g.best, 2, "after a sword, hurt: a potion");
+            gmsa_test_assert_true(_g.p[2] > 0.8, "and sure of it: " + string(_g.p[2]));
+            gmsa_test_assert_equal(__test_ngram_guess(_m, _ag, 80).best, 1, "after a sword, healthy: a shield");
+            __test_ngram_buy(_m, _ag, 80, 1);
+            gmsa_test_assert_equal(__test_ngram_guess(_m, _ag, 80).best, 0, "after a shield, healthy: a sword");
+            gmsa_test_assert_equal(__test_ngram_guess(_m, _ag, 10).best, 2, "after a shield, hurt: a potion");
+        });
 
         gmsa_test_case("a break starts the history over, the first buy is a habit too", function() {
             var _m = gmsa_learn_ngram_create();
