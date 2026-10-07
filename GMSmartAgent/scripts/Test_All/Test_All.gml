@@ -35,5 +35,6 @@ function gmsa_tests_all(_verbose = false) {
     test_plan_goal_mixed();
     test_plan_goal_explain();
     test_learn_sure();
+    test_learn_ngram();
     return gmsa_test_run(_verbose);
 }

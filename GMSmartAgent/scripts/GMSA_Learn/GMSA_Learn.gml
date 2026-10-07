@@ -1,4 +1,4 @@
-enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET, LAMBDAMART }
+enum gmsa_learn_tier { CUSTOM, COUNT, LINEAR, RANKNET, LAMBDAMART, NGRAM }
 enum gmsa_learn_target { CHOICES, OUTCOMES }
 
 #macro GMSA_LEARN_ODDS_CLIP 10 // largest correction for rarely chosen options
@@ -37,7 +37,7 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
         reset_data    : undefined,     // function(), also called once at creation
         train         : undefined,     // function(budget), returns true when finished, batch tiers only
         __bindings    : [],
-        __sample      : { situation : [], options : [], chosen : -1, weight : 1, reward : undefined },
+        __sample      : { situation : [], options : [], chosen : -1, weight : 1, reward : undefined, agent : undefined },
         __pool        : [],
         __out         : { p : [], confidence : 0, best : -1, sure : 0 },
         __predictions : [],            // cached predictions for gmsa_learn_input, one per observed agent
@@ -460,6 +460,7 @@ function __gmsa_learn_sample(_model, _decision, _chosen) {
         }
     }
     _sample.chosen = _chosen;
+    _sample.agent = _decision.agent;
     _sample.weight = 1;
     _sample.reward = undefined;
     return _sample;
