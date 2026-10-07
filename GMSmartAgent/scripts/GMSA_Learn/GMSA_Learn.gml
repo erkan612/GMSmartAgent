@@ -39,7 +39,7 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
         __bindings    : [],
         __sample      : { situation : [], options : [], chosen : -1, weight : 1, reward : undefined },
         __pool        : [],
-        __out         : { p : [], confidence : 0 },
+        __out         : { p : [], confidence : 0, best : -1, sure : 0 },
         __predictions : [],            // cached predictions for gmsa_learn_input, one per observed agent
     };
     _model.__adjust = method(_model, __gmsa_learn_adjust); // called by Core's think when the model is attached
@@ -80,6 +80,8 @@ function gmsa_learn_predict(_model, _decision) {
     var _n = array_length(_decision.options);
     array_resize(_out.p, _n);
     _out.confidence = 0;
+    _out.best = -1;
+    _out.sure = 0;
     if (_n == 0) return _out;
     for (var _i = 0; _i < _n; _i++) _out.p[_i] = 0;
 
@@ -100,6 +102,11 @@ function gmsa_learn_predict(_model, _decision) {
     }
     var _c = _out.confidence;
     _out.confidence = (is_numeric(_c) && !is_nan(_c)) ? clamp(_c, 0, 1) : 0;
+
+    var _best = 0;
+    for (var _i = 1; _i < _n; _i++) if (_out.p[_i] > _out.p[_best]) _best = _i;
+    _out.best = _best;
+    _out.sure = _out.confidence * _out.p[_best];
     return _out;
 }
 

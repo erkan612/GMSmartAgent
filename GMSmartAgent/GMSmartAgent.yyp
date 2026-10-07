@@ -114,6 +114,7 @@
     {"id":{"name":"Test_Learn_Predict","path":"scripts/Test_Learn_Predict/Test_Learn_Predict.yy",},},
     {"id":{"name":"Test_Learn_Rerank","path":"scripts/Test_Learn_Rerank/Test_Learn_Rerank.yy",},},
     {"id":{"name":"Test_Learn_Space","path":"scripts/Test_Learn_Space/Test_Learn_Space.yy",},},
+    {"id":{"name":"Test_Learn_Sure","path":"scripts/Test_Learn_Sure/Test_Learn_Sure.yy",},},
     {"id":{"name":"Test_Learn_Track","path":"scripts/Test_Learn_Track/Test_Learn_Track.yy",},},
     {"id":{"name":"Test_Net","path":"scripts/Test_Net/Test_Net.yy",},},
     {"id":{"name":"Test_Observe","path":"scripts/Test_Observe/Test_Observe.yy",},},
