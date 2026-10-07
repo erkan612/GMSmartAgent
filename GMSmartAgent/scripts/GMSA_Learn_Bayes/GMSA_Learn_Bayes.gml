@@ -48,7 +48,8 @@ function gmsa_learn_bayes_create(_params = {}) {
 
 // Methods, run with the model as self
 function __gmsa_learn_bayes_reset() {
-    data = { keys : bayes.names, clock : 0, acts : {}, cells : {}, loss : array_create(array_length(bayes.tempers), 0) };
+    // counts are stored times boost, which grows every observe, so old counts fade without touching them
+    data = { keys : bayes.names, clock : 0, boost : 1, acts : {}, cells : {}, loss : array_create(array_length(bayes.tempers), 0) };
     array_resize(__cell, 0);
 }
 
@@ -79,13 +80,16 @@ function __gmsa_learn_bayes_observe(_sample) {
     }
 
     data.clock += 1;
+    data.boost /= decay;
+    if (data.boost > 1000000000000000000000000000000) __gmsa_learn_bayes_rescale(self);  // 1e30
+    var _wb = _w * data.boost;
     // choices: every option on offer counts as offered, the chosen one as chosen. Outcomes: the chosen one and its reward
     for (var _i = 0; _i < _n; _i++) {
         if (_outcomes && _i != _c) continue;
         var _o = _sample.options[_i];
-        var _gain = _outcomes ? _w * _sample.reward : ((_i == _c) ? _w : 0);
+        var _gain = (_outcomes ? _w * _sample.reward : ((_i == _c) ? _w : 0)) * data.boost;
         var _act = __gmsa_learn_bayes_act(self, _o.action);
-        _act.o += _w;
+        _act.o += _wb;
         _act.c += _gain;
         for (var _j = 0; _j < array_length(_keys); _j++) {
             var _cell = __gmsa_learn_bayes_cell(self, _o.action, _j);
@@ -94,7 +98,7 @@ function __gmsa_learn_bayes_observe(_sample) {
             var _off = 0;
             for (var _r = 0; _r < array_length(_lv); _r++) {
                 var _at = _off + min(_lv[_r] - 1, floor(clamp(_v, 0, 1) * _lv[_r]));
-                _cell.O[_at] += _w;
+                _cell.O[_at] += _wb;
                 _cell.C[_at] += _gain;
                 _off += _lv[_r];
             }
@@ -130,7 +134,7 @@ function __gmsa_learn_bayes_explain(_sample, _index) {
     var _say = array_create(_k, 0);
     var _where = array_create(_k, "");
     for (var _j = 0; _j < _k; _j++) {
-        var _r = __gmsa_learn_bayes_chain(self, _o, _j, _base);
+        var _r = __gmsa_learn_bayes_chain(self, _o, _j, _base, true);
         _say[_j] = _outcomes ? _tau * (_r.rate - _base) : power(max(0.000000001, _r.rate) / max(0.000000001, _base), _tau);
         _where[_j] = _keys[_j] + " " + _r.range;
     }
@@ -159,7 +163,7 @@ function __gmsa_learn_bayes_explain(_sample, _index) {
 
 function __gmsa_learn_bayes_save() {
     return { has_keys : (data.keys != undefined), keys : (data.keys != undefined) ? data.keys : [],
-             clock : data.clock, acts : data.acts, cells : data.cells, loss : data.loss };
+             clock : data.clock, boost : data.boost, acts : data.acts, cells : data.cells, loss : data.loss };
 }
 
 function __gmsa_learn_bayes_load(_data) {
@@ -176,7 +180,9 @@ function __gmsa_learn_bayes_load(_data) {
     }
     var _loss = array_create(array_length(bayes.tempers), 0);
     array_copy(_loss, 0, _data.loss, 0, min(array_length(_loss), array_length(_data.loss)));
-    data = { keys : _data.has_keys ? _data.keys : bayes.names, clock : _data.clock, acts : _data.acts, cells : _data.cells, loss : _loss };
+    var _boost = _data[$ "boost"];
+    if (!is_numeric(_boost) || _boost <= 0) throw "GMSA: bayes save is malformed";
+    data = { keys : _data.has_keys ? _data.keys : bayes.names, clock : _data.clock, boost : _boost, acts : _data.acts, cells : _data.cells, loss : _loss };
     array_resize(__cell, 0);
 }
 
@@ -226,16 +232,8 @@ function __gmsa_learn_bayes_act(_model, _a) {
     var _name = _model.actions[_a];
     var _t = _d.acts[$ _name];
     if (_t == undefined) {
-        _t = { o : 0, c : 0, last : _d.clock };
+        _t = { o : 0, c : 0 };
         _d.acts[$ _name] = _t;
-        return _t;
-    }
-    var _age = _d.clock - _t.last;
-    if (_age > 0) {
-        var _f = power(_model.decay, _age);
-        _t.o *= _f;
-        _t.c *= _f;
-        _t.last = _d.clock;
     }
     return _t;
 }
@@ -244,39 +242,50 @@ function __gmsa_learn_bayes_cell(_model, _a, _j) {
     while (array_length(_model.__cell) <= _a) array_push(_model.__cell, []);
     var _row = _model.__cell[_a];
     while (array_length(_row) <= _j) array_push(_row, undefined);
-    var _d = _model.data;
     var _cell = _row[_j];
+    if (_cell != undefined) return _cell;
+    var _d = _model.data;
+    var _key = _model.actions[_a] + "|" + _d.keys[_j];
+    _cell = _d.cells[$ _key];
     if (_cell == undefined) {
-        var _key = _model.actions[_a] + "|" + _d.keys[_j];
-        _cell = _d.cells[$ _key];
-        if (_cell == undefined) {
-            var _levels = __gmsa_learn_bayes_levels(_model, _d.keys[_j]);
-            var _size = 0;
-            for (var _r = 0; _r < array_length(_levels); _r++) _size += _levels[_r];
-            _cell = { levels : _levels, O : array_create(_size, 0), C : array_create(_size, 0), last : _d.clock };
-            _d.cells[$ _key] = _cell;
-        }
-        _row[@ _j] = _cell;
+        var _levels = __gmsa_learn_bayes_levels(_model, _d.keys[_j]);
+        var _size = 0;
+        for (var _r = 0; _r < array_length(_levels); _r++) _size += _levels[_r];
+        _cell = { levels : _levels, O : array_create(_size, 0), C : array_create(_size, 0) };
+        _d.cells[$ _key] = _cell;
     }
-    var _age = _d.clock - _cell.last;
-    if (_age > 0) {
-        var _f = power(_model.decay, _age);
-        for (var _i = 0; _i < array_length(_cell.O); _i++) {
-            _cell.O[_i] *= _f;
-            _cell.C[_i] *= _f;
-        }
-        _cell.last = _d.clock;
-    }
+    _row[@ _j] = _cell;
     return _cell;
 }
 
-function __gmsa_learn_bayes_chain(_model, _option, _j, _base) {
+function __gmsa_learn_bayes_rescale(_model) {
+    var _d = _model.data;
+    var _b = _d.boost;
+    var _names = variable_struct_get_names(_d.acts);
+    for (var _i = 0; _i < array_length(_names); _i++) {
+        var _t = _d.acts[$ _names[_i]];
+        _t.o /= _b;
+        _t.c /= _b;
+    }
+    _names = variable_struct_get_names(_d.cells);
+    for (var _i = 0; _i < array_length(_names); _i++) {
+        var _cell = _d.cells[$ _names[_i]];
+        for (var _k = 0; _k < array_length(_cell.O); _k++) {
+            _cell.O[_k] /= _b;
+            _cell.C[_k] /= _b;
+        }
+    }
+    _d.boost = 1;
+}
+
+function __gmsa_learn_bayes_chain(_model, _option, _j, _base, _words = false) {
     static _r = { rate : 0, evidence : 0, range : "" };
     var _outcomes = (_model.learns == gmsa_learn_target.OUTCOMES);
     var _cell = __gmsa_learn_bayes_cell(_model, _option.action, _j);
     var _v = clamp(__gmsa_learn_bayes_value(_model, _option, _j), 0, 1);
     var _lv = _cell.levels;
-    var _m = _model.bayes.smoothing;
+    var _boost = _model.data.boost;
+    var _m = _model.bayes.smoothing * _boost; // counts are times boost, so the pull toward the coarser estimate is too
     var _rate = _base;
     var _off = 0;
     var _ev = 0;
@@ -287,15 +296,17 @@ function __gmsa_learn_bayes_chain(_model, _option, _j, _base) {
         var _C = _cell.C[_off + _b];
         if (!_outcomes) _rate = (_C + _m * _rate) / (_O + _m);
         else if (_O * 1000000000000 > 0) _rate = (_C + _m * _rate) / (_O + _m);
-        _ev = _O;
-        if (_O >= 1 || _shown < 0) _shown = _i;
+        _ev = _O / _boost;
+        if (_O >= _boost || _shown < 0) _shown = _i;
         _off += _lv[_i];
     }
-    var _n = _lv[_shown];
-    var _bin = min(_n - 1, floor(_v * _n));
     _r.rate = _rate;
     _r.evidence = _ev;
-    _r.range = string(round(_bin / _n * 100)) + "-" + string(round((_bin + 1) / _n * 100)) + "%";
+    if (_words) {
+        var _n = _lv[_shown];
+        var _bin = min(_n - 1, floor(_v * _n));
+        _r.range = string(round(_bin / _n * 100)) + "-" + string(round((_bin + 1) / _n * 100)) + "%";
+    }
     return _r;
 }
 
@@ -310,7 +321,8 @@ function __gmsa_learn_bayes_evidence(_model, _sample) {
     for (var _i = 0; _i < _n; _i++) {
         var _o = _sample.options[_i];
         var _act = __gmsa_learn_bayes_act(_model, _o.action);
-        var _base = _outcomes ? ((_act.o * 1000000000000 > 0) ? _act.c / _act.o : 0) : (_act.c + 1) / (_act.o + 2);
+        var _boost = _model.data.boost;
+        var _base = _outcomes ? ((_act.o * 1000000000000 > 0) ? _act.c / _act.o : 0) : (_act.c + _boost) / (_act.o + 2 * _boost);
         var _sum = 0;
         var _ev = 0;
         for (var _j = 0; _j < _k; _j++) {
@@ -320,7 +332,7 @@ function __gmsa_learn_bayes_evidence(_model, _sample) {
         }
         _model.__b[_i] = _base;
         _model.__sum[_i] = _sum;
-        _model.__ev[_i] = (_k > 0) ? _ev / _k : _act.o;
+        _model.__ev[_i] = (_k > 0) ? _ev / _k : _act.o / _boost;
     }
 }
 

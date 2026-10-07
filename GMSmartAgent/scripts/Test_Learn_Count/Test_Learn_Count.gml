@@ -149,5 +149,14 @@ function gmsa_tests_learn_count() {
             gmsa_test_assert_true(__gmsa_tests_count_predict(_only_hp, _ag, 20, 10).out.confidence > 0, "danger ignored");
             gmsa_test_assert_near(__gmsa_tests_count_predict(_all, _ag, 20, 10).out.confidence, 0, GMSA_TEST_EPS, "danger matters by default");
         });
+		
+        gmsa_test_case("no situational inputs: one bucket, no crash", function() {
+            var _space = gmsa_learn_space("count no situation", ["potion"], ["price"], { situational : [false] });
+            var _m = gmsa_learn_count_create();
+            var _offer = [{ action : 0, inputs : [0.2] }, { action : 0, inputs : [0.8] }];
+            repeat (3) gmsa_learn_space_observe(_m, _space, _offer, 0);
+            gmsa_test_assert_true(variable_struct_exists(_m.data.buckets, "any"), "one bucket");
+            gmsa_test_assert_near(gmsa_learn_space_predict(_m, _space, _offer).p[0], 0.5);
+        });
     });
 }

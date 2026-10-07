@@ -159,7 +159,7 @@ function __gmsa_learn_count_key(_model, _sample) {
         _model.__bins[_i] = _b;
         _key += ((_i > 0) ? "_" : "") + string(_b);
     }
-    return _key;
+    return (_key == "") ? "any" : _key; // no situational inputs: one bucket for every situation (an empty name isn't allowed)
 }
 
 function __gmsa_learn_count_age(_model, _bucket) {

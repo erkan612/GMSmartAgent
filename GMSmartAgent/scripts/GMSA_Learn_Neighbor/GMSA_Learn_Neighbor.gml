@@ -121,6 +121,7 @@ function __gmsa_learn_neighbor_observe(_sample) {
     }
 
     data.clock += 1;
+    var _g = -ln(decay); // fading per choice, in the log: importance now is exp(key - clock * _g)
     var _note = _sample[$ "note"];
     _note = (_note == undefined) ? "" : _note;
 
@@ -133,6 +134,7 @@ function __gmsa_learn_neighbor_observe(_sample) {
             var _f = power(decay, data.clock - _m.t);
             _m.n = _m.n * _f + _w;
             _m.imp = max(_m.imp * _f, _imp);
+            _m.key = ln(_m.imp) + data.clock * _g;
             if (_outcomes) _m.r += _w * (_sample.reward - _m.r) / _m.n;
             _m.t = data.clock;
             if (_note != "") _m.note = _note;
@@ -147,7 +149,7 @@ function __gmsa_learn_neighbor_observe(_sample) {
     array_copy(_x, 0, __x, 0, _ns);
     array_copy(_a, 0, __a, 0, _n);
     array_copy(_z, 0, __z, 0, _n * _no);
-    array_push(_mem, { x : _x, a : _a, z : _z, c : _c, n : _w, t : data.clock, imp : _imp,
+    array_push(_mem, { x : _x, a : _a, z : _z, c : _c, n : _w, t : data.clock, imp : _imp, key : ln(_imp) + data.clock * _g,
                        r : _outcomes ? _sample.reward : 0, note : _note });
 
     // full: the least important goes, importance fading with age (importance 0: the oldest goes)
@@ -156,7 +158,7 @@ function __gmsa_learn_neighbor_observe(_sample) {
         var _low = infinity;
         for (var _i = 0; _i < array_length(_mem); _i++) {
             var _m = _mem[_i];
-            var _v = (_nb.importance * 1000000000000 > 0) ? _m.imp * power(decay, data.clock - _m.t) : _m.t;
+            var _v = (_nb.importance * 1000000000000 > 0) ? _m.key : _m.t;
             if (_v < _low) {
                 _low = _v;
                 _drop = _i;
@@ -365,6 +367,7 @@ function __gmsa_learn_neighbor_near(_model) {
                 for (var _j = 0; _j < _no; _j++) _s += _wo[_j] * sqr(_z[_o * _no + _j] - _m.z[_m.c * _no + _j]);
                 _best = min(_best, _s);
             }
+            if (_count == _K && _best >= _model.__nd[_K - 1]) continue;
             _count = __gmsa_learn_neighbor_insert(_model.__nd, _model.__ni, 0, _count, _K, _best, _i);
         }
         // no situation: every kept moment is equally close
@@ -409,7 +412,9 @@ function __gmsa_learn_neighbor_near_tries(_model) {
                 for (var _j = 0; _j < _no; _j++) _dz += _wo[_j] * sqr(_z[_o * _no + _j] - _m.z[_m.c * _no + _j]);
                 _dz /= _Wo;
             }
-            _model.__oc[_o] = __gmsa_learn_neighbor_insert(_model.__od, _model.__oi, _o * _K, _model.__oc[_o], _K, _ds + _dz, _i);
+            var _cnt = _model.__oc[_o];
+            if (_cnt == _K && _ds + _dz >= _model.__od[_o * _K + _K - 1]) continue;
+            _model.__oc[_o] = __gmsa_learn_neighbor_insert(_model.__od, _model.__oi, _o * _K, _cnt, _K, _ds + _dz, _i);
         }
     }
 }
@@ -482,6 +487,14 @@ function __gmsa_learn_neighbor_vote(_model, _sample) {
         _model.__num[_o] = 0;
         _model.__den[_o] = 0;
     }
+    // option likeness done inline here, this is the hot loop: same action, then own inputs within `similar`
+    var _a = _model.__a;
+    var _z = _model.__z;
+    var _wo = _model.__wo;
+    var _no = array_length(_wo);
+    var _sim2 = sqr(_nb.similar);
+    var _num = _model.__num;
+    var _den = _model.__den;
     var _neff = 0;
     for (var _t = 0; _t < _model.__nn; _t++) {
         var _d2 = _model.__nd[_t];
@@ -489,11 +502,28 @@ function __gmsa_learn_neighbor_vote(_model, _sample) {
         var _base = _m.n * power(_model.decay, _clock - _m.t);
         var _kw = _base / (_d2 + _eps2);
         _neff += _base * exp(-_d2 / _reach2);
+        var _ma = _m.a;
+        var _mz = _m.z;
+        var _mc = _m.c;
+        var _mn = array_length(_ma);
         for (var _o = 0; _o < _n; _o++) {
-            _model.__num[_o] += _kw * __gmsa_learn_neighbor_alike(_model, _o, _m, _m.c);
+            var _ao = _a[_o];
+            var _pick = 0;
             var _offered = 0;
-            for (var _j = 0; _j < array_length(_m.a); _j++) _offered += __gmsa_learn_neighbor_alike(_model, _o, _m, _j);
-            _model.__den[_o] += _kw * _offered;
+            for (var _j = 0; _j < _mn; _j++) {
+                if (_ma[_j] != _ao) continue;
+                var _s = 1;
+                if (_no > 0) {
+                    var _dz = 0;
+                    for (var _q = 0; _q < _no; _q++) _dz += _wo[_q] * sqr(_z[_o * _no + _q] - _mz[_j * _no + _q]);
+                    _dz /= _sim2;
+                    _s = (_dz > 30) ? 0 : exp(-_dz);
+                }
+                _offered += _s;
+                if (_j == _mc) _pick = _s;
+            }
+            _num[@ _o] = _num[_o] + _kw * _pick;
+            _den[@ _o] = _den[_o] + _kw * _offered;
         }
     }
     // pulled toward an even split, harder when the nearest moments are few or far

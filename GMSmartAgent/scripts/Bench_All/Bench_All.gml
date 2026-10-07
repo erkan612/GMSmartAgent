@@ -13,7 +13,8 @@ function gmsa_bench_all() {
     //__gmsa_bench_plan_slices();
 	//__gmsa_bench_plan_learn();
 	//__gmsa_bench_plan_goap();
-	__gmsa_bench_learn_sequences();
+	//__gmsa_bench_learn_sequences();
+	__gmsa_bench_learn_bayes_neighbor();
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -865,4 +866,95 @@ function __gmsa_bench_seq_agent(_inputs, _actions) {
     }
     gmsa_profile_build(_p);
     return { agent : gmsa_agent_create(_p), actions : _acts, inputs : _names };
+}
+
+function __gmsa_bench_learn_bayes_neighbor(_runs = 300) {
+    show_debug_message("Learn Naive Bayes and nearest neighbor benchmarks, " + string(_runs)
+        + " choices each after warming up (500, or until the memory is full), average per call");
+    var _cases = [
+        { kind : "count", inputs : 4, actions : 4 },
+        { kind : "count", inputs : 1, actions : 1, shelf : 8 },
+        { kind : "bayes", inputs : 4, actions : 4 },
+        { kind : "bayes", inputs : 12, actions : 4 },
+        { kind : "bayes", inputs : 4, actions : 12 },
+        { kind : "bayes", inputs : 4, actions : 4, bins : 64 },
+        { kind : "bayes", inputs : 4, actions : 4, outcomes : true },
+        { kind : "bayes", inputs : 1, actions : 1, shelf : 8 },
+        { kind : "neighbor", inputs : 4, actions : 4, capacity : 64 },
+        { kind : "neighbor", inputs : 4, actions : 4, capacity : 256 },
+        { kind : "neighbor", inputs : 4, actions : 4, capacity : 1024 },
+        { kind : "neighbor", inputs : 4, actions : 4, capacity : 2048 },
+        { kind : "neighbor", inputs : 12, actions : 4, capacity : 256 },
+        { kind : "neighbor", inputs : 4, actions : 12, capacity : 256 },
+        { kind : "neighbor", inputs : 4, actions : 4, capacity : 256, outcomes : true },
+        { kind : "neighbor", inputs : 4, actions : 4, capacity : 1024, outcomes : true },
+        { kind : "neighbor", inputs : 1, actions : 1, shelf : 8, capacity : 256 },
+        { kind : "neighbor", inputs : 1, actions : 1, shelf : 8, capacity : 1024 },
+    ];
+    for (var _k = 0; _k < array_length(_cases); _k++) __gmsa_bench_bn_case(_cases[_k], _runs);
+}
+
+function __gmsa_bench_bn_case(_c, _runs) {
+    static _count = 0;
+    _count += 1;
+    var _neighbor = (_c.kind == "neighbor");
+    var _shelf = variable_struct_exists(_c, "shelf") ? _c.shelf : 0;
+    var _outcomes = variable_struct_exists(_c, "outcomes") && _c.outcomes;
+    var _names = [];
+    for (var _j = 0; _j < _c.inputs; _j++) array_push(_names, "in" + string(_j));
+    var _acts = [];
+    for (var _a = 0; _a < _c.actions; _a++) array_push(_acts, "act" + string(_a));
+    var _space = (_shelf > 0)
+        ? gmsa_learn_space("bench bn " + string(_count), _acts, _names, { situational : array_create(_c.inputs, false) })
+        : gmsa_learn_space("bench bn " + string(_count), _acts, _names);
+    var _params = { learns : _outcomes ? gmsa_learn_target.OUTCOMES : gmsa_learn_target.CHOICES };
+    if (variable_struct_exists(_c, "bins")) _params.bins = _c.bins;
+    if (_neighbor) _params.capacity = _c.capacity;
+    var _m = _neighbor ? gmsa_learn_neighbor_create(_params)
+        : ((_c.kind == "count") ? gmsa_learn_count_create(_params) : gmsa_learn_bayes_create(_params));
+    var _warm = _neighbor ? max(500, _c.capacity + 100) : 500;
+    var _n = (_shelf > 0) ? _shelf : _c.actions;
+    var _rng = gmsa_rng_create(11);
+    var _pred = 0;
+    var _obs = 0;
+    var _worst = 0;
+    for (var _i = 0; _i < _warm + _runs; _i++) {
+        var _x = array_create(_c.inputs, 0);
+        for (var _j = 0; _j < _c.inputs; _j++) _x[_j] = gmsa_rng_next(_rng);
+        var _opts = [];
+        var _habit = 0;
+        for (var _o = 0; _o < _n; _o++) {
+            if (_shelf > 0) {
+                var _own = array_create(_c.inputs, 0);
+                for (var _j = 0; _j < _c.inputs; _j++) _own[_j] = gmsa_rng_next(_rng);
+                array_push(_opts, { action : 0, inputs : _own });
+                if (_own[0] < _opts[_habit].inputs[0]) _habit = _o; // the cheapest
+            } else {
+                array_push(_opts, { action : _o, inputs : _x });
+            }
+        }
+        if (_shelf == 0) _habit = min(_n - 1, floor(_x[0] * _n)); // set by the first input
+        var _pick = (gmsa_rng_next(_rng) < 0.7) ? _habit : floor(gmsa_rng_next(_rng) * _n);
+
+        if (_i >= _warm) {
+            var _t = get_timer();
+            gmsa_learn_space_predict(_m, _space, _opts);
+            _pred += get_timer() - _t;
+        }
+        var _t2 = get_timer();
+        if (_outcomes) gmsa_learn_space_outcome(_m, _space, _opts, _pick, 1 / _n, (_pick == _habit) ? 1 : -0.5);
+        else gmsa_learn_space_observe(_m, _space, _opts, _pick);
+        var _dt = get_timer() - _t2;
+        if (_i >= _warm) {
+            _obs += _dt;
+            _worst = max(_worst, _dt);
+        }
+    }
+    var _name = (_neighbor ? "neighbor capacity " + string(_c.capacity) : _c.kind) + ", " + string(_c.inputs)
+        + ((_c.inputs == 1) ? " input, " : " inputs, ")
+        + ((_shelf > 0) ? string(_shelf) + " targets" : string(_c.actions) + " actions")
+        + (variable_struct_exists(_c, "bins") ? ", bins " + string(_c.bins) : "") + (_outcomes ? ", outcomes" : "");
+    var _extra = _neighbor ? ", " + string(array_length(_m.data.mem)) + " moments" : "";
+    show_debug_message(_name + ": predict " + string_format(_pred / _runs, 1, 1) + " us, "
+        + (_outcomes ? "outcome " : "observe ") + string_format(_obs / _runs, 1, 1) + " us (slowest " + string(_worst) + " us)" + _extra);
 }
