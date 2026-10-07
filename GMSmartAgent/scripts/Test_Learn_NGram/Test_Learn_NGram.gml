@@ -132,6 +132,46 @@ function test_learn_ngram() {
             gmsa_test_assert_true(string_pos("potion", _lines[0]) > 0, _lines[0]);
             gmsa_test_assert_true(string_pos("after sword", _lines[0]) > 0 || string_pos("hp", _lines[0]) > 0, _lines[0]);
         });
+		
+        gmsa_test_case("outcomes: the boss learns which move pays off after which", function() {
+            random_set_seed(7);
+            var _m = gmsa_learn_ngram_create({ learns : gmsa_learn_target.OUTCOMES });
+            var _boss = __test_ngram_boss();
+            var _names = ["feint", "sweep", "heavy"];
+            var _last = ["", ""];
+            repeat (300) {
+                var _move = _names[irandom(2)];
+                var _ticket = __test_ngram_boss_move(_boss, _move);
+                // a heavy attack only lands right after a feint and a sweep
+                var _reward = (_move == "heavy") ? ((_last[0] == "feint" && _last[1] == "sweep") ? 1 : -1) : 0;
+                gmsa_learn_outcome(_m, _ticket, _reward);
+                _last[0] = _last[1];
+                _last[1] = _move;
+            }
+            __test_ngram_boss_move(_boss, "feint");
+            __test_ngram_boss_move(_boss, "sweep");
+            gmsa_test_assert_equal(gmsa_learn_predict(_m, gmsa_agent_evaluate(_boss)).best, 2, "feint, sweep: now the heavy attack");
+            __test_ngram_boss_move(_boss, "sweep");
+            __test_ngram_boss_move(_boss, "sweep");
+            gmsa_test_assert_true(gmsa_learn_predict(_m, gmsa_agent_evaluate(_boss)).best != 2, "sweep, sweep: not the heavy attack");
+        });
+
+        gmsa_test_case("outcomes: the tracker must keep more than the history length", function() {
+            var _m = gmsa_learn_ngram_create({ learns : gmsa_learn_target.OUTCOMES, length : 5 });
+            var _boss = __test_ngram_boss(5);
+            gmsa_test_assert_throws(method({ m : _m, b : _boss }, function() {
+                gmsa_learn_outcome(m, __test_ngram_boss_move(b, "feint"), 1);
+            }));
+        });
+
+        gmsa_test_case("outcomes: a break leaves earlier decisions out of the history", function() {
+            var _m = gmsa_learn_ngram_create({ learns : gmsa_learn_target.OUTCOMES });
+            var _boss = __test_ngram_boss();
+            __test_ngram_boss_move(_boss, "feint");
+            gmsa_learn_ngram_break(_m, _boss);
+            gmsa_learn_predict(_m, gmsa_agent_evaluate(_boss));
+            gmsa_test_assert_equal(_m.__ids, [-1], "only the start");
+        });
     });
 }
 
@@ -157,4 +197,30 @@ function __test_ngram_buy(_model, _agent, _hp, _item) {
 function __test_ngram_guess(_model, _agent, _hp) {
     gmsa_agent_set_input(_agent, "hp", _hp);
     return gmsa_learn_predict(_model, gmsa_agent_evaluate(_agent));
+}
+
+function __test_ngram_boss(_size = 8) {
+    static _profile = undefined;
+    if (_profile == undefined) {
+        _profile = gmsa_profile_create("ngram boss");
+        gmsa_profile_add_input(_profile, gmsa_input_push("distance", 0, 1, 0.5));
+        gmsa_profile_set_features(_profile, ["distance"]);
+        gmsa_profile_add_action(_profile, "feint");
+        gmsa_profile_add_action(_profile, "sweep");
+        gmsa_profile_add_action(_profile, "heavy");
+        gmsa_profile_build(_profile);
+    }
+    var _boss = gmsa_agent_create(_profile);
+    gmsa_learn_track(_boss, { size : _size });
+    return _boss;
+}
+
+function __test_ngram_boss_move(_boss, _name) {
+    var _d = gmsa_agent_think(_boss);
+    var _option = undefined;
+    for (var _i = 0; _i < array_length(_d.options); _i++) if (_d.options[_i].action.name == _name) _option = _d.options[_i];
+    gmsa_agent_set_current_option(_boss, _option);
+    var _ticket = gmsa_learn_remember(_boss);
+    gmsa_agent_clear_current(_boss);
+    return _ticket;
 }

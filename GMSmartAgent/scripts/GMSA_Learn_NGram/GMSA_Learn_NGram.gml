@@ -30,10 +30,11 @@ function gmsa_learn_ngram_create(_params = {}) {
     _model.__chains = [];  // per history length: the three chains through the contexts
     _model.__sitkey = [];  // the situation at each resolution, as part of a key
     _model.__histkey = []; // the history at each length, as part of a key
+    _model.__ids = [];     // the history in use, oldest first
     _model.__K = 0;
     _model.__R = 0;
-    _model.__pc = [[], [], []];
-    _model.__cc = [0, 0, 0];
+    _model.__pc = [[], [], []];  // per chain: probabilities (choices) or values (outcomes) per action
+    _model.__cc = [0, 0, 0];     // per chain: confidence
     _model.__own = [];
     _model.__mixp = [];
     _model.__mixc = 0;
@@ -53,18 +54,22 @@ function gmsa_learn_ngram_break(_model, _agent) {
     var _h = __gmsa_learn_ngram_history(_model, _agent);
     array_resize(_h.ids, 0);
     array_push(_h.ids, -1); // the start: what comes first is a habit too
+    var _tracker = _agent[$ "__history"];
+    if (_tracker != undefined) _h.cut = _tracker.clock(); // tracked decisions from before now no longer count
 }
 
 // Methods, run with the model as self
 function __gmsa_learn_ngram_reset() {
     data = { keys : ngram.names, clock : 0, contexts : {}, count : 0, mix : [1, 1, 1] };
-    ngram.gen += 1;  // every agent's history for this model starts over
+    ngram.gen += 1; // every agent's history for this model starts over
 }
 
 function __gmsa_learn_ngram_observe(_sample) {
-    if (learns == gmsa_learn_target.OUTCOMES) throw "GMSA: n-gram learning from outcomes isn't ready yet";
+    var _outcomes = (learns == gmsa_learn_target.OUTCOMES);
     var _h = __gmsa_learn_ngram_history(self, _sample.agent);
-    __gmsa_learn_ngram_prepare(self, _sample, _h.ids);
+    if (_outcomes) __gmsa_learn_ngram_tracked(self, _sample.agent, _h, _sample.from);
+    else __gmsa_learn_ngram_use(self, _h.ids);
+    __gmsa_learn_ngram_prepare(self, _sample);
     var _A = array_length(actions);
     var _a = _sample.options[_sample.chosen].action;
 
@@ -72,12 +77,13 @@ function __gmsa_learn_ngram_observe(_sample) {
     __gmsa_learn_ngram_mix(self, _A);
     var _top = 0;
     for (var _e = 0; _e < 3; _e++) {
-        data.mix[_e] = power(data.mix[_e], decay) * max(0.000001, __pc[_e][_a]);
+        var _fit = _outcomes ? exp(-sqr(__pc[_e][_a] - _sample.reward)) : max(0.000001, __pc[_e][_a]);
+        data.mix[_e] = power(data.mix[_e], decay) * max(0.000001, _fit);
         _top = max(_top, data.mix[_e]);
     }
     for (var _e = 0; _e < 3; _e++) data.mix[_e] /= _top;
 
-    // count the choice in every context on the three chains
+    // count it in every context on the three chains
     data.clock += 1;
     var _union = __gmsa_learn_ngram_chains(self).union;
     for (var _i = 0; _i < array_length(_union); _i += 2) {
@@ -85,40 +91,57 @@ function __gmsa_learn_ngram_observe(_sample) {
         while (array_length(_ctx.c) <= _a) array_push(_ctx.c, 0);
         _ctx.c[_a] += _sample.weight;
         _ctx.n += _sample.weight;
+        if (_outcomes) {
+            while (array_length(_ctx.r) <= _a) array_push(_ctx.r, 0);
+            _ctx.r[_a] += _sample.weight * _sample.reward;
+        }
     }
     __gmsa_learn_ngram_trim(self);
 
-    array_push(_h.ids, _a);
-    if (array_length(_h.ids) > ngram.length) array_delete(_h.ids, 0, 1);
+    if (!_outcomes) { // choices keep their own history, outcomes read the tracker's
+        array_push(_h.ids, _a);
+        if (array_length(_h.ids) > ngram.length) array_delete(_h.ids, 0, 1);
+    }
 }
 
 function __gmsa_learn_ngram_predict(_sample, _out) {
-    if (learns == gmsa_learn_target.OUTCOMES) throw "GMSA: n-gram learning from outcomes isn't ready yet";
     var _h = __gmsa_learn_ngram_history(self, _sample.agent);
-    __gmsa_learn_ngram_prepare(self, _sample, _h.ids);
+    if (learns == gmsa_learn_target.OUTCOMES) __gmsa_learn_ngram_tracked(self, _sample.agent, _h, undefined);
+    else __gmsa_learn_ngram_use(self, _h.ids);
+    __gmsa_learn_ngram_prepare(self, _sample);
     var _A = array_length(actions);
     __gmsa_learn_ngram_mix(self, _A);
-
-    // options with the same action share its prediction
     var _n = array_length(_sample.options);
-    array_resize(__per, _A);
-    for (var _a = 0; _a < _A; _a++) __per[_a] = 0;
-    for (var _i = 0; _i < _n; _i++) __per[_sample.options[_i].action] += 1;
-    for (var _i = 0; _i < _n; _i++) {
-        var _a = _sample.options[_i].action;
-        _out.p[_i] = __mixp[_a] / __per[_a];
+
+    if (learns == gmsa_learn_target.OUTCOMES) {
+        // expected rewards become preferences through the temperature
+        var _max = -infinity;
+        for (var _i = 0; _i < _n; _i++) _max = max(_max, __mixp[_sample.options[_i].action]);
+        for (var _i = 0; _i < _n; _i++) _out.p[_i] = exp((__mixp[_sample.options[_i].action] - _max) / temperature);
+    } else {
+        // options with the same action share its prediction
+        array_resize(__per, _A);
+        for (var _a = 0; _a < _A; _a++) __per[_a] = 0;
+        for (var _i = 0; _i < _n; _i++) __per[_sample.options[_i].action] += 1;
+        for (var _i = 0; _i < _n; _i++) {
+            var _a = _sample.options[_i].action;
+            _out.p[_i] = __mixp[_a] / __per[_a];
+        }
     }
     _out.confidence = __mixc;
 }
 
 function __gmsa_learn_ngram_explain(_sample, _index) {
+    var _outcomes = (learns == gmsa_learn_target.OUTCOMES);
     var _h = __gmsa_learn_ngram_history(self, _sample.agent);
-    __gmsa_learn_ngram_prepare(self, _sample, _h.ids);
+    if (_outcomes) __gmsa_learn_ngram_tracked(self, _sample.agent, _h, undefined);
+    else __gmsa_learn_ngram_use(self, _h.ids);
+    __gmsa_learn_ngram_prepare(self, _sample);
     var _A = array_length(actions);
     __gmsa_learn_ngram_mix(self, _A);
     var _a = _sample.options[_index].action;
 
-    // the chain this player's habits follow best, and its node with the most weight in the prediction
+    // the chain this player's habits follow best, and its context with the most weight in the prediction
     var _e = 0;
     for (var _i = 1; _i < 3; _i++) if (data.mix[_i] > data.mix[_e]) _e = _i;
     var _chain = __gmsa_learn_ngram_chains(self).chains[_e];
@@ -138,11 +161,13 @@ function __gmsa_learn_ngram_explain(_sample, _index) {
     if (_best < 0) return [actions[_a] + ": nothing learned yet for this moment"];
 
     var _k = _chain[_best * 2];
-    var _r = _chain[_best * 2 + 1];
-    var _ctx = __gmsa_learn_ngram_get(self, __histkey[_k] + "|" + __sitkey[_r], false);
-    var _where = __gmsa_learn_ngram_where(self, _sample, _h.ids, _k, _r);
+    var _ctx = __gmsa_learn_ngram_get(self, __histkey[_k] + "|" + __sitkey[_chain[_best * 2 + 1]], false);
+    var _where = __gmsa_learn_ngram_where(self, _sample, _k, _chain[_best * 2 + 1]);
     var _c = (_a < array_length(_ctx.c)) ? _ctx.c[_a] : 0;
-
+    if (_outcomes) {
+        if (_c <= 0) return [_where + ": " + actions[_a] + " not tried here yet"];
+        return [_where + ": " + actions[_a] + " averages " + __gmsa_learn_signed(_ctx.r[_a] / _c) + " from " + string_format(_c, 1, 1) + " outcomes"];
+    }
     // does the whole prediction favour what this context favours?
     var _fav = 0;
     for (var _i = 1; _i < array_length(_ctx.c); _i++) if (_ctx.c[_i] > _ctx.c[_fav]) _fav = _i;
@@ -180,10 +205,47 @@ function __gmsa_learn_ngram_history(_model, _agent) {
     var _key = string(_model.ngram.id);
     var _h = _all[$ _key];
     if (_h == undefined || _h.gen != _model.ngram.gen) {
-        _h = { gen : _model.ngram.gen, ids : [-1] }; // -1 marks the start of a history
+        _h = { gen : _model.ngram.gen, ids : [-1], cut : -infinity }; // -1 marks the start of a history
         _all[$ _key] = _h;
     }
     return _h;
+}
+
+function __gmsa_learn_ngram_use(_model, _ids) {
+    array_resize(_model.__ids, array_length(_ids));
+    array_copy(_model.__ids, 0, _ids, 0, array_length(_ids));
+}
+
+function __gmsa_learn_ngram_tracked(_model, _agent, _h, _upto) {
+    var _tracker = _agent[$ "__history"];
+    if (_tracker == undefined) throw "GMSA: an n-gram learner from outcomes needs a tracked agent, start with gmsa_learn_track";
+    if (_tracker.size <= _model.ngram.length) {
+        throw "GMSA: the n-gram length is " + string(_model.ngram.length) + ", track the agent with a size of at least "
+            + string(_model.ngram.length + 1) + " (gmsa_learn_track(agent, { size : " + string(_model.ngram.length + 1) + " }))";
+    }
+    var _entries = _tracker.entries;
+    var _end = array_length(_entries);
+    if (_upto != undefined) {
+        for (var _i = 0; _i < array_length(_entries); _i++) {
+            if (_entries[_i] == _upto) {
+                _end = _i;
+                break;
+            }
+        }
+    }
+    var _first = 0;
+    while (_first < _end && _entries[_first].start < _h.cut) _first += 1;
+    // the start is known after a break, or while the tracker hasn't dropped anything yet
+    var _known = (_h.cut > -infinity) || (array_length(_entries) < _tracker.size);
+    var _binding = __gmsa_learn_bind(_model, _agent.profile);
+    array_resize(_model.__ids, 0);
+    if (_known) array_push(_model.__ids, -1);
+    for (var _i = _first; _i < _end; _i++) {
+        var _en = _entries[_i];
+        array_push(_model.__ids, _binding.actions[_en.options[_en.chosen].action.index]);
+    }
+    var _extra = array_length(_model.__ids) - _model.ngram.length;
+    if (_extra > 0) array_delete(_model.__ids, 0, _extra);
 }
 
 function __gmsa_learn_ngram_keys(_model) {
@@ -198,7 +260,7 @@ function __gmsa_learn_ngram_keys(_model) {
     return _d.keys;
 }
 
-function __gmsa_learn_ngram_prepare(_model, _sample, _ids) {
+function __gmsa_learn_ngram_prepare(_model, _sample) {
     var _keys = __gmsa_learn_ngram_keys(_model);
     var _levels = _model.ngram.levels;
     var _R = (array_length(_keys) == 0) ? 0 : array_length(_levels) - 1;
@@ -212,6 +274,7 @@ function __gmsa_learn_ngram_prepare(_model, _sample, _ids) {
         }
         _model.__sitkey[_r] = _s;
     }
+    var _ids = _model.__ids;
     var _K = min(_model.ngram.length, array_length(_ids));
     var _hk = "";
     _model.__histkey[0] = "";
@@ -261,8 +324,9 @@ function __gmsa_learn_ngram_chains(_model) {
 }
 
 function __gmsa_learn_ngram_chain(_model, _e, _chain, _A) {
+    var _outcomes = (_model.learns == gmsa_learn_target.OUTCOMES);
     array_resize(_model.__pc[_e], _A);
-    for (var _a = 0; _a < _A; _a++) _model.__pc[_e][_a] = 1 / _A;
+    for (var _a = 0; _a < _A; _a++) _model.__pc[_e][_a] = _outcomes ? 0 : 1 / _A;
     var _m = array_length(_chain) div 2;
     array_resize(_model.__own, _m);
     for (var _i = 0; _i < _m; _i++) {
@@ -277,11 +341,17 @@ function __gmsa_learn_ngram_chain(_model, _e, _chain, _A) {
         var _own = _ctx.n / (_ctx.n + max(_t, 1) + _k);
         for (var _a = 0; _a < _A; _a++) {
             var _c = (_a < array_length(_ctx.c)) ? _ctx.c[_a] : 0;
-            _model.__pc[_e][_a] = _own * _c / _ctx.n + (1 - _own) * _model.__pc[_e][_a];
+            if (_outcomes) {
+                if (!(_c * 1000000000000 > 0)) continue;
+                var _own_a = _c / (_c + 1 + _k);
+                _model.__pc[_e][_a] = _own_a * _ctx.r[_a] / _c + (1 - _own_a) * _model.__pc[_e][_a];
+            } else {
+                _model.__pc[_e][_a] = _own * _c / _ctx.n + (1 - _own) * _model.__pc[_e][_a];
+            }
         }
         _model.__own[_i] = _own;
     }
-    // confidence: each context's share of the final prediction, the more specific counting more
+    // confidence: each context's share of the final estimate, the more specific counting more
     var _conf = 0;
     var _rest = 1;
     for (var _i = _m - 1; _i >= 0; _i--) {
@@ -309,7 +379,7 @@ function __gmsa_learn_ngram_get(_model, _key, _create) {
     var _ctx = _d.contexts[$ _key];
     if (_ctx == undefined) {
         if (!_create) return undefined;
-        _ctx = { c : [], n : 0, last : _d.clock };
+        _ctx = { c : [], r : [], n : 0, last : _d.clock };
         _d.contexts[$ _key] = _ctx;
         _d.count += 1;
         return _ctx;
@@ -318,6 +388,7 @@ function __gmsa_learn_ngram_get(_model, _key, _create) {
     if (_age > 0) {
         var _f = power(_model.decay, _age);
         for (var _a = 0; _a < array_length(_ctx.c); _a++) _ctx.c[_a] *= _f;
+        for (var _a = 0; _a < array_length(_ctx.r); _a++) _ctx.r[_a] *= _f;
         _ctx.n *= _f;
         _ctx.last = _d.clock;
     }
@@ -338,27 +409,33 @@ function __gmsa_learn_ngram_trim(_model) {
     _d.count = _n - _drop;
 }
 
-function __gmsa_learn_ngram_where(_model, _sample, _ids, _k, _r) {
-    var _parts = "";
+function __gmsa_learn_ngram_where(_model, _sample, _k, _r) {
+    var _parts = [];
     var _lvl = _model.ngram.levels[_r];
     var _keys = _model.data.keys;
     for (var _j = 0; _j < array_length(_keys) && _lvl > 0; _j++) {
         var _id = variable_struct_exists(_model.input_lookup, _keys[_j]) ? _model.input_lookup[$ _keys[_j]] : -1;
         var _v = (_id >= 0 && _id < array_length(_sample.situation)) ? _sample.situation[_id] : 0;
         var _b = min(_lvl - 1, floor(clamp(_v, 0, 1) * _lvl));
-        _parts += ((_parts == "") ? "" : ", ") + _keys[_j] + " " + string(round(_b / _lvl * 100)) + "-" + string(round((_b + 1) / _lvl * 100)) + "%";
+        array_push(_parts, _keys[_j] + " " + string(round(_b / _lvl * 100)) + "-" + string(round((_b + 1) / _lvl * 100)) + "%");
     }
     if (_k > 0) {
-        var _h = "";
+        var _ids = _model.__ids;
+        var _from_start = false;
+        var _names = "";
         for (var _i = _k; _i >= 1; _i--) {
             var _id = _ids[array_length(_ids) - _i];
             if (_id < 0) {
-                _h += (_i == 1) ? "at the start" : "from the start, ";
+                _from_start = true;
                 continue;
             }
-            _h += ((_h == "" || string_char_at(_h, string_length(_h)) == " ") ? ((_h == "") ? "after " : "after ") : " then ") + _model.actions[_id];
+            _names += ((_names == "") ? "" : " then ") + _model.actions[_id];
         }
-        _parts += ((_parts == "") ? "" : ", ") + _h;
+        if (_names == "") array_push(_parts, "at the start");
+        else array_push(_parts, (_from_start ? "from the start, after " : "after ") + _names);
     }
-    return (_parts == "") ? "any moment" : _parts;
+    if (array_length(_parts) == 0) return "any moment";
+    var _text = _parts[0];
+    for (var _i = 1; _i < array_length(_parts); _i++) _text += ", " + _parts[_i];
+    return _text;
 }
