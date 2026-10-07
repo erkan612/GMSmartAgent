@@ -64,6 +64,23 @@ function test_learn_neighbor() {
             var _b = __test_neighbor_medium(2, 200, { weights : { u1 : 0, u2 : 0 } }, false);
             gmsa_test_assert_equal(__test_bayes_best(_b.m, _b.space, __test_bayes_options(3, [0.45, 1, 0])), 0, "far off in ignored inputs, still drink");
         });
+		
+        gmsa_test_case("learned weights, outcomes: the inputs rewards depend on gain on four that don't", function() {
+            var _space = gmsa_learn_space("neighbor outcome weights", ["drink", "fight", "wait"], ["hp", "danger", "u1", "u2", "u3", "u4"]);
+            var _m = gmsa_learn_neighbor_create({ learns : gmsa_learn_target.OUTCOMES });
+            var _rng = gmsa_rng_create(18);
+            repeat (400) {
+                var _x = array_create(6, 0);
+                for (var _j = 0; _j < 6; _j++) _x[_j] = gmsa_rng_next(_rng);
+                var _a = floor(gmsa_rng_next(_rng) * 3);
+                var _reward = (_a == 0) ? ((_x[0] < 0.3) ? 1 : -0.5) : ((_a == 1) ? ((_x[1] < 0.5) ? 0.5 : -1) : 0);
+                gmsa_learn_space_outcome(_m, _space, __test_bayes_options(3, _x), _a, 1, _reward);
+            }
+            var _lw = _m.data.lw;
+            for (var _j = 2; _j < 6; _j++) {
+                gmsa_test_assert_true(min(_lw[0], _lw[1]) > _lw[_j], "hp " + string(_lw[0]) + ", danger " + string(_lw[1]) + " against " + _m.data.sk[_j] + " " + string(_lw[_j]));
+            }
+        });
 
         gmsa_test_case("targets: what was on offer counts, cheap potions are rare and wanted", function() {
             var _space = gmsa_learn_space("neighbor potions", ["potion"], ["price"], { situational : [false] });

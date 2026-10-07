@@ -72,20 +72,42 @@ function __gmsa_learn_neighbor_observe(_sample) {
     var _outcomes = (learns == gmsa_learn_target.OUTCOMES);
     var _c = _sample.chosen;
     var _w = _sample.weight;
-    __gmsa_learn_neighbor_vote(self, _sample); // also finds the nearest moments, used below
+    __gmsa_learn_neighbor_vote(self, _sample);  // also finds the nearest moments, used below
     var _imp = 1 + _nb.importance * (_outcomes ? abs(_sample.reward) : (1 - __p[_c]));
     var _ns = array_length(__x);
     var _no = array_length(__wo);
     var _mem = data.mem;
 
-    // learned weights (Relief): inputs that differ where a different pick was made gain, where the same pick was made lose
-    if (!_outcomes && _nb.learn_weights && _ns > 0 && __nn > 0 && __gmsa_learn_neighbor_sum(__ws) * 1000000000000 > 0) {
+    // learned weights (Relief): inputs that differ where the result differed gain, where it was the same lose.
+    // Choices: a different pick. Outcomes: among the nearest tries of this option, a reward more than half the spread away
+    if (_nb.learn_weights && _ns > 0 && __gmsa_learn_neighbor_sum(__ws) * 1000000000000 > 0) {
         var _hit = undefined;
         var _miss = undefined;
-        for (var _t = 0; _t < __nn; _t++) {
-            var _m = _mem[__ni[_t]];
-            if (_m.a[_m.c] == __a[_c]) { if (_hit == undefined) _hit = _m; }
-            else if (_miss == undefined) _miss = _m;
+        if (_outcomes) {
+            var _count = __oc[_c];
+            if (_count >= 2) {
+                var _lo = _sample.reward;
+                var _hi = _sample.reward;
+                for (var _t = 0; _t < _count; _t++) {
+                    var _r = _mem[__oi[_c * _nb.k + _t]].r;
+                    _lo = min(_lo, _r);
+                    _hi = max(_hi, _r);
+                }
+                var _tol = 0.5 * (_hi - _lo);
+                if (_tol * 1000000000000 > 0) {
+                    for (var _t = 0; _t < _count; _t++) {
+                        var _m = _mem[__oi[_c * _nb.k + _t]];
+                        if (abs(_m.r - _sample.reward) <= _tol) { if (_hit == undefined) _hit = _m; }
+                        else if (_miss == undefined) _miss = _m;
+                    }
+                }
+            }
+        } else {
+            for (var _t = 0; _t < __nn; _t++) {
+                var _m = _mem[__ni[_t]];
+                if (_m.a[_m.c] == __a[_c]) { if (_hit == undefined) _hit = _m; }
+                else if (_miss == undefined) _miss = _m;
+            }
         }
         if (_hit != undefined && _miss != undefined) {
             var _lw = data.lw;
