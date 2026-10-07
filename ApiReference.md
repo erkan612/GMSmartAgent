@@ -19,6 +19,7 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [Debug](#debug)
 - [Learn](#learn)
 - [Learning From Outcomes](#learning-from-outcomes)
+- [Learning Sequences](#learning-sequences)
 - [Net](#net)
 - [Plan](#plan)
 - [PlanLearn](#planlearn)
@@ -88,6 +89,8 @@ The kind of a learning model, see [Learn](#learn).
 | `gmsa_learn_tier.LINEAR` | Weighted preferences, made with `gmsa_learn_linear_create` |
 | `gmsa_learn_tier.RANKNET` | Neural ranking, made with `gmsa_learn_ranknet_create` |
 | `gmsa_learn_tier.LAMBDAMART` | Boosted ranking trees, made with `gmsa_learn_lambdamart_create` |
+| `gmsa_learn_tier.NGRAM` | What follows what, in which situation, made with `gmsa_learn_ngram_create` |
+| `gmsa_learn_tier.TDNN` | A network over the last few choices, made with `gmsa_learn_tdnn_create` |
 
 ### gmsa_learn_target
 What a learning model learns from, see [Learning From Outcomes](#learning-from-outcomes).
@@ -645,7 +648,7 @@ Changes an agent's priority and moves it to the matching tier, at the end of tha
 gmsa_scheduler_add_work(scheduler, work, [priority]) -> work
 ```
 
-Adds work that shares the scheduler's budget with the agents. `work` is any struct with a `work(budget)` method: it's called with the microseconds it may use, and returns true when it did something, false when it had nothing to do. `gmsa_plan_schedule` uses this for planners, and your own long jobs can use it too.
+Adds work that shares the scheduler's budget with the agents. `work` is any struct with a `work(budget)` method: it's called with the microseconds it may use, and returns true when it did something, false when it had nothing to do. `gmsa_plan_schedule` uses this for planners and `gmsa_learn_schedule` for training models, and your own long jobs can use it too.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -843,7 +846,7 @@ The Learn module depends on Core and [Net](#net). Core never depends on it: an a
 1. Declare features on the profile whose choices you record, with `gmsa_profile_set_features`.
 2. Record each choice with `gmsa_observe` and train on it with `gmsa_learn_observe`.
 3. Use the model: attach it with `gmsa_profile_set_model` or `gmsa_agent_set_model`, or read it with `gmsa_learn_input` or `gmsa_learn_predict`.
-4. LambdaMART only: train it with `gmsa_learn_train`. It stores choices as they come and learns from them in batches.
+4. LambdaMART and TDNN: give them training time with `gmsa_learn_train` or `gmsa_learn_schedule`. LambdaMART stores choices and learns from them in batches, the TDNN learns each choice at once and replays earlier ones when trained.
 
 ```gml
 // the player's agent records choices, its profile declares the features
@@ -864,6 +867,8 @@ gmsa_profile_add_input(_p, gmsa_input_pull("will_drink", gmsa_learn_input(global
 | Linear | Weights per action and input | Dozens of choices | Preferences, including which target | Can't learn combinations of inputs (low health matters only when danger is high) |
 | RankNet | A small neural network scoring each option | Dozens to hundreds of choices | Combinations of inputs, learns choice by choice | Slower to predict, more settings to tune |
 | LambdaMART | Boosted decision trees ranking the options | Hundreds of choices, trained in batches | The most detailed rankings, sharp thresholds | Slowest to predict, needs `gmsa_learn_train`, can miss situations seen fewer than about 20 times |
+| N-gram | What follows what, in which situation | Dozens of choices | Habits in order, combos, many habits in one model, explains itself in plain words | Actions only, not targets. See [Learning Sequences](#learning-sequences) |
+| TDNN | A network over the last few choices, scoring each option | Hundreds of choices | Which target in order, patterns that skip moves | Slower to learn and to run. See [Learning Sequences](#learning-sequences) |
 | Custom | Whatever you write | | Game-specific patterns | |
 
 ### What models cost
@@ -876,6 +881,8 @@ Measured on the VM target, per call, at 3 and 10 options on offer. YYC is faster
 | Linear | 39 / 102 us | 31 / 77 us | 39 / 105 us |
 | RankNet | 417 / 1253 us | 131 / 418 us | 105 / 348 us |
 | LambdaMART | 23 / 52 us, stores only | 486 / 1557 us | 513 / 1650 us |
+
+The sequence learners are measured in [What sequence learners cost](#what-sequence-learners-cost).
 
 LambdaMART training with 100 trees takes about 1.4 s for 500 rows (100 choices of 5 options) and 6.6 s for 2,500 rows, or the same work spread over frames with a budget, see [gmsa_learn_train](#gmsa_learn_train).
 
@@ -1033,6 +1040,7 @@ Wraps your own model so it works everywhere a built-in one does.
 | `load_data(data)` | No | Restore what `save_data` returned |
 | `reset_data()` | No | Forget everything, also called once at creation to initialize `data` |
 | `train(budget)` | No | One step of batch training for `gmsa_learn_train`. Return true when finished, a missing return counts as finished |
+| `waiting()` | With `train`, to be scheduled | True when `train` has work to do, so [gmsa_learn_schedule](#gmsa_learn_schedule) skips the model while it's idle |
 
 Methods run with the model as `self`, so they can read `actions`, `inputs`, `situational`, `decay`, `samples` and their own `data`.
 
@@ -1082,9 +1090,9 @@ Trains the model on a decision with a chosen option, usually from `gmsa_observe`
 gmsa_learn_train(model, [budget]) -> bool
 ```
 
-Trains a batch model: LambdaMART, or a custom model with a `train` method. `budget` is the most microseconds one call may use. Without it, training finishes before the call returns.
+Gives a model training time: LambdaMART's batches, the TDNN's replays, or a custom model's `train` method. `budget` is the most microseconds one call may use. Without it, training finishes before the call returns. To train inside a scheduler's budget instead, see [gmsa_learn_schedule](#gmsa_learn_schedule).
 
-**Returns** true when training finished. Count, Linear, RankNet and frozen models return true at once, so calling it on any model is safe.
+**Returns** true when training finished. Count, Linear, RankNet, the n-gram and frozen models return true at once, so calling it on any model is safe.
 
 ```gml
 // at a checkpoint (level end, death screen), all at once
@@ -1098,16 +1106,58 @@ if (training) training = !gmsa_learn_train(global.style, 2000);
 - Each call does at least one small unit of work, then stops when its time is up. Measured overshoot at a 2 ms budget: under 130 us.
 - Training works on a snapshot of the buffer. Choices observed meanwhile wait for the next training.
 - The previous result keeps predicting until training finishes. Predictor inputs update as soon as it does.
+- **The TDNN** learns each choice inside `gmsa_learn_observe` and queues `replay` earlier ones. Each call works through the queue, one replay at a time, about 1.2 ms each with 4 options on the VM. Without training calls it still learns, like `replay : 0`, more slowly.
 
 **Throws** when `model` isn't a model or `budget` is negative.
+
+### gmsa_learn_schedule
+
+```gml
+gmsa_learn_schedule(model, scheduler, [priority]) -> model
+```
+
+Makes a model's training scheduler work, like [gmsa_plan_schedule](#gmsa_plan_schedule) does for planners: `gmsa_learn_train` runs inside the scheduler's budget, taking turns with the agents, and continues where it stopped.
+
+```gml
+global.shop_taste = gmsa_learn_tdnn_create();
+gmsa_learn_schedule(global.shop_taste, global.scheduler);  // its replays train in the scheduler's spare time
+```
+
+- **Idle models take no turns.** A model says whether it has work with its `waiting` method: the TDNN while replays are queued, LambdaMART while a training is under way or choices came in since the last one began.
+- **LambdaMART retrains whenever new choices arrive,** from its whole buffer, using whatever budget the agents leave.
+- Models that learn as they observe (Count, Linear, RankNet, the n-gram) can be scheduled too, they just never take a turn.
+- Frozen models take no turns.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `priority` | real | 0 | Scheduler tier, shared with agents and work of the same priority |
+
+**Throws** when the model is already scheduled, or a custom model has `train` but no `waiting` method.
+
+### gmsa_learn_unschedule
+
+```gml
+gmsa_learn_unschedule(model) -> bool
+```
+
+Takes the model's training out of its scheduler. **Returns** false if it wasn't scheduled.
 
 ### gmsa_learn_predict
 
 ```gml
-gmsa_learn_predict(model, decision) -> { p, confidence }
+gmsa_learn_predict(model, decision) -> { p, confidence, best, sure }
 ```
 
-How likely the observed decision-maker is to pick each option of a decision, usually from `gmsa_agent_evaluate`. `p[i]` matches `decision.options[i]` and the values sum to 1. `confidence` is 0..1.
+How likely the observed decision-maker is to pick each option of a decision, usually from `gmsa_agent_evaluate`.
+
+| Field | Description |
+| --- | --- |
+| `p` | `p[i]` is option `i`'s probability, matching `decision.options[i]`. The values sum to 1 |
+| `confidence` | 0..1, how much the model knows about this moment |
+| `best` | The index of the favourite option, the first one on a tie, -1 when there are no options |
+| `sure` | `confidence * p[best]`: how sure the model is of its favourite |
+
+**Use `sure` for hints and thresholds** ("show the hint at 0.6"). `confidence` alone can mislead: a model can know a moment well and still be split between options. In testing, an n-gram asked to predict which potion (it learns kinds of item, not which one) had confidence 0.8 or more and was right 31% of the time, while its `sure` stayed low. Across every test, predictions at `sure` 0.6 or more were right 89 to 100% of the time.
 
 The result struct is reused by the model, so copy what you keep.
 
@@ -1234,7 +1284,7 @@ If loading fails partway, the model is left exactly as it was. Saves from before
 | Field | Description |
 | --- | --- |
 | `tier` | `gmsa_learn_tier` |
-| `tier_name` | `"count"`, `"linear"`, `"ranknet"`, `"lambdamart"` or the custom name |
+| `tier_name` | `"count"`, `"linear"`, `"ranknet"`, `"lambdamart"`, `"ngram"`, `"tdnn"` or the custom name |
 | `learns`, `temperature` | What it learns from, and how sharply outcome values become preferences |
 | `actions` | Action names, the position is the action id |
 | `inputs` | Input names, the position is the input id |
@@ -1388,6 +1438,8 @@ An outcome model estimates the reward of each option, and turns the estimates in
 | Linear | A linear estimate per action, nudged toward each reward. Learn rate 0.1 by default for outcomes | Dozens of outcomes |
 | RankNet | The network's output, trained toward each reward | Thousands: the shape of the payoffs shows in about 600, the right levels across actions take longer |
 | LambdaMART | Boosted regression trees on the stored rewards, trained with `gmsa_learn_train` | Hundreds |
+| N-gram | The average reward per action in each context of the agent's own last moves and the situation | Dozens per context |
+| TDNN | The network's output for the chosen option, trained toward each reward, with replays | Hundreds |
 
 For outcomes from a few hundred episodes, use Count, Linear or LambdaMART. RankNet suits long-running learning on complex patterns.
 
@@ -1417,7 +1469,7 @@ LambdaMART stores one row per outcome, so training on 500 outcomes takes about 0
 
 ### Learn spaces
 
-Models usually learn from an agent's decisions. A **space** lets them learn from choices that aren't an agent's: which recipe a planner used, which route a convoy took. You describe the choice as names, then pass options as plain numbers. Every model works with it unchanged, [PlanLearn](#planlearn) is built on it.
+Models usually learn from an agent's decisions. A **space** lets them learn from choices that aren't an agent's: which recipe a planner used, which route a convoy took. You describe the choice as names, then pass options as plain numbers. Every model works with it unchanged except the sequence learners, which need an agent's history and refuse a space. [PlanLearn](#planlearn) is built on it.
 
 ```gml
 // once: three routes, described by two inputs
@@ -1532,6 +1584,201 @@ function my_encode(_x, _option) {
     return _x;
 }
 ```
+
+---
+
+## Learning Sequences
+
+The models above see one moment at a time. The two sequence learners also see what came just before: the decision-maker's last few choices. That's how a model learns "after jab, jab, an uppercut" or "after a sword, the cheapest potion".
+
+- **N-gram:** learns which action follows which, in which situation. Learns from dozens of choices, explains itself in plain words, and one model holds many habits at once.
+- **TDNN:** a neural network over the last few choices, the situation and each option's own inputs. Learns which target, and patterns where the moves in between don't matter. Needs hundreds of choices.
+
+Both learn from choices and from outcomes, save and load, explain, and work as re-rankers and predictor inputs like every other model.
+
+```gml
+// the player's fighting habits, read by the boss
+global.habits = gmsa_learn_ngram_create({ length : 4 });
+
+// each move the player makes
+gmsa_learn_observe(global.habits, gmsa_observe(player_agent, moves, _picked));
+
+// the boss reads it: how likely is an uppercut next
+gmsa_profile_add_input(_boss, gmsa_input_pull("uppercut_next", gmsa_learn_input(global.habits, player_agent, "uppercut")));
+
+// or a hint, only when the model is sure
+var _out = gmsa_learn_predict(global.habits, gmsa_agent_evaluate(player_agent));
+if (_out.sure >= 0.6) hint = "Watch out for the " + moves[_out.best];
+```
+
+### Choosing between them
+
+Accuracy predicting the next choice in testing, with the default settings, over choices 25 to 100 and 200 to 600 (simulated players, 1 choice in 10 random, so the best possible is about 0.92; the opener pattern has no randomness, its best is 1):
+
+| Pattern | N-gram | TDNN |
+| --- | --- | --- |
+| Shop habits: a sword, then a shield, then a potion when hurt | 0.88 / 0.91 | 0.83 / 0.91 |
+| Combos: jab, jab, uppercut up close, kick and dodge from afar | 0.86 / 0.92 | 0.72 / 0.85 |
+| The situation only, no order | 0.84 / 0.86 | 0.71 / 0.84 |
+| An opener, three random moves, the opener again (length 4) | 0.19 / 0.51 | 0.73 / 1.00 |
+| After a sword, the cheapest potion | 0.32 / 0.31 | 0.76 / 0.91 |
+
+- **Start with the n-gram.** It learns plain habits from a few dozen choices, and one model learns many kinds at once: in testing, one n-gram learning seven different habits from one player reached 0.82, where the best its view allows is 0.86.
+- **Use the TDNN** when the choice is about which target ("the cheapest potion", "the nearest enemy"), when patterns skip moves, or when the game runs long enough to give it hundreds of choices. On the seven-habit player it reached 0.73 after 1,500 choices.
+- **Both at once is fine.** One recorded choice can teach both, as in Demo 16.
+
+### Histories
+
+- **Each agent has its own history,** kept on the agent, so it goes when the agent goes. With choices, it's the order of `gmsa_learn_observe` calls for that agent. With outcomes, it's the agent's own tracked decisions, so the tracker must keep more decisions than the history is long: `gmsa_learn_track(agent, { size : length + 1 })` at least, or the learner throws and names the size to use.
+- **The start counts.** A new agent, the first choice after a break, and the first after a reset or load are learned as "at the start", so the first move of a fight is a habit too.
+- **Breaks:** call `gmsa_learn_ngram_break` or `gmsa_learn_tdnn_break` where a chain of choices ends in your game: a new round, a death, the shop closing. What comes next starts a new history.
+- **Time isn't recorded.** If "how long since the last purchase" matters, add it as an input from your game's own clock and the learner uses it like any other.
+- **Repeated moves need `gmsa_agent_clear_current` after each one** when learning outcomes. Otherwise jab, jab is one decision that went on, not two, see [gmsa_learn_track](#gmsa_learn_track).
+- **Re-ranking uses the agent's own history.** A boss re-ranked by a model of the player's habits would read the boss's history, not the player's. To use the player's sequences in another agent's decisions, read them with [gmsa_learn_input](#gmsa_learn_input) on the player's agent, as in the example above.
+- **Learn spaces are refused,** with an error: a space has no agent, so its choices would chain into nonsense.
+
+### gmsa_learn_ngram_create
+
+```gml
+gmsa_learn_ngram_create([params]) -> model
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `length` | integer | 3 | The most past choices a context looks at |
+| `bins` | integer | 8 | The finest cut of each situational input |
+| `inputs` | array | all situational | Names of the inputs that describe the situation |
+| `capacity` | integer | 4096 | The most contexts kept, the least recently used are forgotten first |
+| `blend_k` | real | 3 | Evidence a context needs before its own blend outweighs the shared one, 0 or more |
+| `half_life` | real | 50 | The times a moment comes up after which its old evidence counts half |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
+
+No setting has an upper limit: the same learner may serve a thousand goblins or one boss reading long move strings, so the size is yours to choose.
+
+How it works:
+- **A context is a moment:** the last few choices (none up to `length`) together with the situation cut at one resolution (not at all, then halves, quarters, eighths, up to `bins`). Every combination is a context, and each counts what was chosen in it, or the rewards that followed with outcomes.
+- **Each context starts from a blend of its two parents,** the context with one choice less of history and the one with a coarser situation, and is pulled toward its own counts by how much it has seen. A moment it has seen often speaks for itself, a new one leans on what it resembles.
+- **Each context learns its own blend** from which parent foresaw what happened there. "After a heavy attack" learns to trust the history, "when hurt" learns to trust the situation, in the same model. Until a context has evidence, it uses the blend shared by contexts at its place.
+- **A context fades when it comes up again,** not with every choice, so a moment that comes up 1 time in 20 keeps its evidence. The cost: after a habit changes, a moment's old evidence fades only as that moment comes up again. In testing a changed habit was learned at 0.65 in the first 100 choices, then 0.87.
+- **Actions, not targets:** per-target inputs are ignored, and options with the same action share its probability.
+- **Confidence is per moment:** how much of the estimate comes from the contexts' own data, more specific contexts counting more.
+- The inputs it uses are fixed the first time it's used.
+- Saves keep the contexts, not the histories.
+
+Explain names the context with the most weight in the estimate, and whether the full estimate agrees with it:
+
+```
+hp 50-75%, distance 75-100%, after potion then shield then kick: kick 3.0 of 3.0, the rest agree (p 0.99)
+after feint then sweep: heavy averages +0.95 from 12.0 outcomes
+```
+
+**Choosing the settings:**
+- **`length`** is the longest pattern it can learn: 1 learns what follows the last move, 3 learns patterns of four moves, such as jab, jab, uppercut, then a dodge. Longer needs more choices per context and multiplies the contexts, so match it to the longest pattern your game has. In testing, length 8 learned 3-move combos as well as length 3.
+- **`bins`** is the finest detail. Coarse cuts speak first and finer ones take over where data piles up, so a high value costs little accuracy early.
+- **`capacity`:** contexts grow with `length`, the number of inputs and the number of actions. At length 3 with 1 input and 4 actions, 800 choices made 820 contexts. Length 8, or 4 inputs, filled 4,096. A full model forgets a tenth of its contexts at once, a 6 to 11 ms step on the VM about every 20 choices, so a smaller capacity means smaller steps.
+- **`half_life`:** longer remembers many rare habits better (100 instead of 50 raised the seven-habit test from 0.79 to 0.82) and relearns a changed habit more slowly.
+
+**Throws** when `length`, `bins` or `capacity` isn't a whole number of 1 or more, `blend_k` is negative, or `inputs` isn't an array. When learning outcomes, learning or predicting throws if the agent isn't tracked or its tracker keeps `length` decisions or fewer.
+
+### gmsa_learn_ngram_break
+
+```gml
+gmsa_learn_ngram_break(model, agent)
+```
+
+Ends the agent's chain of choices for this model: the next choice is learned as the first. With outcomes, the agent's tracked decisions from before the break no longer count as history.
+
+**Throws** when `model` isn't an n-gram model, or `agent` belongs to a learn space.
+
+### gmsa_learn_tdnn_create
+
+```gml
+gmsa_learn_tdnn_create([params]) -> model
+```
+
+A time-delay neural network (Waibel et al. 1989): one network looks at a fixed window of the last choices.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `length` | integer | 3 | Past choices the network sees |
+| `layers` | array | `[16]` | Hidden layer sizes |
+| `learn_rate` | real | 0.01 | Step size of each update |
+| `replay` | integer | 4 | Earlier choices learned from again per choice, 0 for none |
+| `memory` | integer | 64 | The most recent choices replays are picked from |
+| `remember` | array | `[]` | Names of inputs to remember from each past choice, such as `price` |
+| `familiar_depth` | integer | 1 | Past choices that describe a kind of moment, for confidence, 0 for the situation alone |
+| `familiar_bins` | integer | 2 | The cut of each situational input, for confidence |
+| `familiar_k` | real | 3 | Times a kind of moment must come up for 50% familiarity |
+| `familiar_capacity` | integer | 1024 | The most kinds of moment remembered |
+| `activation` | `gmsa_net_activation` | `LEAKY_RELU` | Hidden layer activation |
+| `optimizer` | `gmsa_net_optimizer` | `ADAM` | How the network applies what it learns |
+| `seed` | integer | 1 | Starting weights and replay picks, same seed and same choices give the same model |
+| `half_life` | real | 200 | Observations after which old evidence counts half, for confidence and familiarity |
+| `confidence_k` | real | 50 | Observations needed for 50% of the model-wide confidence |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
+
+How it works:
+- **The network scores each option** from the situation, the option's own inputs, which action it is, and the last `length` choices: each one's action and the inputs named in `remember`. With choices the options compete through a softmax, with outcomes the score is the expected reward.
+- **Each choice is learned at once,** inside `gmsa_learn_observe`. It also picks `replay` earlier choices from the last `memory` to learn from again, queued until the model gets training time from [gmsa_learn_train](#gmsa_learn_train) or [gmsa_learn_schedule](#gmsa_learn_schedule). Without training time it still learns, like `replay : 0`. A backlog nobody trains keeps its newest `memory` replays.
+- **Old habits fade as they leave the memory,** so a changed habit is relearned in about 100 choices at the default `memory`.
+- **Confidence is how much it has learned, scaled down in unfamiliar moments:** `samples / (samples + confidence_k)` times `n / (n + familiar_k)`, where `n` is how often this kind of moment came up (the last `familiar_depth` choices and the situation in `familiar_bins` bins). A network's outputs show what it prefers but not how new a moment is: networks can be confident on inputs unlike anything they learned from ([Guo et al. 2017](https://arxiv.org/abs/1706.04599), [Nguyen et al. 2015](https://arxiv.org/abs/1412.1897)).
+- **Its `sure` climbs more slowly than the n-gram's.** Options that differ only by an input, like potions by price, are separated gradually: in Demo 16 it picked the right potion every time after about 90 buys, while giving it only 0.37. Under-confident early is the safe direction for hints.
+- Situational inputs are centred inside the network. Nothing to set.
+- Saves keep the network and the familiarity counts. The replay memory and the histories start empty after a load.
+
+Explain shows what each part adds to the option's score: each input, and each past choice:
+
+```
+potion: 1 back: sword +3.73, 3 back: potion +1.09, 2 back: potion -0.26, score +4.79 (p 0.37)
+```
+
+**Choosing the settings:**
+- **`replay`** makes it learn several times faster from the same choices: after 25 to 50 choices of boss combos, 0.53 with replays against 0.36 without. 8 or 16 were barely better than 4 and cost more.
+- **`memory`:** 64 relearned a changed habit in about 100 choices. 256 was 0.03 better on habits that never change but took over 200 choices to relearn.
+- **`layers`:** `[16]` learned as well as `[32, 16]` everywhere but the first 100 choices of the potion test (0.81 against 0.90), at about a fifth of the cost.
+- **`activation`:** leaky ReLU learned faster than tanh in every test, and tanh sometimes stopped telling options apart on clean, rule-like habits.
+- **`remember`** when what comes next depends on what past choices were like, not just which they were: "after something expensive, the cheapest". With `remember : ["price"]` this was learned in 98 to 100% of test runs after 450 choices, and in none without.
+- **`length`** as for the n-gram. Each step adds a slot per action, one for the start, and one per remembered input: length 8 cost about 1.7 times length 3.
+
+**Throws** when `length` or `memory` isn't a whole number of 1 or more, `replay` or `familiar_depth` isn't a whole number of 0 or more, `layers` isn't an array of whole numbers of 1 or more, `learn_rate` or `familiar_k` isn't above 0, `familiar_bins` or `familiar_capacity` isn't a whole number of 1 or more, `remember` isn't an array of names, or the network settings are invalid. Loading throws when the save remembers different inputs or the layers differ.
+
+### gmsa_learn_tdnn_break
+
+```gml
+gmsa_learn_tdnn_break(model, agent)
+```
+
+As [gmsa_learn_ngram_break](#gmsa_learn_ngram_break), for a TDNN.
+
+### What sequence learners cost
+
+Measured on the VM target, per call, with a player of 4 actions and 1 input after 800 choices, unless the row says otherwise:
+
+| | Predict | Observe | Training per choice |
+| --- | --- | --- | --- |
+| N-gram, length 1 | 121 us | 145 us | |
+| N-gram, length 3 | 205 us | 267 us | |
+| N-gram, length 8 | 366 us | 657 us | |
+| N-gram, length 3, 4 inputs | 201 us | 367 us | |
+| N-gram, length 3, 12 actions | 363 us | 453 us | |
+| N-gram, length 8, 4 inputs, 12 actions | 476 us | 1248 us | |
+| TDNN, `replay` 0 | 335 us | 1314 us | none |
+| TDNN, `replay` 4 | 339 us | 1319 us | 4.9 ms |
+| TDNN, `replay` 8 | 341 us | 1323 us | 9.9 ms |
+| TDNN, length 8 | 538 us | 2302 us | 8.7 ms |
+| TDNN, 4 inputs | 438 us | 1627 us | 6.1 ms |
+| TDNN, 12 actions | 1152 us | 4023 us | 15.1 ms |
+| TDNN, `layers` `[32, 16]` | 1219 us | 5562 us | 21.9 ms |
+
+- **The n-gram suits many agents and every frame,** the TDNN a few predictions at a time, a shop or a boss. Predictor inputs cache their prediction per frame, so many agents reading one costs one prediction.
+- **The TDNN's training per choice is spread by the budget** you give it, see [gmsa_learn_schedule](#gmsa_learn_schedule). Keep its options few: its cost grows with every option on offer.
+- **A full n-gram** (here length 8, or 4 inputs) forgets a tenth of its contexts about every 20 choices, the slowest observe then taking 6 to 11 ms. The defaults at length 3 and 1 input never fill.
+
+### Good to know
+
+- **Outcome learners learn only what the agent tries.** A move that pays off in one rare moment and is bad everywhere else is seldom tried there, so it's learned slowly or not at all. In testing, "a heavy attack lands after a feint and a sweep", a moment that came up 2% of the time, was the model's favourite there only about 30% of the time even after 1,500 moves. Exploration is the agent's selection, see [Fair learning and exploration](#fair-learning-and-exploration).
+- **Hints and thresholds read `sure`, not `confidence`,** see [gmsa_learn_predict](#gmsa_learn_predict).
+- **A history is per model and per agent.** Two models watching one player keep two histories, both on the player's agent.
 
 ---
 

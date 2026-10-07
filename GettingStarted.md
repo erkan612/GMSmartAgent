@@ -1,6 +1,6 @@
 # Getting Started with GMSmartAgent
 
-This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, who learn which plans work and when you're watching, and who work out plans nobody wrote. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
+This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, who learn which plans work and when you're watching, who work out plans nobody wrote, and who read the rhythm of your play. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
 For every function's full details, see the [API Reference](ApiReference.md).
 
@@ -26,7 +26,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 16. [Plans That Learn](#16-plans-that-learn)
 17. [Reading the Player](#17-reading-the-player)
 18. [Plans Nobody Wrote](#18-plans-nobody-wrote)
-19. [Troubleshooting](#19-troubleshooting)
+19. [Learning Sequences](#19-learning-sequences)
+20. [Troubleshooting](#20-troubleshooting)
 
 ---
 
@@ -1370,7 +1371,110 @@ The [API Reference](ApiReference.md#goals) has how the search works, pruning, va
 
 ---
 
-## 19. Troubleshooting
+## 19. Learning Sequences
+
+Every model so far sees one moment at a time: the coins on the floor, your health, how far each coin is. None of them sees what you just did. But habits come in order. Maybe you grab two coins, then go back to guard the chest, whatever is on the floor. To a model that only sees the moment, that looks like guarding at random.
+
+Two models learn order. The **n-gram** learns what follows what, in which situation, from a few dozen choices. The **TDNN** is a small neural network over your last few choices; it also learns *which* target you go for, but needs hundreds of choices.
+
+**Your rhythm.** In [chapter 17](#17-reading-the-player) a Count model learned when you guard from the coins on the floor. Swap it for an n-gram:
+
+```gml
+// o_controller > Create, replace the global.habits line
+global.habits = gmsa_learn_ngram_create();
+```
+
+Nothing else changes: the same `gmsa_observe` calls record guard or roam, and the same `player_guards` fact reads the prediction. The n-gram keeps the order of the choices recorded through `global.watch` and learns from both the order and the coins on the floor.
+
+Play with a rhythm: grab two coins, go back to the chest, grab two coins, go back. Count could never see that; the n-gram sees "after roam, roam: guard" within a dozen rounds. Watch the goblins set off for the chest right after your first coin, and turn back after your second, because they know you're coming.
+
+**How sure it is.** Every prediction has a `best` option and a `sure` value: how much the model knows about this moment, times how likely its favourite is. Hints and thresholds should read `sure`. Show what the goblins think:
+
+```gml
+// o_controller > Draw GUI (add)
+var _out = gmsa_learn_predict(global.habits, gmsa_agent_evaluate(global.watch));
+if (_out.sure >= 0.6) {
+    draw_text(16, 16, "The goblins expect you to " + ((_out.best == 0) ? "guard" : "roam") + " next");
+}
+```
+
+Below 0.6 it stays quiet: either the model hasn't seen enough, or you're unpredictable right now.
+
+**The start counts.** The first choice after the game starts is learned as "at the start", so an opening habit (always a coin first) is learned too. If your game has rounds or lives, end the chain where your game does, so the last move of one round doesn't seem to lead into the first of the next:
+
+```gml
+gmsa_learn_ngram_break(global.habits, global.watch);  // a new round
+```
+
+**Which coin.** The n-gram learns kinds of choice: guard or roam, loot or drink. It can't tell one coin from another. Play like this: after a potion, grab the nearest coin; after a coin, go for the one furthest away. What you pick depends on your last pick *and* on each coin's distance. That's the TDNN's job.
+
+It learns from the same clicks as the copycat in [chapter 11](#11-learning-from-the-player). Add a model, and record each pick for it too:
+
+```gml
+// o_controller > Create (add)
+global.next_pick = gmsa_learn_tdnn_create();
+gmsa_learn_schedule(global.next_pick, global.ai);  // its training shares the AI budget
+global.players_next = noone;
+```
+
+```gml
+// o_player > Global Left Pressed, after the gmsa_learn_observe line
+if (_chosen >= 0) gmsa_learn_observe(global.next_pick, gmsa_observe(agent, _offered, _chosen));
+```
+
+`gmsa_observe` builds the decision again, which is cheap: one recorded choice can teach any number of models.
+
+The TDNN learns each pick at once, then goes back over a few earlier ones to learn from them again. That second part is the heavy one, so it waits for training time, and `gmsa_learn_schedule` gives it the scheduler's spare budget. Without it, the TDNN still learns, just more slowly.
+
+**The goblins avoid your coin.** Each step, ask the model which item you'll go for next, and keep it if it's sure enough:
+
+```gml
+// o_controller > Step (add)
+if (instance_exists(o_player)) {
+    var _d = gmsa_agent_evaluate(o_player.agent);
+    var _out = gmsa_learn_predict(global.next_pick, _d);
+    global.players_next = (_out.sure >= 0.5) ? _d.options[_out.best].target : noone;
+}
+```
+
+Then a per-target input tells the goblins which coin is yours, and looting it counts for less:
+
+```gml
+// __goblin_profile_build, with the other inputs
+gmsa_profile_add_input(_p, gmsa_input_pull("players_pick", function(_agent, _target) {
+    return (_target == global.players_next) ? 1 : 0;
+}, 0, 1, true));
+```
+
+```gml
+// __goblin_profile_build, after the loot action's distance consideration
+gmsa_action_add_consideration(_a, "players_pick", gmsa_curve_make(gmsa_curve.LINEAR, { m : -0.8, b : 1 }));  // 0.2 for the coin you're about to take
+```
+
+Play with the rhythm for a while. Expect it to take around a hundred picks, more than anything so far. Then the goblins start leaving alone the coin you're about to take and go for the others. The n-gram would only know you're about to loot, not which coin.
+
+**Why not attach it to the copycat?** A sequence model re-ranks an agent from that agent's own history. The copycat's own choices are never recorded, so its history never moves. To use your sequences in other agents' decisions, read the prediction about you, as above, or with `gmsa_learn_input` for actions.
+
+**Which one?**
+
+| Model | Use it for |
+| --- | --- |
+| N-gram | Habits in order, combos, many habits in one model. Learns in dozens of choices, cheap enough to read every frame |
+| TDNN | Which target, in order. Patterns where the moves in between don't matter. Needs hundreds of choices and training time |
+
+Both also learn from outcomes, as in [chapter 13](#13-learning-what-works): a boss learning "after my feint and sweep, the heavy attack lands". Its history then comes from its tracked decisions, so track it with a `size` larger than the model's `length`, and clear the current option after each move.
+
+Three things to remember:
+
+- **Start with the n-gram.** In testing it learned plain habits from a few dozen choices, and one model learned seven different habits from one player at once. Reach for the TDNN when the choice is about which target.
+- **Read `sure`, not `confidence`, for hints.** A model can know a moment well and still be split between options. The TDNN's `sure` climbs more slowly than the n-gram's: it can be right every time while still saying 0.4.
+- **A history is per agent.** Each choice must be recorded through the agent whose habits you want: the same `global.watch`, the same `o_player.agent`.
+
+The [API Reference](ApiReference.md#learning-sequences) has how both work, their settings and what they cost. Demo 15, the sparring partner, is the n-gram learning every kind of fighting habit at once, and Demo 16, the potion shop, puts both side by side on which potion you buy.
+
+---
+
+## 20. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -1464,6 +1568,24 @@ Searches try every allowed step in every promising state. Keep the goal's `actio
 
 **Every goblin takes the same route.**
 The same facts and costs give the same plan. Add `variety` to the goal, or let cost functions read something that differs per goblin.
+
+**A sequence model predicts the same thing whatever you just did.**
+Its history isn't moving. Every choice must be recorded through the same agent, the one you predict for. With outcomes, the agent must be tracked with a `size` larger than the model's `length`, and repeated one-shot moves need `gmsa_agent_clear_current` after each, or they count as one move.
+
+**A sequence model attached to an agent changes nothing.**
+It re-ranks from that agent's own history, which only grows with choices recorded through it. To use the player's sequences in other agents' decisions, read the prediction about the player with `gmsa_learn_predict` or `gmsa_learn_input`.
+
+**A TDNN learns very slowly.**
+It needs hundreds of choices, and its replays need training time: `gmsa_learn_schedule` or `gmsa_learn_train`. Without either it learns like `replay : 0`, noticeably slower.
+
+**The TDNN is right but its `sure` stays low.**
+That's expected early: options that differ only by an input, like coins by distance, are separated gradually. Lower the threshold, or give it more choices.
+
+**Recording a choice hitches now and then.**
+A full n-gram forgets a tenth of its contexts at once, a few milliseconds on the VM. Lower its `capacity` for smaller, more frequent trims, or its `length` so it fills more slowly.
+
+**A sequence model throws that learn spaces have none.**
+The n-gram and the TDNN need an agent's history. Learned methods and other spaces use the other models.
 
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.

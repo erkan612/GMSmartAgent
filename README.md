@@ -9,7 +9,7 @@ A pure GML utility AI framework. Your agents score every option they have, every
 
 GMSmartAgent replaces hand-written `if` chains and rigid state machines with **utility scoring**. Every possible action an agent could take gets a score between 0 and 1 based on what the agent knows right now (its health, the distance to a target, whether it holds a key), and the highest-scoring option wins. Add a new behavior by adding an action, not by rewriting the decision tree.
 
-For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks what to do, planning works out how: from recipes you write (HTN), from a goal and a list of actions it searches through itself (GOAP), or both in one plan. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do.
+For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks what to do, planning works out how: from recipes you write (HTN), from a goal and a list of actions it searches through itself (GOAP), or both in one plan. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do. And models can learn sequences: what the player does after what they just did, from a combo to which potion comes after a sword.
 
 GMSmartAgent **only decides**. It never moves anything, never queries your room, never owns collision or spatial data. Your game hands it numbers, GMSmartAgent hands back a ranked list of options, or a plan one step at a time. What the agent does with it is up to you.
 
@@ -34,7 +34,7 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 ### Scale
 - **Frame budget** - A time budget per step in microseconds, so frame rate stays stable no matter how many agents you add
 - **Priority tiers** - Important agents think first, background agents use what's left
-- **Shared work** - Planning and your own long jobs can take turns with the agents inside the same budget
+- **Shared work** - Planning, model training and your own long jobs can take turns with the agents inside the same budget
 - **Per-agent intervals** - Slow-witted enemies think less often, sharp ones more often
 - **Shared profiles** - One profile, thousands of agents, only per-agent state is duplicated
 ### Observation
@@ -47,7 +47,10 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **Linear model** - Preferences across actions and targets, learns which item the player prefers, not just which action
 - **RankNet model** - A small neural network that learns habits depending on combinations of inputs, like "walks far for coins only when healthy"
 - **LambdaMART model** - Boosted decision trees for the most detailed rankings and sharp thresholds, trained in batches from the recent choices
-- **Background training** - Batch models train a little each step inside a time budget you set, and the old model keeps working until the new one is ready
+- **N-gram model** - What follows what, in which situation: combos, habits in order and many habits in one model, learned from dozens of choices
+- **TDNN model** - A neural network over the last few choices: which target comes next, and patterns where the moves in between don't matter
+- **Background training** - Batch models and the TDNN's replays train a little at a time, by hand or on the scheduler inside the same budget as the agents, and the old model keeps working until the new one is ready
+- **How sure** - Every prediction names its favourite and how sure the model is of it, so hints appear only when they're likely right
 - **Re-ranking** - Companions and enemies drift toward what a model learned, under an influence cap, never above the designer's score
 - **Prediction as input** - "How likely is the player to drink right now" becomes an ordinary input any profile can use
 - **Confidence** - A model only gets a say once it has data, so there is no cold-start tuning
@@ -58,7 +61,8 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **Precise or ambient results** - Report a result for one exact decision with a ticket, or reward an agent and let its recent decisions share the credit, fading with age
 - **Shared experience** - One model per squad, colony or village: every result any member gets teaches all of them
 - **Fair learning** - Rarely tried options aren't misjudged from too little data, and exploring only happens among the options your scoring ranks highest
-- **Every model** - Count, Linear, RankNet, LambdaMART and custom models all learn from outcomes through one setting
+- **Every model** - Count, Linear, RankNet, LambdaMART, the n-gram, the TDNN and custom models all learn from outcomes through one setting
+- **Moves in order** - A boss learns which of its moves pays off after which: "after my feint and sweep, the heavy attack lands"
 ### Neural Networks
 - **Small feed-forward networks** - Dense layers, backpropagation, SGD or Adam, the building block under RankNet and usable on their own
 - **Sparse inputs** - One-hot codes cost only the values that aren't zero
@@ -275,6 +279,8 @@ global.taste = gmsa_learn_linear_create();      // clear preferences, the defaul
 global.taste = gmsa_learn_ranknet_create();     // habits that depend on combinations of inputs
 global.taste = gmsa_learn_lambdamart_create();  // the most detailed, trained in batches:
 gmsa_learn_train(global.taste, 2000);           // a little each step until done, or once at a checkpoint
+global.taste = gmsa_learn_ngram_create();       // what follows what, see Learning Sequences below
+global.taste = gmsa_learn_tdnn_create();        // which target follows what, needs hundreds of choices
 ```
 
 ---
@@ -304,6 +310,32 @@ When you can't point to the one decision that caused something, reward the agent
 ```gml
 gmsa_learn_reward(global.tactics, agent, -0.5);  // took damage just now
 ```
+
+---
+
+## Learning Sequences
+
+Some habits come in order: jab, jab, then an uppercut; a sword, then the cheapest potion. Two models learn from the last few choices as well as the moment:
+
+```gml
+// the player's fighting habits
+global.habits = gmsa_learn_ngram_create({ length : 4 });
+gmsa_learn_observe(global.habits, gmsa_observe(player_agent, moves, _picked));
+
+// the boss reads them, and only speaks up when it's sure
+var _out = gmsa_learn_predict(global.habits, gmsa_agent_evaluate(player_agent));
+if (_out.sure >= 0.6) boss_says = "I know your " + moves[_out.best] + " is coming";
+```
+
+- **The n-gram** learns what follows what, in which situation, from a few dozen choices. One model holds many habits at once: in testing, one learned seven different habits from one player, from potions when hurt to combos that depend on distance.
+- **The TDNN** is a small neural network over the last few choices. It learns *which* target comes next ("after a sword, the cheapest potion") and patterns where the moves in between don't matter, from hundreds of choices. Its heavier training runs on the scheduler:
+
+```gml
+global.next_buy = gmsa_learn_tdnn_create({ remember : ["price"] });
+gmsa_learn_schedule(global.next_buy, global.ai);  // trains in the scheduler's spare budget
+```
+
+Both learn from outcomes too, explain themselves, and save with the game. Demo 15 is a sparring partner that learns how you fight, Demo 16 a shop where the TDNN learns which potion you'll buy while the n-gram can only tell it'll be a potion.
 
 ---
 
@@ -443,6 +475,8 @@ Learning models add their own cost to every re-ranked think, at 3 options:
 | RankNet | ~100 us | A few agents, a boss or a companion |
 | LambdaMART | ~500 us | A few agents, or a shared predictor input read once per frame |
 
+The sequence learners cost more per prediction. The n-gram predicts in about 0.2 to 0.5 ms and learns a choice in 0.15 to 1.3 ms. The TDNN predicts in about 0.35 ms with 4 options and learns a choice in 1.3 ms, plus about 1.2 ms per replayed choice, spread over frames by its training budget. See [What sequence learners cost](ApiReference.md#what-sequence-learners-cost).
+
 LambdaMART trains inside a budget you set, with a measured overshoot under 130 us at 2 ms. Learning from outcomes costs about 25 us per reported result with Count, Linear or LambdaMART, and about 180 us with RankNet. The [API Reference](ApiReference.md#what-models-cost) has the full table.
 
 Planning costs about 9 to 13 us per node searched. A plan of around ten steps takes about 0.3 ms to make, and each step after that about 30 us to check and hand over. The default budget of 250 nodes keeps a hopeless search to a few milliseconds. Scheduled planners make their plans inside the scheduler budget, going over it by under 40 us, and cost about 0.7 us per step while idle. See [What planning costs](ApiReference.md#what-planning-costs).
@@ -469,15 +503,15 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Roadmap
 
-- **v1.8: More choice models** - A sequence model that learns what the player does next after what they just did, Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
-- **v1.9: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
-- **Later** - GMNav input providers such as path cost and reachability, a full debug view with overlays and a scheduler budget view, and YYC benchmarks.
+- **v1.9: More choice models** - Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
+- **v1.10: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
+- **Later** - GMNav input providers such as path cost and reachability, a full debug view with overlays and a scheduler budget view, YYC benchmarks, and a recurrent learner (GRU) for patterns longer than any window.
 
 ---
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, and plans nobody wrote
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, plans nobody wrote, and goblins that read the rhythm of your play
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
@@ -520,6 +554,22 @@ urosidoki "[htn_planner](https://github.com/urosidoki/htn_planner)", a hierarchi
 **Weighted recipe order** Luce, R. D. (1959) "[Individual Choice Behavior: A Theoretical Analysis](https://catalog.hathitrust.org/Record/000580649)", Wiley
 
 Plackett, R. L. (1975) "[The Analysis of Permutations](https://ideas.repec.org/a/bla/jorssc/v24y1975i2p193-202.html)", Journal of the Royal Statistical Society, Series C (Applied Statistics), 24(2), 193-202
+
+**N-grams in games** Rabin, S. (2013) "[Implementing N-Grams for Player Prediction, Procedural Generation, and Stylized AI](https://www.taylorfrancis.com/books/9780429100277/chapters/10.1201/b16725-54)", in Rabin, S. (ed.) Game AI Pro, CRC Press
+
+**Context models and blending** Cleary, J. G. and Witten, I. H. (1984) "[Data Compression Using Adaptive Coding and Partial String Matching](https://prism.ucalgary.ca/handle/1880/45790)", IEEE Transactions on Communications, 32(4), 396-402
+
+Willems, F. M. J., Shtarkov, Y. M. and Tjalkens, T. J. (1995) "[The Context-Tree Weighting Method: Basic Properties](https://research.tue.nl/en/publications/the-context-tree-weighting-method-basic-properties/)", IEEE Transactions on Information Theory, 41(3), 653-664
+
+**Time-delay neural networks** Waibel, A., Hanazawa, T., Hinton, G., Shikano, K. and Lang, K. J. (1989) "[Phoneme Recognition Using Time-Delay Neural Networks](https://doi.org/10.1109/29.21701)", IEEE Transactions on Acoustics, Speech, and Signal Processing, 37(3), 328-339
+
+**Experience replay** Lin, L-J. (1992) "[Self-Improving Reactive Agents Based on Reinforcement Learning, Planning and Teaching](https://mlanthology.org/mlj/1992/lin1992mlj-selfimproving)", Machine Learning, 8, 293-321
+
+**Leaky ReLU** Maas, A. L., Hannun, A. Y. and Ng, A. Y. (2013) "[Rectifier Nonlinearities Improve Neural Network Acoustic Models](https://ai.stanford.edu/~amaas/papers/relu_hybrid_icml2013_final.pdf)", ICML 2013 Workshop on Deep Learning for Audio, Speech and Language Processing
+
+**Confidence of neural networks** Guo, C., Pleiss, G., Sun, Y. and Weinberger, K. Q. (2017) "[On Calibration of Modern Neural Networks](https://arxiv.org/abs/1706.04599)", ICML 2017
+
+Nguyen, A., Yosinski, J. and Clune, J. (2015) "[Deep Neural Networks are Easily Fooled: High Confidence Predictions for Unrecognizable Images](https://arxiv.org/abs/1412.1897)", CVPR 2015
 
 **Player modeling** Yannakakis, G. N. and Togelius, J. (2018) "[Artificial Intelligence and Games](https://gameaibook.org/)", Springer, chapter 5, "Modeling Players"
 
