@@ -14,7 +14,9 @@ function gmsa_bench_all() {
 	//__gmsa_bench_plan_learn();
 	//__gmsa_bench_plan_goap();
 	//__gmsa_bench_learn_sequences();
-	__gmsa_bench_learn_bayes_neighbor();
+	//__gmsa_bench_learn_bayes_neighbor();
+	__gmsa_bench_rating();
+	__gmsa_bench_style([200, 1000], 2000);
 }
 
 function __gmsa_bench_report(_name, _total_us, _count, _unit) {
@@ -957,4 +959,153 @@ function __gmsa_bench_bn_case(_c, _runs) {
     var _extra = _neighbor ? ", " + string(array_length(_m.data.mem)) + " moments" : "";
     show_debug_message(_name + ": predict " + string_format(_pred / _runs, 1, 1) + " us, "
         + (_outcomes ? "outcome " : "observe ") + string_format(_obs / _runs, 1, 1) + " us (slowest " + string(_worst) + " us)" + _extra);
+}
+
+function __gmsa_bench_rating() {
+    var _rng = gmsa_rng_create(7);
+    var _p = gmsa_rating_pool_create();
+    var _names = array_create(100, "");
+    for (var _i = 0; _i < 100; _i++) {
+        _names[_i] = "p" + string(_i);
+        gmsa_rating_set(_p, _names[_i], { rating : 1200 + 600 * gmsa_rng_next(_rng) });
+    }
+
+    // [label, teams, players per team]
+    var _shapes = [["1 v 1", 2, 1], ["free for all of 8", 8, 1], ["5 v 5", 2, 5], ["4 teams of 4", 4, 4]];
+    var _n = 2000;
+    for (var _s = 0; _s < array_length(_shapes); _s++) {
+        var _matches = array_create(_n, 0);
+        for (var _m = 0; _m < _n; _m++) _matches[_m] = __gmsa_bench_rating_match(_names, _rng, _shapes[_s][1], _shapes[_s][2]);
+        var _t = get_timer();
+        for (var _m = 0; _m < _n; _m++) gmsa_rating_match(_p, _matches[_m]);
+        __gmsa_bench_report("rating match, " + _shapes[_s][0], get_timer() - _t, _n, "match");
+    }
+
+    var _t = get_timer();
+    for (var _i = 0; _i < 10000; _i++) gmsa_rating_chance(_p, _names[_i mod 100], _names[(_i * 7 + 1) mod 100]);
+    __gmsa_bench_report("rating chance", get_timer() - _t, 10000, "call");
+
+    var _cands = array_create(10, "");
+    for (var _i = 0; _i < 10; _i++) _cands[_i] = _names[_i * 10 + 5];
+    _t = get_timer();
+    for (var _i = 0; _i < 5000; _i++) gmsa_rating_pick(_p, _names[_i mod 100], _cands, 0.6);
+    __gmsa_bench_report("rating pick, 10 candidates", get_timer() - _t, 5000, "call");
+
+    _t = get_timer();
+    for (var _i = 0; _i < 2000; _i++) gmsa_rating_explain(_p, _names[_i mod 100]);
+    __gmsa_bench_report("rating explain", get_timer() - _t, 2000, "call");
+
+    // balance: the quick split alone (budget 0) against the full search (default budget), and how fair each is
+    var _lobbies = [[8, 2], [10, 2], [12, 3], [16, 4], [20, 4], [30, 5]];
+    var _runs = 20;
+    for (var _l = 0; _l < array_length(_lobbies); _l++) {
+        var _size = _lobbies[_l][0];
+        var _teams = _lobbies[_l][1];
+        var _quick_us = 0, _full_us = 0, _quick_gap = 0, _full_gap = 0, _worst = 0;
+        for (var _r = 0; _r < _runs; _r++) {
+            var _start = floor(gmsa_rng_next(_rng) * 100);
+            var _lobby = array_create(_size, "");
+            for (var _i = 0; _i < _size; _i++) _lobby[_i] = _names[(_start + _i) mod 100];
+            var _t0 = get_timer();
+            var _q = gmsa_rating_balance(_p, _lobby, _teams, 0);
+            _quick_us += get_timer() - _t0;
+            _t0 = get_timer();
+            var _f = gmsa_rating_balance(_p, _lobby, _teams);
+            var _dt = get_timer() - _t0;
+            _full_us += _dt;
+            _worst = max(_worst, _dt);
+            _quick_gap += __gmsa_bench_rating_gap(_p, _q);
+            _full_gap += __gmsa_bench_rating_gap(_p, _f);
+        }
+        __gmsa_bench_line("rating balance, " + string(_size) + " players into " + string(_teams) + " teams: quick "
+            + string_format(_quick_us / _runs, 1, 0) + " us (gap " + string_format(_quick_gap / _runs, 1, 1) + "), searched "
+            + string_format(_full_us / _runs, 1, 0) + " us, worst " + string(_worst) + " us (gap " + string_format(_full_gap / _runs, 1, 1) + ")");
+    }
+    __gmsa_bench_line("   gap: strongest team's average rating minus the weakest's, in rating points");
+}
+
+function __gmsa_bench_rating_match(_names, _rng, _teams, _size) {
+    var _start = floor(gmsa_rng_next(_rng) * 100);
+    var _out = array_create(_teams, 0);
+    var _places = array_create(_teams, 0);
+    for (var _t = 0; _t < _teams; _t++) {
+        var _team = array_create(_size, "");
+        for (var _i = 0; _i < _size; _i++) _team[_i] = _names[(_start + _t * _size + _i) mod 100];
+        _out[_t] = _team;
+        _places[_t] = _t + 1;
+    }
+    for (var _t = _teams - 1; _t > 0; _t--) {
+        var _j = floor(gmsa_rng_next(_rng) * (_t + 1));
+        var _x = _places[_t];
+        _places[_t] = _places[_j];
+        _places[_j] = _x;
+    }
+    return { teams : _out, places : _places };
+}
+
+function __gmsa_bench_rating_gap(_p, _teams) {
+    var _lo = infinity, _hi = -infinity;
+    for (var _t = 0; _t < array_length(_teams); _t++) {
+        var _team = _teams[_t];
+        var _s = 0;
+        for (var _i = 0; _i < array_length(_team); _i++) _s += gmsa_rating_get(_p, _team[_i]).rating;
+        _s /= array_length(_team);
+        _lo = min(_lo, _s);
+        _hi = max(_hi, _s);
+    }
+    return _hi - _lo;
+}
+
+function __gmsa_bench_style(_sizes, _budget) {
+    var _set = __test_style_set();
+    var _tr = gmsa_style_tracker_create(_set);
+    var _n = 10000;
+    var _t = get_timer();
+    for (var _i = 0; _i < _n; _i++) gmsa_style_count(_tr, "kills");
+    __gmsa_bench_report("style count", get_timer() - _t, _n, "call");
+    _t = get_timer();
+    for (var _i = 0; _i < _n; _i++) gmsa_style_sample(_tr, "distance", _i mod 500);
+    __gmsa_bench_report("style sample", get_timer() - _t, _n, "call");
+    _t = get_timer();
+    for (var _i = 0; _i < _n; _i++) gmsa_style_tick(_tr);
+    __gmsa_bench_report("style tick, 4 measures", get_timer() - _t, _n, "call");
+
+    var _counts = [3, 8];
+    var _rng = gmsa_rng_create(9);
+    for (var _c = 0; _c < array_length(_counts); _c++) {
+        var _s = __test_style_set();
+        for (var _k = 0; _k < _counts[_c]; _k++) {
+            gmsa_style_add(_s, "s" + string(_k), { kills : 10 * gmsa_rng_next(_rng), deaths : 20 * gmsa_rng_next(_rng),
+                distance : 2000 * gmsa_rng_next(_rng), cover : gmsa_rng_next(_rng) });
+        }
+        var _player = gmsa_style_tracker_create(_s);
+        __test_style_play(_player, 0, 20);
+        _t = get_timer();
+        for (var _i = 0; _i < 2000; _i++) gmsa_style_match(_s, _player);
+        __gmsa_bench_report("style match, " + string(_counts[_c]) + " styles", get_timer() - _t, 2000, "call");
+        _t = get_timer();
+        for (var _i = 0; _i < 2000; _i++) gmsa_style_explain(_s, _player);
+        __gmsa_bench_report("style explain, " + string(_counts[_c]) + " styles", get_timer() - _t, 2000, "call");
+    }
+
+    for (var _z = 0; _z < array_length(_sizes); _z++) {
+        var _s = __test_style_set();
+        var _sessions = __test_style_sessions(gmsa_rng_create(31), _sizes[_z], 4);
+        var _t0 = get_timer();
+        var _job = gmsa_style_fit(_s, _sessions);
+        var _setup = get_timer() - _t0;
+        var _calls = 0, _worst = 0, _total = 0, _done = false;
+        while (!_done) {
+            var _t1 = get_timer();
+            _done = gmsa_style_fit_work(_job, _budget);
+            var _dt = get_timer() - _t1;
+            _total += _dt;
+            _worst = max(_worst, _dt);
+            _calls += 1;
+        }
+        __gmsa_bench_line("style fit, " + string(_sizes[_z]) + " sessions of 4 true styles, defaults (up to 8 styles, 20 restarts): found " + string(_job.found));
+        __gmsa_bench_line("   setup " + string_format(_setup / 1000, 1, 1) + " ms (not sliced), work " + string_format(_total / 1000, 1, 1)
+            + " ms in " + string(_calls) + " calls of " + string(_budget) + " us, worst call " + string(_worst)
+            + " us (overshoot " + string(max(0, _worst - _budget)) + " us)");
+    }
 }

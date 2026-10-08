@@ -177,7 +177,7 @@ function gmsa_rating_pick(_pool, _side, _candidates, _target = 0.5) {
     return _best;
 }
 
-function gmsa_rating_balance(_pool, _names, _sizes, _budget = 20000) {
+function gmsa_rating_balance(_pool, _names, _sizes, _budget = 1000) {
     __gmsa_rating_check_pool(_pool);
     if (!is_numeric(_budget) || _budget < 0 || frac(_budget) != 0) throw "GMSA: rating balance budget must be a whole number of 0 or more";
     if (!is_array(_names) || array_length(_names) == 0) throw "GMSA: rating balance needs a non-empty array of names";

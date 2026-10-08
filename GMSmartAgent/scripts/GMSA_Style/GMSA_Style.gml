@@ -74,6 +74,8 @@ function gmsa_style_fit(_set, _sessions, _params = {}) {
     if (!__gmsa_style_whole(_iterations, 1)) throw "GMSA: style fit iterations must be a whole number of 1 or more";
     var _keep = __gmsa_param(_params, "keep", 1);
     if (!is_numeric(_keep) || _keep < 0) throw "GMSA: style fit keep must be a number of 0 or more";
+    var _patience = __gmsa_param(_params, "patience", 2);
+    if (!__gmsa_style_whole(_patience, 1)) throw "GMSA: style fit patience must be a whole number of 1 or more";
     var _seed = __gmsa_param(_params, "seed", 1);
     var _n = array_length(_sessions);
     var _d = array_length(_set.measures);
@@ -101,11 +103,11 @@ function gmsa_style_fit(_set, _sessions, _params = {}) {
 
     var _job = {
         __gmsa_style_job : true, set : _set, n : _n, d : _d, x : _x, centre : _centre, scale : _scale,
-        kmin : _kmin, kmax : _kmax, restarts : _restarts, iterations : _iterations, keep : _keep,
+        kmin : _kmin, kmax : _kmax, restarts : _restarts, iterations : _iterations, keep : _keep, patience : _patience, worse : 0,
         rng : gmsa_rng_create(_seed), done : false,
         k : _kmin, r : 0, phase : 0, cursor : 0, iter : 0, prev : -infinity,
-        seeds : [], dmin : array_create(_n, infinity), newest : 0,
-        w : [], mu : [], va : [], lp : [],
+        seeds : [], dmin : array_create(_n, infinity), newest : 0, total : 0, pick : 0,
+        w : [], mu : [], va : [], lp : [], norm : [], iv : [],
         nk : [], s1 : [], s2 : [], ll : 0,
         best_ll : -infinity, best_w : [], best_mu : [], best_va : [], // the best restart at this number of styles
         top_bic : infinity, top_k : 0, top_w : [], top_mu : [], top_va : [], top_ll : 0,
@@ -126,7 +128,7 @@ function gmsa_style_fit_work(_job, _budget = undefined) {
     var _first = true;
     while (!_job.done && (_first || get_timer() < _deadline)) {
         _first = false;
-        __gmsa_style_fit_chunk(_job, 32);
+        __gmsa_style_fit_chunk(_job);
     }
     return _job.done;
 }
@@ -470,7 +472,7 @@ function __gmsa_style_logp(_st, _x, _d) {
     return _l;
 }
 
-function __gmsa_style_fit_chunk(_job, _count) {
+function __gmsa_style_fit_chunk(_job) {
     var _n = _job.n;
     var _d = _job.d;
     var _k = _job.k;
@@ -482,34 +484,37 @@ function __gmsa_style_fit_chunk(_job, _count) {
             var _i0 = min(_n - 1, floor(gmsa_rng_next(_job.rng) * _n));
             array_push(_job.seeds, _i0);
             _job.newest = _i0;
-            for (var _i = 0; _i < _n; _i++) _job.dmin[_i] = infinity;
+            var _dmin = _job.dmin;
+            for (var _i = 0; _i < _n; _i++) _dmin[@ _i] = infinity;
             _job.cursor = 0;
         }
         if (array_length(_job.seeds) < _k) {
-            var _end = min(_n, _job.cursor + _count);
-            var _c = _job.newest;
+            if (_job.cursor == 0) {
+                _job.total = 0;
+                _job.pick = min(_n - 1, floor(gmsa_rng_next(_job.rng) * _n));  // kept only when every session sits on a starting point
+            }
+            var _end = min(_n, _job.cursor + max(1, floor(256 / _d)));
+            var _nb = _job.newest * _d;
+            var _dist = _job.dmin;
+            var _rng = _job.rng;
+            var _total = _job.total;
+            var _pick = _job.pick;
             for (var _i = _job.cursor; _i < _end; _i++) {
                 var _s = 0;
-                for (var _j = 0; _j < _d; _j++) _s += sqr(_x[_i * _d + _j] - _x[_c * _d + _j]);
-                if (_s < _job.dmin[_i]) _job.dmin[_i] = _s;
-            }
-            _job.cursor = _end;
-            if (_end < _n) return;
-            var _total = 0;
-            for (var _i = 0; _i < _n; _i++) _total += _job.dmin[_i];
-            var _pick = floor(gmsa_rng_next(_job.rng) * _n);
-            if (_total * 1000000000000 > 0) {
-                var _u = gmsa_rng_next(_job.rng) * _total;
-                var _acc = 0;
-                _pick = _n - 1;
-                for (var _i = 0; _i < _n; _i++) {
-                    _acc += _job.dmin[_i];
-                    if (_acc >= _u) {
-                        _pick = _i;
-                        break;
-                    }
+                var _b = _i * _d;
+                for (var _j = 0; _j < _d; _j++) _s += sqr(_x[_b + _j] - _x[_nb + _j]);
+                if (_s < _dist[_i]) _dist[@ _i] = _s;
+                // each session becomes the pick with its share of the distance so far: a pick in proportion to distance, in one pass
+                var _di = _dist[_i];
+                if (_di > 0) {
+                    _total += _di;
+                    if (gmsa_rng_next(_rng) * _total < _di) _pick = _i;
                 }
             }
+            _job.total = _total;
+            _job.pick = _pick;
+            _job.cursor = _end;
+            if (_end < _n) return;
             array_push(_job.seeds, _pick);
             _job.newest = _pick;
             _job.cursor = 0;
@@ -528,64 +533,71 @@ function __gmsa_style_fit_chunk(_job, _count) {
     }
 
     // expectation: each session's share in each style, added up for the maximization at the end of the pass
-    var _end = min(_n, _job.cursor + _count);
+    var _end2 = min(_n, _job.cursor + max(1, floor(256 / (_k * _d))));
     var _lp = _job.lp;
-    var _norm = array_create(_k, 0);
-    for (var _c = 0; _c < _k; _c++) {
-        var _l = ln(max(_job.w[_c], 0.000000000001));
-        for (var _j = 0; _j < _d; _j++) _l -= 0.5 * ln(2 * pi * _job.va[_c * _d + _j]);
-        _norm[_c] = _l;
-    }
-    for (var _i = _job.cursor; _i < _end; _i++) {
+    var _mu = _job.mu;
+    var _iv = _job.iv;
+    var _norm = _job.norm;
+    var _nk = _job.nk;
+    var _s1 = _job.s1;
+    var _s2 = _job.s2;
+    var _ll = 0;
+    for (var _i = _job.cursor; _i < _end2; _i++) {
+        var _xb = _i * _d;
         var _top = -infinity;
         for (var _c = 0; _c < _k; _c++) {
             var _l = _norm[_c];
-            for (var _j = 0; _j < _d; _j++) _l -= 0.5 * sqr(_x[_i * _d + _j] - _job.mu[_c * _d + _j]) / _job.va[_c * _d + _j];
+            var _cb = _c * _d;
+            for (var _j = 0; _j < _d; _j++) _l -= 0.5 * sqr(_x[_xb + _j] - _mu[_cb + _j]) * _iv[_cb + _j];
             _lp[@ _c] = _l;
-            _top = max(_top, _l);
+            if (_l > _top) _top = _l;
         }
         var _sum = 0;
         for (var _c = 0; _c < _k; _c++) {
-            _lp[@ _c] = exp(_lp[_c] - _top);
-            _sum += _lp[_c];
+            var _e = exp(_lp[_c] - _top);
+            _lp[@ _c] = _e;
+            _sum += _e;
         }
-        _job.ll += _top + ln(_sum);
+        _ll += _top + ln(_sum);
         for (var _c = 0; _c < _k; _c++) {
             var _r = _lp[_c] / _sum;
-            _job.nk[_c] += _r;
+            if (_r < 0.000001) continue;  // a session this far from a style adds nothing to it worth the time
+            _nk[@ _c] += _r;
+            var _ab = _c * _d;
             for (var _j = 0; _j < _d; _j++) {
-                var _v = _x[_i * _d + _j];
-                _job.s1[_c * _d + _j] += _r * _v;
-                _job.s2[_c * _d + _j] += _r * _v * _v;
+                var _v = _x[_xb + _j];
+                _s1[@ _ab + _j] += _r * _v;
+                _s2[@ _ab + _j] += _r * _v * _v;
             }
         }
     }
-    _job.cursor = _end;
-    if (_end < _n) return;
+    _job.ll += _ll;
+    _job.cursor = _end2;
+    if (_end2 < _n) return;
 
     // maximization: new weights, typical values and spreads
     for (var _c = 0; _c < _k; _c++) {
-        var _nk = _job.nk[_c];
-        if (_nk < 0.000000001) continue; // a style nobody belongs to keeps what it had
-        _job.w[_c] = _nk / _n;
+        var _nc = _nk[_c];
+        if (_nc < 0.000000001) continue;  // a style nobody belongs to keeps what it had
+        _job.w[_c] = _nc / _n;
         for (var _j = 0; _j < _d; _j++) {
-            var _m = _job.s1[_c * _d + _j] / _nk;
+            var _m = _s1[_c * _d + _j] / _nc;
             _job.mu[_c * _d + _j] = _m;
-            _job.va[_c * _d + _j] = max(_job.s2[_c * _d + _j] / _nk - _m * _m, 0) + 0.001;
+            _job.va[_c * _d + _j] = max(_s2[_c * _d + _j] / _nc - _m * _m, 0) + 0.001;
         }
     }
     _job.iter += 1;
-    var _ll = _job.ll;
-    var _converged = (_ll - _job.prev < 0.000001 * abs(_ll)) || _job.iter >= _job.iterations;
-    _job.prev = _ll;
+    var _now = _job.ll;
+    var _converged = (_now - _job.prev < 0.000001 * abs(_now)) || _job.iter >= _job.iterations;
+    _job.prev = _now;
     if (!_converged) {
         __gmsa_style_fit_begin_pass(_job);
         return;
     }
 
     // a restart finished: the best at this number of styles so far?
-    if (_ll > _job.best_ll) {
-        _job.best_ll = _ll;
+    if (_now > _job.best_ll) {
+        _job.best_ll = _now;
         _job.best_w = __gmsa_style_copy(_job.w);
         _job.best_mu = __gmsa_style_copy(_job.mu);
         _job.best_va = __gmsa_style_copy(_job.va);
@@ -593,7 +605,8 @@ function __gmsa_style_fit_chunk(_job, _count) {
     _job.r += 1;
     _job.phase = 0;
     _job.seeds = [];
-    if (_job.r < _job.restarts) return;
+    // one style has one answer, restarts can't improve on it
+    if (_job.r < ((_k == 1) ? 1 : _job.restarts)) return;
 
     // every restart at this number done: is it the best number so far, by BIC?
     var _bic = -2 * _job.best_ll + (_k * 2 * _d + _k - 1) * ln(_n);
@@ -604,11 +617,15 @@ function __gmsa_style_fit_chunk(_job, _count) {
         _job.top_mu = _job.best_mu;
         _job.top_va = _job.best_va;
         _job.top_ll = _job.best_ll;
+        _job.worse = 0;
+    } else {
+        _job.worse += 1;
     }
     _job.k += 1;
     _job.r = 0;
     _job.best_ll = -infinity;
-    if (_job.k <= _job.kmax) return;
+    // stop trying more styles once patience counts in a row were no better
+    if (_job.k <= _job.kmax && _job.worse < _job.patience) return;
     __gmsa_style_fit_finish(_job);
 }
 
@@ -619,6 +636,17 @@ function __gmsa_style_fit_begin_pass(_job) {
     _job.s1 = array_create(_k * _d, 0);
     _job.s2 = array_create(_k * _d, 0);
     _job.lp = array_create(_k, 0);
+    _job.norm = array_create(_k, 0);
+    _job.iv = array_create(_k * _d, 0);
+    for (var _c = 0; _c < _k; _c++) {
+        var _l = ln(max(_job.w[_c], 0.000000000001));
+        for (var _j = 0; _j < _d; _j++) {
+            var _va = _job.va[_c * _d + _j];
+            _l -= 0.5 * ln(2 * pi * _va);
+            _job.iv[_c * _d + _j] = 1 / _va;
+        }
+        _job.norm[_c] = _l;
+    }
     _job.ll = 0;
     _job.cursor = 0;
 }
