@@ -1,6 +1,6 @@
 # Getting Started with GMSmartAgent
 
-This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, who learn which plans work and when you're watching, who work out plans nobody wrote, who read the rhythm of your play, and who learn your taste input by input and moment by moment. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
+This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, who learn which plans work and when you're watching, who work out plans nobody wrote, who read the rhythm of your play, who learn your taste input by input and moment by moment, and who know which of them is quickest and how you play. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
 For every function's full details, see the [API Reference](ApiReference.md).
 
@@ -28,7 +28,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 18. [Plans Nobody Wrote](#18-plans-nobody-wrote)
 19. [Learning Sequences](#19-learning-sequences)
 20. [Many Inputs, Whole Moments](#20-many-inputs-whole-moments)
-21. [Troubleshooting](#21-troubleshooting)
+21. [Who's Quicker, and How You Play](#21-whos-quicker-and-how-you-play)
+22. [Troubleshooting](#22-troubleshooting)
 
 ---
 
@@ -1551,7 +1552,159 @@ The [API Reference](ApiReference.md#naive-bayes-and-nearest-neighbor) has how bo
 
 ---
 
-## 21. Troubleshooting
+## 21. Who's Quicker, and How You Play
+
+Every model so far learns choices: what a goblin or the player will pick. This chapter adds two things about the players themselves. A **rating** says how good each one is, learned from who wins. A **style** says how someone plays, whatever their skill.
+
+**Races.** Goblins already race for coins: two head for the same one, and only one gets it. Give each goblin its own speed so some are quicker, and a name to be rated by:
+
+```gml
+// o_goblin > Create (add)
+spd = random_range(1.5, 2.5);
+name = "goblin " + string(real(id));
+```
+
+```gml
+// o_goblin > Step, replace the move_towards_point line
+move_towards_point(goal.x, goal.y, spd);
+```
+
+The ratings live in a **pool**, in the controller:
+
+```gml
+// o_controller > Create (add)
+global.racers = gmsa_rating_pool_create();
+```
+
+When a goblin picks up an item, every goblin that was heading for it lost the race. That's a **match**: each runner is a team of one, the winner placed 1, the rest tied for 2:
+
+```gml
+// o_goblin > Step, in the pickup branch, before instance_destroy(goal)
+var _item = goal;
+var _teams = [[name]];
+var _places = [1];
+with (o_goblin) if (id != other.id && goal == _item) {
+    array_push(_teams, [name]);
+    array_push(_places, 2);
+}
+if (array_length(_teams) > 1) gmsa_rating_match(global.racers, { teams : _teams, places : _places });
+```
+
+A match takes any number of teams, of any size, in any places: a 2 v 2, a free for all, two teams allied against a third. A pickup with nobody else heading there isn't a race, and teaches nothing.
+
+Show each goblin's rating above it:
+
+```gml
+// o_goblin > Draw (add)
+draw_text(x, y - 24, string(round(gmsa_rating_get(global.racers, name).rating)));
+```
+
+Every goblin starts at 1500. After a few dozen races the quick ones climb and the slow ones sink. Hover one for the whole story:
+
+```gml
+// o_controller > Draw GUI (add)
+var _g = instance_position(mouse_x, mouse_y, o_goblin);
+if (_g != noone) draw_text(16, 64, gmsa_rating_explain(global.racers, _g.name));
+```
+
+```
+goblin 100012: 1641, fairly sure, 23 matches, last: placed 1 of 3
+```
+
+A rating comes with how **sure** it is. A new goblin is unsure, so its first races move it a lot, and it settles as the races pile up. That's why a newcomer finds its place in a few races, where a plain Elo rating would climb in small fixed steps.
+
+**Don't chase a race you'll lose.** The useful number is the **chance** one goblin beats another, 0 to 1. A per-target input reads it for each coin, against every goblin already heading there:
+
+```gml
+// __goblin_profile_build, with the other inputs
+gmsa_profile_add_input(_p, gmsa_input_pull("can_win", function(_agent, _target) {
+    var _me = _agent.owner;
+    var _chance = 1;
+    with (o_goblin) if (id != _me.id && goal == _target) _chance = min(_chance, gmsa_rating_chance(global.racers, _me.name, name));
+    return _chance;
+}, 0, 1, true));
+```
+
+```gml
+// __goblin_profile_build, after the loot action's distance consideration
+gmsa_action_add_consideration(_a, "can_win", gmsa_curve_make(gmsa_curve.LINEAR, { m : 0.8, b : 0.2 }));  // 0.2 for a race it can't win
+```
+
+Now a slow goblin leaves a coin alone when a quick one is already on its way, and goes for another. Early on every chance is about 50%, so they still race, and they stop once the ratings know better.
+
+**The same for difficulty.** Rate the player against encounters with known ratings, pinned so they don't move, and `gmsa_rating_pick` picks the one the player beats a chosen share of the time. A player who keeps getting better needs a pool made with more `drift`, about 20, or the picks fall behind and grow too easy. Demo 21 shows it.
+
+**Your style.** How good you are is one thing. How you play is another: grabbing coins while hurt, keeping your health up, walking far for an item. A **style** is a typical value for each **measure** of play. With one player and no crowd to learn from, write the styles yourself:
+
+```gml
+// o_controller > Create (add)
+global.styles = gmsa_style_set_create([
+    { name : "loot", min : 0, max : 1 },      // the share of your picks that are coins
+    { name : "hp", min : 0, max : 100 },      // how healthy you are when you pick
+    { name : "reach", min : 0, max : 300 },   // how far the items you pick are
+]);
+gmsa_style_add(global.styles, "greedy", { loot : 0.9, hp : 30 });
+gmsa_style_add(global.styles, "careful", { loot : 0.6, hp : 75 });
+gmsa_style_add(global.styles, "explorer", { reach : 220 });
+global.you = gmsa_style_tracker_create(global.styles, { half_life : 20 });
+```
+
+A measure a style leaves out doesn't matter to it: an explorer walks far, greedy or careful. The ranges set how far from typical still counts, 15% of the range by default.
+
+A **tracker** follows your play. Feed it at every pick:
+
+```gml
+// o_player > Global Left Pressed (add, at the end)
+gmsa_style_choice(global.you, (_item.object_index == o_coin) ? "loot" : "drink");
+gmsa_style_sample(global.you, "hp", hp);
+gmsa_style_sample(global.you, "reach", point_distance(x, y, _item.x, _item.y));
+gmsa_style_tick(global.you);
+```
+
+- A **choice** measure reads as its share of all choices. `drink` isn't a measure, but it still counts as a choice, so `loot` is a true share.
+- A **sample** is averaged.
+- A **tick** is your game's unit of play. Here it's one pick, and recent picks count more, fading by `half_life` picks, so the match follows you when you change.
+
+Show the match:
+
+```gml
+// o_controller > Draw GUI (add)
+draw_text(16, 88, gmsa_style_explain(global.styles, global.you));
+```
+
+```
+greedy 94%, careful 6% (fits well, sure): hp 28.00 (greedy 30.00), loot 0.88 (greedy 0.90), reach 112 (greedy 150)
+```
+
+It starts "not sure yet" and becomes sure after about eight picks. Then play carefully for a while: keep your health up, drink often. The shares swing over to careful within twenty to thirty picks.
+
+**The goblins react to your style.** `gmsa_style_input` reads one style's share as an input, leaning on a fallback while it isn't sure:
+
+```gml
+// __goblin_profile_build, with the other inputs
+gmsa_profile_add_input(_p, gmsa_input_pull("player_greedy", gmsa_style_input(global.styles, global.you, "greedy", { fallback : 0.5 })));
+```
+
+```gml
+// __goblin_profile_build, after the loot action's can_win consideration
+gmsa_action_add_consideration(_a, "player_greedy", gmsa_curve_make(gmsa_curve.LINEAR, { m : 0.5, b : 0.5 }));  // loot harder against a greedy player
+```
+
+Against a greedy player, the goblins go for coins as hard as you do. Against a careful one, they're more relaxed about it.
+
+**Finding styles nobody wrote.** With many players, an online game's server or recordings of playtests, the styles can be found instead of written: collect sessions (trackers or structs of values) and `gmsa_style_fit` groups them into styles and decides how many there are. It runs in slices on the scheduler, a few milliseconds a frame. Name what it found, save the styles and ship them, and each player's game only matches. Demo 22 shows a crowd being sorted into styles, then a live player matched against them.
+
+Three things to remember:
+
+- **Use the chance, not the number.** A rating is on its own scale, close to Elo's but not the same. The chance one side beats another is what to act on.
+- **Shares are among the styles you have.** A player like none of them still gets shares. The explain line says "like none of them" and `fit` is low: add a style, or don't act on it.
+- **Keep a tick the same span everywhere.** Sessions and trackers that tick differently mean different things by "per tick".
+
+The [API Reference](ApiReference.md#rating) has how ratings work, every match shape and what they cost, and [Style](ApiReference.md#style) the same for styles. Demo 20, the ladder, puts the rating next to Elo on bots in matches of every shape, Demo 21 picks fights for an improving player, and Demo 22 sorts a crowd into styles.
+
+---
+
+## 22. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -1681,6 +1834,15 @@ One sighting isn't enough: a rare moment needs a few before it beats the common 
 
 **The explain line shows no note.**
 Only nearest neighbor keeps notes, and only from calls that pass one: the last argument of `gmsa_learn_observe`, `gmsa_learn_outcome` or `gmsa_learn_reward`.
+
+**A goblin's rating never moves.**
+It needs rivals. A match where everyone was on one side, or a pickup nobody else was racing for, teaches nothing, and the explain line says "played with no rivals". A pinned entry never moves either: that's what pinning is for.
+
+**Picked fights get easier as the player improves.**
+The rating falls behind a player who keeps getting better. Make the pool with more `drift`, about 20 for a single-player game, so it expects skill to change.
+
+**The style match says 100% something, but the player plays nothing like it.**
+Shares are among the styles there are, so the least unlike one gets them all. The explain line says "like none of them" and the match's `fit` is low. Add a style for how that player plays, or don't act on a match that fits loosely.
 
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.

@@ -24,6 +24,8 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [Net](#net)
 - [Plan](#plan)
 - [PlanLearn](#planlearn)
+- [Rating](#rating)
+- [Style](#style)
 - [Test](#test)
 - [Data Structures](#data-structures)
 - [Callback Signatures](#callback-signatures)
@@ -651,7 +653,7 @@ Changes an agent's priority and moves it to the matching tier, at the end of tha
 gmsa_scheduler_add_work(scheduler, work, [priority]) -> work
 ```
 
-Adds work that shares the scheduler's budget with the agents. `work` is any struct with a `work(budget)` method: it's called with the microseconds it may use, and returns true when it did something, false when it had nothing to do. `gmsa_plan_schedule` uses this for planners and `gmsa_learn_schedule` for training models, and your own long jobs can use it too.
+Adds work that shares the scheduler's budget with the agents. `work` is any struct with a `work(budget)` method: it's called with the microseconds it may use, and returns true when it did something, false when it had nothing to do. `gmsa_plan_schedule` uses this for planners, `gmsa_learn_schedule` for training models and `gmsa_style_schedule` for style fits, and your own long jobs can use it too.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -3026,6 +3028,574 @@ Measured on the VM target with Demo 11's raid: six steps, one task of three meth
 - Step reliability costs about 6 us per method step when a task is planned, and about 30 us per step result learned.
 - Learned methods cost one prediction when the task is planned, and one outcome per method result and per reward.
 - All of it is paid per plan or per step, never per frame.
+
+---
+
+## Rating
+
+How good each player, agent or encounter is, learned from matches of any shape: one on one, teams, free for alls, alliances, everyone against a boss. Every rated thing is an entry in a pool, named by a string. A rating comes with how sure it is, so a newcomer moves fast and a veteran settles.
+
+| You want to | Use |
+| --- | --- |
+| Learn from a match | [gmsa_rating_match](#gmsa_rating_match) |
+| Know who's likely to win | [gmsa_rating_chance](#gmsa_rating_chance) |
+| Pick the opponent or encounter for a chosen chance: dynamic difficulty, matchmaking | [gmsa_rating_pick](#gmsa_rating_pick) |
+| Split a lobby into fair teams | [gmsa_rating_balance](#gmsa_rating_balance) |
+| Let an agent's choice depend on its odds | [gmsa_rating_input](#gmsa_rating_input) |
+| Show a rating | [gmsa_rating_get](#gmsa_rating_get), [gmsa_rating_explain](#gmsa_rating_explain) |
+
+```gml
+global.ladder = gmsa_rating_pool_create();
+
+// a 2 v 2, the first team won
+gmsa_rating_match(global.ladder, { teams : [["erkan", "ada"], ["bot_1", "bot_2"]], places : [1, 2] });
+
+// a free for all of four, two tied for second
+gmsa_rating_match(global.ladder, { teams : [["a"], ["b"], ["c"], ["d"]], places : [1, 2, 2, 4] });
+
+var _p = gmsa_rating_chance(global.ladder, ["erkan", "ada"], ["bot_3", "bot_4"]);  // 0 to 1
+var _teams = gmsa_rating_balance(global.ladder, lobby_names, 2);                   // two fair teams
+show_debug_message(gmsa_rating_explain(global.ladder, "erkan"));
+// erkan: 1555, unsure, 1 match, last: beat bot_1 and bot_2
+```
+
+Rating depends only on Core.
+
+### How it works
+
+- **The method is Weng and Lin's** ([2011](https://jmlr.org/papers/v12/weng11a.html)), in its pairwise (Bradley-Terry) form. Each entry has a rating and an `unsure`, the spread of where its true rating could be. Both are updated after every match with closed formulas, no training.
+- **The scale is Elo-like:** entries start at 1500, unsure 250. Between two sure entries, 100 points apart is about 64% to 36%, 400 apart about 10 to 1.
+- **A team's strength** is its members' ratings added up, each times its share, and its unsure adds up the same way. A team of four is rated against a team of four by their totals.
+- **Each pair of rival teams** is compared: the higher place won that pair, equal places drew. With scores, each pair gets a partial result. Every pair pulls on both teams, and each member moves by its part of the team's unsure, so the member the pool knows least moves most.
+- **Uncertainty grows back.** Each match adds `drift` to the unsure of everyone in it, so ratings never freeze and a player who improves is followed. With `idle` on, an entry also grows less sure while the pool plays without it, by the pool's own clock: each match adds its entries' share of the pool.
+- **Pinned entries** keep their rating and teach others: a designer's monsters of known difficulty, a reference bot.
+
+How it compared to Elo, simulated and in Demos 20 and 21:
+
+| | Weng and Lin | Elo |
+| --- | --- | --- |
+| Predicted chance, how far from the true one (Demo 20, after 100 / 400 matches) | 0.09 / 0.05 | 0.13 / 0.06 (K 32) |
+| A strong newcomer ranked top (Demo 20, matches after joining, median) | 27 | 92 |
+| Pairs of players in the true order (Demo 20, after 400 matches) | 99% | 98% |
+| Prediction early and late (1v1 ladder, log loss over the first 200 / the last matches) | 0.616 / 0.509 | K 64: 0.620 / 0.525, K 16: 0.661 / 0.520 |
+
+Elo has to choose its K: large is quick to learn and noisy later, small the reverse. Knowing how unsure it is gives Weng and Lin both.
+
+### gmsa_rating_pool_create
+
+```gml
+gmsa_rating_pool_create([params]) -> pool
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `start` | real | 1500 | A new entry's rating |
+| `unsure` | real | 250 | A new entry's unsure, in rating points. Also the most an entry's unsure grows back to |
+| `luck` | real | 125 | How much one match's result varies around skill, in rating points |
+| `drift` | real | 2.5 | Unsure added per match, how fast the pool expects a skill to change |
+| `idle` | bool | true | Entries grow less sure while the pool plays without them |
+| `capacity` | integer | none | The most entries kept. Over it, the one that sat out longest goes, pinned ones stay |
+| `from` | pool | none | Another pool new entries start from: their rating there, marked unsure |
+
+**`drift` is the setting to think about.** The default suits a ladder of players whose skill is settled. A player who keeps getting better needs more, or the rating lags behind. In Demo 21, picking fights for a 60% win:
+
+| Player | drift 2.5 | drift 10 | drift 25 |
+| --- | --- | --- | --- |
+| Improving steadily, true win rate over the last 50 of 300 fights | 0.75 | 0.66 | 0.63 |
+| Learning fast | 0.64 | 0.60 | 0.60 |
+| Rusty for 60 fights, then back: the 50 fights after | 0.74 | 0.74 | 0.69 |
+
+Demo 21 uses 20. Higher follows change faster and is a little noisier.
+
+**`start`:** a player who starts well below 1500, as in Demo 21, loses the first few fights until the rating finds them. Start the pool, or the player with [gmsa_rating_set](#gmsa_rating_set), where beginners really are.
+
+**Throws** when `start` isn't a number, `unsure` or `luck` isn't above 0, `drift` is negative, `idle` isn't true or false, `capacity` isn't a whole number of 1 or more, or `from` isn't a pool.
+
+### gmsa_rating_set
+
+```gml
+gmsa_rating_set(pool, name, params)
+```
+
+Sets an entry, creating it if needed.
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `rating` | real | Its rating |
+| `unsure` | real | Its unsure, in rating points |
+| `pinned` | bool | Kept as it is by matches. Pinning sets unsure to 0 unless you give one |
+| `from` | pool | Takes its rating from another pool, marked unsure. `rating` given too wins |
+
+```gml
+// monsters of known difficulty, the player learned against them
+gmsa_rating_set(global.fights, "ogre", { rating : 1720, pinned : true });
+// a beginner, where beginners usually are
+gmsa_rating_set(global.fights, "player", { rating : 1200 });
+```
+
+**Throws** when `params` isn't a struct, `rating` isn't a number, `unsure` is negative, `pinned` isn't true or false, or `from` isn't a pool.
+
+### gmsa_rating_get
+
+```gml
+gmsa_rating_get(pool, name) -> { rating, unsure, matches, pinned, known }
+```
+
+`unsure` is as of now, grown by the time the entry sat out. An entry not in the pool returns what it would start as, with `known` false.
+
+### gmsa_rating_remove, gmsa_rating_names, gmsa_rating_reset
+
+```gml
+gmsa_rating_remove(pool, name) -> bool   // true when it was there
+gmsa_rating_names(pool) -> array
+gmsa_rating_reset(pool)                  // every entry gone, the clock back to 0
+```
+
+### gmsa_rating_match
+
+```gml
+gmsa_rating_match(pool, match)
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `teams` | array | Two or more teams, each an array of entry names. A name appears once |
+| `places` | array | One per team, 1 the best. Equal places are draws |
+| `scores` | array | Instead of `places`: one per team, 0 to 1. Each rival pair gets 0.5 plus half the difference, so a narrow win moves ratings less than a crushing one |
+| `against` | array | Pairs of team indices that were rivals, `[[0, 1], [0, 2]]`. Every pair by default |
+| `allies` | array | Instead of `against`: groups of team indices that were on the same side, `[[0, 1]]`. Every pair is rivals except inside a group |
+| `shares` | array | Per team, a share per member from 0 to 1: how much of the match it played. A share of 0 is learned nothing from |
+
+Unknown names join the pool. Any structure fits:
+
+```gml
+// three teams, the first two allied against the third
+gmsa_rating_match(pool, { teams : [["a"], ["b"], ["c"]], places : [1, 1, 2], allies : [[0, 1]] });
+
+// four players against a boss, the boss lost to all of them
+gmsa_rating_match(pool, { teams : [["boss"], ["p1"], ["p2"], ["p3"], ["p4"]], places : [2, 1, 1, 1, 1],
+    against : [[0, 1], [0, 2], [0, 3], [0, 4]] });
+
+// won with 30% hp left: 0.65 against 0.35
+gmsa_rating_match(pool, { teams : [["player"], ["ogre"]], scores : [0.65, 0.35] });
+
+// one member joined late
+gmsa_rating_match(pool, { teams : [["a", "late"], ["c", "d"]], places : [2, 1], shares : [[1, 0.3], [1, 1]] });
+```
+
+**Throws** when there are fewer than two teams, a team is empty, a name is in two places, both or neither of `places` and `scores` are given, they don't have one number per team, a score is outside 0 to 1, `against` and `allies` are both given, a pair or group names a team that doesn't exist, a pair names one team twice, a team is in two ally groups, or `shares` doesn't have a value from 0 to 1 per member with someone above 0 in every team.
+
+### gmsa_rating_chance
+
+```gml
+gmsa_rating_chance(pool, a, b) -> real
+```
+
+The chance side `a` beats side `b`, 0 to 1. A side is a name or an array of names. The less sure the pool is of either side, the closer to 0.5.
+
+### gmsa_rating_pick
+
+```gml
+gmsa_rating_pick(pool, side, candidates, [target]) -> index
+```
+
+The index of the candidate whose chance against `side` is closest to `target` (default 0.5). A candidate is a name or an array of names. For dynamic difficulty, pick the encounter the player beats `target` of the time. For matchmaking, the most even opponent.
+
+It returns the closest candidate, not an exact match: with 11 monsters 120 points apart in Demo 21, a target of 60% landed at 61 to 64%. Read the picked one's chance with [gmsa_rating_chance](#gmsa_rating_chance).
+
+**Throws** when `candidates` is empty or `target` isn't between 0 and 1.
+
+### gmsa_rating_balance
+
+```gml
+gmsa_rating_balance(pool, names, sizes, [budget]) -> array of teams
+```
+
+Splits `names` into teams as evenly as it can. `sizes` is a number of teams (split as evenly as the names allow) or an array of team sizes (`[3, 2, 2]`). Each team comes back as an array of names.
+
+How: strongest first, each to the weakest team with room. Then the best swap between two teams, again and again. Then a search for a split whose strongest and weakest teams are closer to the average, up to `budget` steps (default 1000), starting from that one. Lobbies of 12 or fewer are searched to the end, so their split is the best there is.
+
+| Lobby | Quick split only (`budget` 0) | Searched (default) |
+| --- | --- | --- |
+| 8 players, 2 teams | gap 2.7 | gap 2.6 |
+| 12 players, 3 teams | gap 1.8 | gap 1.2 |
+| 16 players, 4 teams | gap 0.9 | gap 0.7 |
+| 30 players, 5 teams | gap 0.3 | gap 0.3 |
+
+The gap is the strongest team's average rating minus the weakest's, in rating points, from players spread 1200 to 1800. The quick split is already within a point or two, the search makes small lobbies exact. Teams of different sizes are balanced by total strength, so the smaller team gets stronger members.
+
+**Throws** when `names` is empty or names someone twice, `sizes` isn't a whole number from 1 to the number of names, team sizes aren't whole numbers of 1 or more, they don't add up to the number of names, or `budget` isn't a whole number of 0 or more.
+
+### gmsa_rating_rest
+
+```gml
+gmsa_rating_rest(pool, name, amount)
+```
+
+The entry grows less sure, as if `amount` matches' worth of drift had passed: a player back after a month away. Use it when your game knows more about time away than the pool's clock. Pinned entries and names not in the pool are left alone. The game owns time: the pool never reads a clock.
+
+**Throws** when `amount` is negative.
+
+### gmsa_rating_explain
+
+```gml
+gmsa_rating_explain(pool, name) -> string
+```
+
+```
+erkan: 1620, fairly sure, 34 matches, last: beat the ogre (0.70)
+ash: 1480, sure, 210 matches, last: placed 3 of 4
+p2: 1530, unsure, 2 matches, last: lost to boss
+newcomer: not rated yet
+```
+
+"Sure" is an unsure of at most a quarter of the pool's `unsure`, "fairly sure" at most half. The last match reads "beat", "lost to" or "drew with" the one rival team (with the result for scores), "placed N of M" in a free for all, or "scored 0.62 against 3 rivals".
+
+### gmsa_rating_input
+
+```gml
+gmsa_rating_input(pool, side, against) -> callback
+```
+
+A pull input callback: the chance `side` beats `against`. Each is a name, an array of names, or a function `(agent, target)` returning one, so a per-target input can rate each target.
+
+```gml
+// pick fights it can win: each target struct carries its name in the pool
+var _odds = gmsa_rating_input(global.ladder, "guard", function(_agent, _target) { return _target.rating_name; });
+gmsa_profile_add_input(_p, gmsa_input_pull("odds", _odds, 0, 1, true));
+```
+
+### gmsa_rating_save, gmsa_rating_load
+
+```gml
+gmsa_rating_save(pool) -> string
+gmsa_rating_load(pool, json)
+```
+
+Every entry, its rating, unsure, matches, pinned and last result, and the pool's clock. The pool's settings aren't saved, they come from the pool you load into.
+
+**Throws** when the save isn't a rating save, is malformed, or is from a newer version.
+
+### Several skills, several pools
+
+One pool holds one rating per entry. A player good with a knife and poor with a pistol is two pools, one per mode, and a new pool can start from the main one:
+
+```gml
+global.overall = gmsa_rating_pool_create();
+global.knife_only = gmsa_rating_pool_create({ from : global.overall });
+// a player's first knife-only match starts from their overall rating, marked unsure
+```
+
+### What rating costs
+
+| | VM | YYC |
+| --- | --- | --- |
+| Match, 1 v 1 | 45 us | 14 us |
+| Match, 5 v 5 | 101 us | 34 us |
+| Match, 4 teams of 4 | 170 us | 55 us |
+| Match, free for all of 8 | 313 us | 79 us |
+| Chance | 8 us | 3 us |
+| Pick from 10 candidates | 81 us | 29 us |
+| Explain | 7 us | 4 us |
+| Balance 8 players into 2 teams (worst) | 231 us (447 us) | 73 us (320 us) |
+| Balance 12 into 3 | 1.9 ms (4.4 ms) | 0.45 ms (0.97 ms) |
+| Balance 16 into 4 | 13 ms (15 ms) | 2.9 ms (4.8 ms) |
+| Balance 30 into 5 | 22 ms (25 ms) | 4.6 ms (6.5 ms) |
+| Balance 30 into 5, quick split only | 2.5 ms | 0.5 ms |
+
+- A match costs per rival pair, so a free for all of 8 (28 pairs) costs most.
+- Balance is a lobby screen call, not a per frame one. Its search stops at `budget` steps, so its worst case is capped. `budget` 0 is the quick split alone.
+
+### Good to know
+
+- **The numbers are not Elo's numbers.** Weng and Lin's ratings spread wider than the true skills while the pool is still unsure, Elo's sit narrower. Order and chances are what to compare, as Demo 20 does.
+- **A team is the sum of its members.** That suits games where every member adds strength. Teams of very different sizes are compared by total strength too.
+- **Chance needs rivals:** a match of teams that were all allies teaches nothing, and the explain line says "played with no rivals".
+- **Names are the identity.** Rename a player and they start over in the pool, unless you `gmsa_rating_set` the new name from the old one's rating.
+
+---
+
+## Style
+
+Play styles: recognizable ways of playing that many players share, the rusher, the sniper, the explorer. What they like to do and how they do it, separate from how good they are. Styles are found from many players' sessions, or written by hand, and each player is matched to them live: how much like each style, how well it fits any, and how sure that is yet.
+
+| You want to | Use |
+| --- | --- |
+| Find the styles in many sessions | [gmsa_style_fit](#gmsa_style_fit) |
+| Write a style by hand | [gmsa_style_add](#gmsa_style_add) |
+| Follow one player as they play | [Trackers](#trackers) |
+| See how a player fits the styles | [gmsa_style_match](#gmsa_style_match), [gmsa_style_explain](#gmsa_style_explain) |
+| Let an agent's choice depend on the player's style | [gmsa_style_input](#gmsa_style_input) |
+| Name, adjust, merge or drop styles | [Editing styles](#editing-styles) |
+
+```gml
+global.styles = gmsa_style_set_create(["kills", "deaths", "distance", "cover"]);
+
+// where many players' sessions are (a server, or playtest data): find the styles, a few ms a frame
+var _job = gmsa_style_fit(global.styles, sessions);
+gmsa_style_schedule(_job, global.scheduler);
+// when _job.done: name them, save them, ship them with the game
+gmsa_style_name(global.styles, 0, "rusher");
+var _json = gmsa_style_save(global.styles);
+
+// in each player's game: a tracker, fed as things happen
+tracker = gmsa_style_tracker_create(global.styles);
+gmsa_style_count(tracker, "kills");                  // a kill just happened
+gmsa_style_sample(tracker, "distance", _distance);   // how far from the enemy right now
+gmsa_style_tick(tracker);                            // a minute of play passed
+
+var _m = gmsa_style_match(global.styles, tracker);
+// _m.best_name: "rusher", _m.p: a share per style, _m.fit: how typical, _m.confidence: how sure yet
+show_debug_message(gmsa_style_explain(global.styles, tracker));
+// rusher 97%, sniper 3% (fits well, sure): kills 3.10 (rusher 3.00), distance 160 (rusher 150), cover 0.12 (rusher 0.10)
+```
+
+Style depends only on Core.
+
+### Measures and sessions
+
+A **measure** is anything your game can count or read: kills a minute, deaths, distance kept from enemies, time near cover, gold spent, how often each action was chosen. A style set declares its measures by name. A **session** is one player's values for every measure over some play: a struct with a number per measure, or a tracker.
+
+Pick measures that describe how someone plays, not how well. Kills and deaths say both, so add measures that are pure style: distance, cover, routes, choices.
+
+### How fitting works
+
+- **A style is a typical value and a spread per measure,** and how common it is. Together the styles are a mixture of Gaussians, one per style, each measure on its own.
+- **Fitted by expectation-maximization** ([Dempster, Laird and Rubin 1977](https://doi.org/10.1111/j.2517-6161.1977.tb01600.x)): each session's share in each style, then each style from its sessions, until it settles. Started from sessions far apart (k-means++, [Arthur and Vassilvitskii 2007](https://dl.acm.org/doi/10.5555/1283383.1283494)), `restarts` times for each number of styles, the best kept.
+- **The number of styles is chosen by BIC** ([Schwarz 1978](https://doi.org/10.1214/aos/1176344136)): how well the styles explain the sessions, minus a cost for every style added. It tries 1 style, 2, 3 and so on up to `max_styles`, and stops once `patience` numbers in a row were no better.
+- **Measures are rescaled** to the same spread first, so none counts more for its units.
+- **Many sessions:** the restarts run on a random `sample` of them, and the best is finished on all of them, which is what it's judged by.
+- **In slices:** a fit is a job you finish at once, a few milliseconds a frame, or on a scheduler.
+
+Clustering players into styles from their play is an established method in game research, for example [Drachen, Canossa and Yannakakis 2009](https://pure.itu.dk/en/publications/player-modeling-using-self-organization-in-emtomb-raider-underwor/) on Tomb Raider: Underworld.
+
+How reliably it found 4 styles in simulation (32 to 64 runs each, the styles' sizes given as a ratio):
+
+| Sessions | 20 restarts (default) | 10 | 5 |
+| --- | --- | --- | --- |
+| 400, sizes 10 : 5 : 3 : 1 | 64 of 64 | 63 | 60 |
+| 150, sizes 10 : 5 : 3 : 1 | 59 of 64 | 58 | 51 |
+| 1000, sizes 10 : 5 : 3 : 1 | 64 of 64 | 62 | 63 |
+| 400, equal sizes | 64 of 64 | 64 | 64 |
+
+Uneven styles need restarts: a rare style is easily missed by an unlucky start. The `sample` of 200 found the same styles as fitting on all the sessions, 6 to 10 times faster for 1000 to 2000 sessions.
+
+### gmsa_style_set_create
+
+```gml
+gmsa_style_set_create(measures) -> set
+```
+
+`measures` is an array of names, or of `{ name, min, max }`. A range is only needed for [hand-written styles](#gmsa_style_add). The set holds the styles: found, hand-written or both.
+
+**Throws** when `measures` is empty, a name isn't a non-empty string or is declared twice, or a range's `min` isn't below its `max`.
+
+### gmsa_style_add
+
+```gml
+gmsa_style_add(set, name, typical, [params])
+```
+
+A hand-written style: its typical value per measure, `{ kills : 3, distance : 150 }`. A measure left out doesn't matter to the style: the middle of its range, spread over all of it.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `spread` | struct | 15% of each range | How far from typical a player of this style still is, per measure |
+| `weight` | real | 1 | How common the style is, against an average style |
+
+```gml
+var _set = gmsa_style_set_create([{ name : "kills", min : 0, max : 10 }, { name : "distance", min : 0, max : 2000 }, { name : "cover", min : 0, max : 1 }]);
+gmsa_style_add(_set, "rusher", { kills : 3, distance : 150 });
+gmsa_style_add(_set, "camper", { distance : 900, cover : 0.8 }, { spread : { cover : 0.1 } });
+```
+
+A single-player game with no crowd to learn from can write its styles this way and only match. Hand-written styles are never replaced by a fit, and found styles join them.
+
+**Throws** when the name is empty or taken, `typical` isn't a struct of numbers for declared measures, a spread or `weight` isn't above 0, or a measure needs a range it doesn't have (left out, or with no spread given).
+
+### gmsa_style_fit
+
+```gml
+gmsa_style_fit(set, sessions, [params]) -> job
+```
+
+Finds the styles in `sessions`, an array of structs (a number per measure) or trackers. Returns a job: finish it with [gmsa_style_fit_work](#gmsa_style_fit_work) or [gmsa_style_schedule](#gmsa_style_schedule). When it's done, the set holds its hand-written styles and the found ones.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `styles` | integer | none | A fixed number of styles, instead of choosing |
+| `max_styles` | integer | 8 | The most styles tried |
+| `restarts` | integer | 20 | Fresh starts for each number of styles, the best kept |
+| `patience` | integer | 2 | Numbers of styles in a row no better by BIC before it stops trying more |
+| `sample` | integer | 200 | The sessions the restarts run on, picked at random when there are more |
+| `iterations` | integer | 100 | The most passes of one start |
+| `keep` | real | 1 | How close a found style must be to an old named one to take its name, in the sessions' spreads per measure |
+| `seed` | real | 1 | The fit's own randomness. The same sessions and seed give the same styles |
+
+The job's fields: `done`, `found` (the number of styles found) and `bic`.
+
+**Fitting again** on new sessions replaces the found styles. A new style within `keep` of an old named one takes its name, closest pairs first. A genuinely new style comes unnamed, shown as "style 4".
+
+**Found styles' weights** average 1, the same as a hand-written style's default: a style twice as common as the others has about 2.
+
+**Throws** when `sessions` is empty, a session lacks a measure, a tracker belongs to another set, `styles`, `max_styles`, `restarts`, `patience`, `sample` or `iterations` isn't a whole number of 1 or more, `keep` is negative, or `styles` is more than there are sessions.
+
+### gmsa_style_fit_work
+
+```gml
+gmsa_style_fit_work(job, [budget]) -> bool
+```
+
+Works on the fit for about `budget` microseconds, or to the end without one. Returns true when the fit is done. Each call does at least a small slice, about 0.3 to 0.9 ms on VM.
+
+### gmsa_style_schedule
+
+```gml
+gmsa_style_schedule(job, scheduler, [priority]) -> job
+```
+
+Puts the fit on a [scheduler](#scheduler) as work, sharing the frame's budget with the agents and other jobs.
+
+A finished fit does nothing on later steps, at the cost of one call each. Take it off with [gmsa_scheduler_remove_work](#gmsa_scheduler_remove_work) once `job.done` is true.
+
+### Editing styles
+
+A style is named by its name or its index in [gmsa_style_list](#gmsa_style_list).
+
+```gml
+gmsa_style_list(set) -> array of { name, label, share, typical, spread, hand }
+gmsa_style_name(set, which, name)
+gmsa_style_adjust(set, which, typical)    // move its typical values: { kills : 2.5 }
+gmsa_style_merge(set, a, b)               // two become one, keeping a's name (or b's)
+gmsa_style_drop(set, which)
+```
+
+- `label` is the name, or "style 3" for one not named yet. `share` is how common it is, the shares adding up to 1. `typical` and `spread` are structs per measure, in your game's units. `hand` is true for hand-written styles.
+- A merged style is the two combined by how common each was, its spread wide enough to cover both.
+
+**Throws** when a name is taken or empty, a style doesn't exist, `merge` names one style twice, or `adjust` names an unknown measure or a value that isn't a number.
+
+### Trackers
+
+A tracker follows one player, fed as things happen. A **tick** is your game's unit of play: a second, a minute, a round. Recent play counts more, fading by `half_life` ticks, so the match follows a player who changes how they play.
+
+```gml
+gmsa_style_tracker_create(set, [params]) -> tracker
+gmsa_style_count(tracker, measure, [amount])    // something happened: read as how often per tick, amount 1 by default
+gmsa_style_sample(tracker, measure, value)      // a value seen now: averaged
+gmsa_style_choice(tracker, name)                // a choice was made: the measure named reads as its share of all choices
+gmsa_style_tick(tracker, [amount])              // time passed: amount ticks, 1 by default
+gmsa_style_values(tracker) -> struct            // the player's values now, a number per measure
+gmsa_style_tracker_reset(tracker)
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `half_life` | real | 10 | Ticks after which play counts half |
+| `confidence_k` | real | 3 | How many ticks of play make the match half sure |
+
+- **Counted, sampled or a choice:** each measure is fed one way, set by the first call. Counts read per tick: 3 kills in a tick is 3. Samples are averaged. Choices are shares: `gmsa_style_choice(tracker, "attack")` three times and `"block"` once is attack 0.75, block 0.25. A choice name that isn't a measure still counts toward all choices, so the shares stay true shares.
+- A measure never fed reads 0.
+- A tracker can be a session for [gmsa_style_fit](#gmsa_style_fit): its values are the session.
+
+**Throws** when a measure isn't in the set, a measure is fed two ways, a value isn't a number, `half_life` or `confidence_k` isn't above 0, or a tick `amount` is negative.
+
+### gmsa_style_match
+
+```gml
+gmsa_style_match(set, source) -> { names, p, best, best_name, fit, confidence, sure }
+```
+
+How closely `source`, a tracker or a struct with a number per measure, fits each style.
+
+| Field | Description |
+| --- | --- |
+| `names` | Each style's label, in the set's order |
+| `p` | Each style's share, adding up to 1 |
+| `best`, `best_name` | The style with the biggest share |
+| `fit` | How typical of its best style it is, 0 to 1. Above 0.6 fits well, below 0.25 is like none of them |
+| `confidence` | How much play the tracker has seen, 0 to 1. Always 1 for a struct of values |
+| `sure` | `confidence` times the best share |
+
+**Shares are relative:** a player like none of the styles still gets shares, all of it on the least unlike one. `fit` is what says so. In Demo 22 a mix nobody plays shows sniper 100% with fit 0.00, "like none of them".
+
+**Confidence** grows with the ticks the tracker has seen and reaches about 0.99 with steady play, the most a fading memory holds: after 1 tick 0.29, after 30 ticks 0.98, with the defaults.
+
+**Throws** when the set has no styles, a value is missing, or the tracker belongs to another set.
+
+### gmsa_style_input
+
+```gml
+gmsa_style_input(set, source, style, [params]) -> callback
+```
+
+A pull input callback: the share of the style named `style`, leaning on `fallback` while not sure, `p x confidence + fallback x (1 - confidence)`. `source` is a tracker, a struct of values, or a function `(agent, target)` returning one, so each target can be read for its own player.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `fallback` | real | 0 | The value before anything is known, 0 to 1 |
+
+It returns `fallback` while the set has no styles or none by that name, so an agent can be built before the styles ship.
+
+```gml
+// guards hold the doorway more against a rusher
+var _rusher = gmsa_style_input(global.styles, player_tracker, "rusher", { fallback : 0.3 });
+gmsa_profile_add_input(_p, gmsa_input_pull("rusher", _rusher));
+```
+
+**Throws** when `style` is empty, `fallback` is outside 0 to 1, or `source` isn't a tracker, struct or function.
+
+### gmsa_style_explain
+
+```gml
+gmsa_style_explain(set, source) -> string
+```
+
+Up to three shares (after the first, those of 5% or more), how well and how sure, then the three measures that set the best style apart from the runner-up, each with the player's value and the style's typical one:
+
+```
+rusher 97%, sniper 3% (fits well, sure): kills 3.10 (rusher 3.00), deaths 7.50 (rusher 8.00), distance 160 (rusher 150)
+support 61%, sniper 39% (fits loosely, fairly sure): distance 640 (support 500), cover 0.42 (support 0.30), kills 0.90 (support 0.50)
+sniper 100% (like none of them, not sure yet): kills 3.06 (sniper 1.47), distance 1604 (sniper 881), cover 0.77 (sniper 0.59)
+```
+
+"Sure" is a confidence of 0.75 or more, "fairly sure" 0.4 or more.
+
+### gmsa_style_save, gmsa_style_load
+
+```gml
+gmsa_style_save(set) -> string
+gmsa_style_load(set, json)
+```
+
+Every style, found and hand-written, with its name, weight, typical values and spreads. Load into a set with the same measures in the same order: fit where the data is, save, and ship the styles with every copy of the game.
+
+**Throws** when the save isn't a style save, is malformed, is from a newer version, or has different measures than the set.
+
+### What style costs
+
+| | VM | YYC |
+| --- | --- | --- |
+| Count or sample | 2.4 us | 0.7 us |
+| Tick, 4 measures | 3.5 us | 1.0 us |
+| Match, 3 styles | 30 us | 7 us |
+| Match, 8 styles | 56 us | 12 us |
+| Explain, 3 styles | 71 us | 27 us |
+| Explain, 8 styles | 109 us | 35 us |
+| Fit, 200 sessions, 4 measures, the defaults | 15.2 s | 2.5 s |
+| Fit, 1000 sessions | 20.9 s | about 3.5 s, estimated |
+
+- **Fitting is background work,** in slices of a few milliseconds, or done once on playtest data. The defaults spend time on reliability: Demo 22 fits 200 sessions with `restarts` 5 and `max_styles` 6, in about 4 seconds of slices on VM, and found the right styles in 198 of 200 simulated runs.
+- **Past `sample` sessions the cost grows slowly:** the restarts stay on 200 sessions, only the finishing passes see them all.
+- **Matching is cheap enough to run every tick** for every player. Trackers cost almost nothing per event.
+
+### Good to know
+
+- **Fit where the data is.** Finding styles needs many players' sessions in one place: a game's server, or playtest recordings. Then ship the styles. Matching runs in each player's game.
+- **Name the styles yourself.** A fit finds styles, not words for them. Read `typical` in [gmsa_style_list](#gmsa_style_list) and name them, refits keep the names.
+- **The shares are among the styles there are.** Check `fit` before trusting a share, and `confidence` before acting on one.
+- **A tick should be the same span in the sessions and in the trackers,** so counted measures mean the same: kills per minute in both.
+- **Leave out a measure that doesn't vary** across sessions. It can't tell styles apart, and a player who differs on it would match none of them.
 
 ---
 

@@ -182,10 +182,10 @@
   "resourceType":"GMProject",
   "resourceVersion":"2.0",
   "RoomOrderNodes":[
+    {"roomId":{"name":"rm_test","path":"rooms/rm_test/rm_test.yy",},},
     {"roomId":{"name":"rm_demo_22","path":"rooms/rm_demo_22/rm_demo_22.yy",},},
     {"roomId":{"name":"rm_demo_21","path":"rooms/rm_demo_21/rm_demo_21.yy",},},
     {"roomId":{"name":"rm_demo_20","path":"rooms/rm_demo_20/rm_demo_20.yy",},},
-    {"roomId":{"name":"rm_test","path":"rooms/rm_test/rm_test.yy",},},
     {"roomId":{"name":"rm_demo_19","path":"rooms/rm_demo_19/rm_demo_19.yy",},},
     {"roomId":{"name":"rm_demo_17","path":"rooms/rm_demo_17/rm_demo_17.yy",},},
     {"roomId":{"name":"rm_demo_18","path":"rooms/rm_demo_18/rm_demo_18.yy",},},

@@ -9,7 +9,7 @@ A pure GML utility AI framework. Your agents score every option they have, every
 
 GMSmartAgent replaces hand-written `if` chains and rigid state machines with **utility scoring**. Every possible action an agent could take gets a score between 0 and 1 based on what the agent knows right now (its health, the distance to a target, whether it holds a key), and the highest-scoring option wins. Add a new behavior by adding an action, not by rewriting the decision tree.
 
-For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks what to do, planning works out how: from recipes you write (HTN), from a goal and a list of actions it searches through itself (GOAP), or both in one plan. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do. And models can learn sequences: what the player does after what they just did, from a combo to which potion comes after a sword. Others learn each input on its own, so many inputs need only a few dozen choices, or remember whole moments, so "last time it looked like this" becomes a prediction.
+For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks what to do, planning works out how: from recipes you write (HTN), from a goal and a list of actions it searches through itself (GOAP), or both in one plan. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do. And models can learn sequences: what the player does after what they just did, from a combo to which potion comes after a sword. Others learn each input on its own, so many inputs need only a few dozen choices, or remember whole moments, so "last time it looked like this" becomes a prediction. Beyond choices, GMSmartAgent can also tell how good each player is, from who wins matches of any shape, and how they play, by sorting players into styles found from many sessions or written by hand. Both are ready to use as inputs.
 
 GMSmartAgent **only decides**. It never moves anything, never queries your room, never owns collision or spatial data. Your game hands it numbers, GMSmartAgent hands back a ranked list of options, or a plan one step at a time. What the agent does with it is up to you.
 
@@ -90,6 +90,15 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **The player as facts** - A choice model's prediction ("the player will guard the vault") becomes a fact plans require, and plans repair themselves when the prediction shifts
 - **Under the designer** - Learning only lowers recipe scores, never above yours, and a recipe you ruled out stays out
 - **Learn spaces** - Any model can learn from choices that aren't an agent's, described by names and numbers
+### Player Profiling
+- **Skill rating** - How good each player, agent or encounter is, and how sure that is, learned from matches of any shape: one on one, teams, free for alls, alliances, everyone against a boss, partial results and partial play (Weng and Lin)
+- **Win chance** - The chance one side beats another, as a number to show or an input an agent decides by
+- **Pick and balance** - The opponent or encounter for a chosen win chance (dynamic difficulty, matchmaking), and lobbies split into fair teams of any sizes
+- **Several pools** - One rating per mode or skill, a new pool starting from another
+- **Play styles** - Styles found in many players' sessions (a mixture model choosing how many there are), written by hand, or both in one set, named, adjusted, merged, and kept by name when fitted again
+- **Live matching** - A tracker per player, fed as things happen, says how much like each style they play now, how well they fit any, and how sure that is yet
+- **Explained** - "erkan: 1620, fairly sure, 34 matches, last: beat the ogre", "rusher 97%, sniper 3% (fits well, sure): kills 3.10 (rusher 3.00)"
+
 ### Developer Tools
 - **Debug view** - Ranked options with scores, probabilities and every consideration's value, drawn or as text, with the designer's score shown wherever learning changed it
 - **Plan tree view** - A drawn plan tree: the current step, the done ones, skipped recipes with their reasons, what the last repair changed, and progress while a plan is being made
@@ -361,6 +370,38 @@ Both learn from outcomes too, and save with the game. Demo 17 is a scout where N
 
 ---
 
+## Who's Better, and How They Play
+
+Two modules model the players themselves rather than their next choice.
+
+**Rating** learns how good each player, agent or encounter is from who wins, with how sure it is: a newcomer moves fast, a veteran settles. A match has any number of teams of any size, in any places, with any rivalries:
+
+```gml
+global.ladder = gmsa_rating_pool_create();
+gmsa_rating_match(global.ladder, { teams : [["erkan", "ada"], ["bot_1", "bot_2"]], places : [1, 2] });
+
+var _p = gmsa_rating_chance(global.ladder, ["erkan", "ada"], ["bot_3", "bot_4"]);   // 0 to 1
+var _fair = gmsa_rating_balance(global.ladder, lobby_names, 2);                     // two fair teams
+var _next = gmsa_rating_pick(global.fights, "player", monsters, 0.6);               // won 60% of the time
+```
+
+Next to Elo on Demo 20's ladder (simulated, 60 runs), its predicted chances were closer to the truth early on (0.09 off against 0.13 after 100 matches), and it placed a strong newcomer on top within a median of 27 matches, against Elo's 92. In Demo 21 it picks each fight for a 60% win as the player improves, where a fixed difficulty curve suits only the player it was tuned for.
+
+**Style** recognizes how someone plays, separate from how well. Styles are found from many players' sessions, where the data is pooled, or written by hand. Each player's tracker is fed as things happen, and matched live:
+
+```gml
+gmsa_style_count(tracker, "kills");
+gmsa_style_sample(tracker, "distance", _distance);
+gmsa_style_tick(tracker);
+
+show_debug_message(gmsa_style_explain(global.styles, tracker));
+// rusher 97%, sniper 3% (fits well, sure): kills 3.10 (rusher 3.00), distance 160 (rusher 150), cover 0.12 (rusher 0.10)
+```
+
+Demo 22 sorts a crowd of sessions into styles nobody named, then matches a live player as they switch between them, "not sure yet" at first, and "like none of them" for a mix nobody plays.
+
+---
+
 ## Plans That Take Several Steps
 
 Write the recipes once. Each step declares what it requires and what it changes, each task lists the ways to do it:
@@ -509,6 +550,8 @@ Learning in plans is paid per plan and per step, never per frame. With step reli
 
 Goals cost about 10 us per node searched, flat at every size. A goal over a handful of actions takes about 0.35 ms. Searches grow with every action that looks like progress, so goals leave out the actions that can't help: with 17 actions of which 6 are irrelevant, 1.3 ms pruned against 82 ms searching everything. Big searches can be spread over frames like any plan.
 
+A rating match costs 45 us for a 1 v 1 and about 0.3 ms for a free for all of 8, a chance 8 us, and splitting 30 players into 5 fair teams 22 ms at most, a lobby screen call. A style tracker costs 2 to 4 us per event, and matching a player 30 to 60 us. Finding styles is background work in slices: 200 sessions take about 15 s of slices on VM and 2.5 s on YYC, 1000 sessions about 21 s on VM. See [What rating costs](ApiReference.md#what-rating-costs) and [What style costs](ApiReference.md#what-style-costs).
+
 Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents or heavier models slows how often each one re-decides, never the game.
  
 ---
@@ -527,14 +570,13 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Roadmap
 
-- **v1.10: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
 - **Later** - GMNav input providers such as path cost and reachability, a full debug view with overlays and a scheduler budget view, YYC benchmarks, and a recurrent learner (GRU) for patterns longer than any window.
 
 ---
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, plans nobody wrote, goblins that read the rhythm of your play, and models that learn your taste input by input and moment by moment
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, plans nobody wrote, goblins that read the rhythm of your play, models that learn your taste input by input and moment by moment, and ratings and play styles
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
@@ -609,6 +651,22 @@ Aha, D. W., Kibler, D. and Albert, M. K. (1991) "[Instance-Based Learning Algori
 Kononenko, I. (1994) "[Estimating Attributes: Analysis and Extensions of RELIEF](https://mlanthology.org/ecmlpkdd/1994/kononenko1994ecml-estimating)", ECML-94, 171-182
 
 **Player modeling** Yannakakis, G. N. and Togelius, J. (2018) "[Artificial Intelligence and Games](https://gameaibook.org/)", Springer, chapter 5, "Modeling Players"
+
+**Skill rating** Elo, A. E. (1978) "[The Rating of Chessplayers, Past and Present](https://en.wikipedia.org/wiki/Elo_rating_system)", Arco Publishing
+
+Bradley, R. A. and Terry, M. E. (1952) "[Rank Analysis of Incomplete Block Designs: I. The Method of Paired Comparisons](https://doi.org/10.2307/2334029)", Biometrika, 39(3/4), 324-345
+
+Glickman, M. E. (1999) "[Parameter Estimation in Large Dynamic Paired Comparison Experiments](https://ideas.repec.org/a/bla/jorssc/v48y1999i3p377-394.html)", Journal of the Royal Statistical Society, Series C (Applied Statistics), 48(3), 377-394
+
+Weng, R. C. and Lin, C-J. (2011) "[A Bayesian Approximation Method for Online Ranking](https://jmlr.org/papers/v12/weng11a.html)", Journal of Machine Learning Research, 12, 267-300. The method Rating uses
+
+**Play styles** Dempster, A. P., Laird, N. M. and Rubin, D. B. (1977) "[Maximum Likelihood from Incomplete Data via the EM Algorithm](https://doi.org/10.1111/j.2517-6161.1977.tb01600.x)", Journal of the Royal Statistical Society, Series B, 39(1), 1-38
+
+Schwarz, G. (1978) "[Estimating the Dimension of a Model](https://doi.org/10.1214/aos/1176344136)", The Annals of Statistics, 6(2), 461-464. Choosing how many styles (BIC)
+
+Arthur, D. and Vassilvitskii, S. (2007) "[k-means++: The Advantages of Careful Seeding](https://dl.acm.org/doi/10.5555/1283383.1283494)", SODA '07, 1027-1035
+
+Drachen, A., Canossa, A. and Yannakakis, G. N. (2009) "[Player Modeling using Self-Organization in Tomb Raider: Underworld](https://pure.itu.dk/en/publications/player-modeling-using-self-organization-in-emtomb-raider-underwor/)", IEEE Symposium on Computational Intelligence and Games
 
 **Goal-oriented action planning (GOAP)** Orkin, J. (2006) "[Three States and a Plan: The A.I. of F.E.A.R.](https://gdcvault.com/play/1013282/Three-States-and-a-Plan)", Game Developers Conference
 
