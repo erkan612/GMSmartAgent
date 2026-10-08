@@ -9,7 +9,7 @@ A pure GML utility AI framework. Your agents score every option they have, every
 
 GMSmartAgent replaces hand-written `if` chains and rigid state machines with **utility scoring**. Every possible action an agent could take gets a score between 0 and 1 based on what the agent knows right now (its health, the distance to a target, whether it holds a key), and the highest-scoring option wins. Add a new behavior by adding an action, not by rewriting the decision tree.
 
-For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks what to do, planning works out how: from recipes you write (HTN), from a goal and a list of actions it searches through itself (GOAP), or both in one plan. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do. And models can learn sequences: what the player does after what they just did, from a combo to which potion comes after a sword.
+For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks what to do, planning works out how: from recipes you write (HTN), from a goal and a list of actions it searches through itself (GOAP), or both in one plan. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do. And models can learn sequences: what the player does after what they just did, from a combo to which potion comes after a sword. Others learn each input on its own, so many inputs need only a few dozen choices, or remember whole moments, so "last time it looked like this" becomes a prediction.
 
 GMSmartAgent **only decides**. It never moves anything, never queries your room, never owns collision or spatial data. Your game hands it numbers, GMSmartAgent hands back a ranked list of options, or a plan one step at a time. What the agent does with it is up to you.
 
@@ -49,6 +49,8 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **LambdaMART model** - Boosted decision trees for the most detailed rankings and sharp thresholds, trained in batches from the recent choices
 - **N-gram model** - What follows what, in which situation: combos, habits in order and many habits in one model, learned from dozens of choices
 - **TDNN model** - A neural network over the last few choices: which target comes next, and patterns where the moves in between don't matter
+- **Naive Bayes model** - Each input learned on its own, so many inputs need only a few dozen choices, and which target from what was on offer against what was picked
+- **Nearest neighbor model** - Remembers whole moments and predicts from the most similar: combinations, places on a map, rare moments, no training, and explains itself by pointing at a past moment with the game's own note
 - **Background training** - Batch models and the TDNN's replays train a little at a time, by hand or on the scheduler inside the same budget as the agents, and the old model keeps working until the new one is ready
 - **How sure** - Every prediction names its favourite and how sure the model is of it, so hints appear only when they're likely right
 - **Re-ranking** - Companions and enemies drift toward what a model learned, under an influence cap, never above the designer's score
@@ -61,7 +63,7 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **Precise or ambient results** - Report a result for one exact decision with a ticket, or reward an agent and let its recent decisions share the credit, fading with age
 - **Shared experience** - One model per squad, colony or village: every result any member gets teaches all of them
 - **Fair learning** - Rarely tried options aren't misjudged from too little data, and exploring only happens among the options your scoring ranks highest
-- **Every model** - Count, Linear, RankNet, LambdaMART, the n-gram, the TDNN and custom models all learn from outcomes through one setting
+- **Every model** - Count, Linear, RankNet, LambdaMART, the n-gram, the TDNN, Naive Bayes, nearest neighbor and custom models all learn from outcomes through one setting
 - **Moves in order** - A boss learns which of its moves pays off after which: "after my feint and sweep, the heavy attack lands"
 ### Neural Networks
 - **Small feed-forward networks** - Dense layers, backpropagation, SGD or Adam, the building block under RankNet and usable on their own
@@ -281,6 +283,8 @@ global.taste = gmsa_learn_lambdamart_create();  // the most detailed, trained in
 gmsa_learn_train(global.taste, 2000);           // a little each step until done, or once at a checkpoint
 global.taste = gmsa_learn_ngram_create();       // what follows what, see Learning Sequences below
 global.taste = gmsa_learn_tdnn_create();        // which target follows what, needs hundreds of choices
+global.taste = gmsa_learn_bayes_create();       // many inputs, each on its own, see Many Inputs, Whole Moments below
+global.taste = gmsa_learn_neighbor_create();    // whole moments: combinations, places and rare moments
 ```
 
 ---
@@ -336,6 +340,24 @@ gmsa_learn_schedule(global.next_buy, global.ai);  // trains in the scheduler's s
 ```
 
 Both learn from outcomes too, explain themselves, and save with the game. Demo 15 is a sparring partner that learns how you fight, Demo 16 a shop where the TDNN learns which potion you'll buy while the n-gram can only tell it'll be a potion.
+
+---
+
+## Many Inputs, Whole Moments
+
+Two more models read the same choices in opposite ways:
+
+- **Naive Bayes** learns each input on its own, then combines them. Eight scout reports, two of which decide where the player attacks: it finds the two within about a hundred attacks, where Count, which has to see every combination, is still guessing. It learns which item from what was on offer against what was picked, so a rare item the player always takes reads as wanted, and a common one they take by chance doesn't. It can't learn what only shows when inputs are read together.
+- **Nearest neighbor** remembers whole moments and predicts from the most similar ones. That's exactly what Naive Bayes can't do: a place on a map from x and y, "escapes only when low on health and surrounded", a rare moment worth remembering. It needs no training, and its explain points at a moment the player actually played, with a note from your game:
+
+```gml
+global.spots = gmsa_learn_neighbor_create();
+gmsa_learn_observe(global.spots, gmsa_observe(player_agent, acts, _act), "by the mill");
+
+// fish: like 12 choices ago, by the mill (x 40%, y 62%, fish), 7 of 8 similar moments agree (p 0.81)
+```
+
+Both learn from outcomes too, and save with the game. Demo 17 is a scout where Naive Bayes reads eight reports, Demo 18 a fighter who escapes only when cornered, with both models on it, and Demo 19 a map where each model draws what it learned about where a wanderer does what: nearest neighbor draws the river and the forests, Naive Bayes can't.
 
 ---
 
@@ -477,6 +499,8 @@ Learning models add their own cost to every re-ranked think, at 3 options:
 
 The sequence learners cost more per prediction. The n-gram predicts in about 0.2 to 0.5 ms and learns a choice in 0.15 to 1.3 ms. The TDNN predicts in about 0.35 ms with 4 options and learns a choice in 1.3 ms, plus about 1.2 ms per replayed choice, spread over frames by its training budget. See [What sequence learners cost](ApiReference.md#what-sequence-learners-cost).
 
+Naive Bayes predicts in about 0.2 to 0.5 ms and learns a choice in 0.2 to 0.7 ms, however much it has seen. Nearest neighbor's cost grows with its memory, about 1.2 us per remembered moment: with the default 256 moments it predicts in about 0.6 ms and learns a choice in 0.75 ms, with 1024 in 1.5 and 2 ms. Choosing among many items is its expensive case, about 4.5 ms with 8 on offer. See [What Naive Bayes and nearest neighbor cost](ApiReference.md#what-naive-bayes-and-nearest-neighbor-cost).
+
 LambdaMART trains inside a budget you set, with a measured overshoot under 130 us at 2 ms. Learning from outcomes costs about 25 us per reported result with Count, Linear or LambdaMART, and about 180 us with RankNet. The [API Reference](ApiReference.md#what-models-cost) has the full table.
 
 Planning costs about 9 to 13 us per node searched. A plan of around ten steps takes about 0.3 ms to make, and each step after that about 30 us to check and hand over. The default budget of 250 nodes keeps a hopeless search to a few milliseconds. Scheduled planners make their plans inside the scheduler budget, going over it by under 40 us, and cost about 0.7 us per step while idle. See [What planning costs](ApiReference.md#what-planning-costs).
@@ -503,7 +527,6 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Roadmap
 
-- **v1.9: More choice models** - Naive Bayes for habits across many inputs at once, and nearest neighbor for "last time it looked like this".
 - **v1.10: Player profiling** - Skill rating that estimates how good the player really is, and style clustering that recognizes how they play, both available as inputs for any profile.
 - **Later** - GMNav input providers such as path cost and reachability, a full debug view with overlays and a scheduler budget view, YYC benchmarks, and a recurrent learner (GRU) for patterns longer than any window.
 
@@ -511,7 +534,7 @@ Use priority tiers so the agents near the player think first, and give the AI a 
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, plans nobody wrote, and goblins that read the rhythm of your play
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, plans nobody wrote, goblins that read the rhythm of your play, and models that learn your taste input by input and moment by moment
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  
@@ -570,6 +593,20 @@ Willems, F. M. J., Shtarkov, Y. M. and Tjalkens, T. J. (1995) "[The Context-Tree
 **Confidence of neural networks** Guo, C., Pleiss, G., Sun, Y. and Weinberger, K. Q. (2017) "[On Calibration of Modern Neural Networks](https://arxiv.org/abs/1706.04599)", ICML 2017
 
 Nguyen, A., Yosinski, J. and Clune, J. (2015) "[Deep Neural Networks are Easily Fooled: High Confidence Predictions for Unrecognizable Images](https://arxiv.org/abs/1412.1897)", CVPR 2015
+
+**Naive Bayes** Domingos, P. and Pazzani, M. (1997) "[On the Optimality of the Simple Bayesian Classifier under Zero-One Loss](https://doi.org/10.1023/A:1007413511361)", Machine Learning, 29, 103-130
+
+Zadrozny, B. and Elkan, C. (2001) "[Obtaining Calibrated Probability Estimates from Decision Trees and Naive Bayesian Classifiers](https://mlanthology.org/icml/2001/zadrozny2001icml-obtaining)", ICML 2001. Why combined evidence needs softening
+
+**Nearest neighbor** Cover, T. M. and Hart, P. E. (1967) "[Nearest Neighbor Pattern Classification](https://doi.org/10.1109/TIT.1967.1053964)", IEEE Transactions on Information Theory, 13(1), 21-27
+
+Dudani, S. A. (1976) "[The Distance-Weighted k-Nearest-Neighbor Rule](https://doi.org/10.1109/TSMC.1976.5408784)", IEEE Transactions on Systems, Man, and Cybernetics, 6(4), 325-327
+
+Aha, D. W., Kibler, D. and Albert, M. K. (1991) "[Instance-Based Learning Algorithms](https://doi.org/10.1007/BF00153759)", Machine Learning, 6, 37-66. Keeping some moments longer than others
+
+**Learned input weights (Relief)** Kira, K. and Rendell, L. A. (1992) "[A Practical Approach to Feature Selection](https://mlanthology.org/icml/1992/kira1992icml-practical)", ICML 1992, 249-256
+
+Kononenko, I. (1994) "[Estimating Attributes: Analysis and Extensions of RELIEF](https://mlanthology.org/ecmlpkdd/1994/kononenko1994ecml-estimating)", ECML-94, 171-182
 
 **Player modeling** Yannakakis, G. N. and Togelius, J. (2018) "[Artificial Intelligence and Games](https://gameaibook.org/)", Springer, chapter 5, "Modeling Players"
 

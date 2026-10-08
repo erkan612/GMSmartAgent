@@ -1,6 +1,6 @@
 # Getting Started with GMSmartAgent
 
-This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, who learn which plans work and when you're watching, who work out plans nobody wrote, and who read the rhythm of your play. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
+This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, who learn which plans work and when you're watching, who work out plans nobody wrote, who read the rhythm of your play, and who learn your taste input by input and moment by moment. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
 For every function's full details, see the [API Reference](ApiReference.md).
 
@@ -27,7 +27,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 17. [Reading the Player](#17-reading-the-player)
 18. [Plans Nobody Wrote](#18-plans-nobody-wrote)
 19. [Learning Sequences](#19-learning-sequences)
-20. [Troubleshooting](#20-troubleshooting)
+20. [Many Inputs, Whole Moments](#20-many-inputs-whole-moments)
+21. [Troubleshooting](#21-troubleshooting)
 
 ---
 
@@ -1474,7 +1475,83 @@ The [API Reference](ApiReference.md#learning-sequences) has how both work, their
 
 ---
 
-## 20. Troubleshooting
+## 20. Many Inputs, Whole Moments
+
+The copycat's model reads five inputs now: your health, how far each item is, and the three kinds of coin from [chapter 13](#13-learning-what-works). Two more models read them in opposite ways. One takes each input on its own, the other takes the whole moment at once.
+
+**Input by input.** Play like this: you like silver coins, you don't care how far they are, and when you're hurt you drink. Each part of that habit depends on one input. **Naive Bayes** learns each input on its own, per action, so five inputs or fifty, it needs only a few dozen picks:
+
+```gml
+// o_controller > Create, replace the global.taste line
+global.taste = gmsa_learn_bayes_create({ input_bins : { kind_0 : 2, kind_1 : 2, kind_2 : 2 } });  // the kinds are 0 or 1, two bins say it all
+```
+
+It also learns from what you passed up. Silver is one kind in three, so most of the time you're choosing among gold and copper, and a model that only counted your picks could decide you like gold. Naive Bayes compares how often silver was on offer with how often you took it, so it learns silver.
+
+Show what it thinks you'll pick next, and why:
+
+```gml
+// o_controller > Draw GUI (add)
+if (instance_exists(o_player)) {
+    var _d = gmsa_agent_evaluate(o_player.agent);
+    if (array_length(_d.options) > 0) {
+        var _out = gmsa_learn_predict(global.taste, _d);
+        var _lines = gmsa_learn_explain(global.taste, _d, _out.best);
+        draw_text(16, 40, _lines[0]);
+    }
+}
+```
+
+Each input gets its own say, as a factor on how likely the pick is:
+
+```
+loot: picked 31% of the time, kind_2 50-100% x2.90, hp 75-87% x1.40, distance 12-25% x1.10 (p 0.58)
+```
+
+What it can't learn is a habit that depends on two inputs at once, like the one from [chapter 12](#12-choosing-a-model): healthy, walk anywhere for a coin, hurt, only grab coins close by. Naive Bayes multiplies what it saw at this health by what it saw at this distance, so "it depends" is invisible to it, as it is to Linear. That's what "naive" means.
+
+**Moment by moment.** **Nearest neighbor** remembers whole moments: your health, every item on offer with its distance and kind, and which one you took. To guess, it finds the moments most like this one and asks what you did then. Combinations are exactly what it's good at:
+
+```gml
+// o_controller > Create, replace the global.taste line
+global.taste = gmsa_learn_neighbor_create();
+```
+
+Play the chapter 12 way again. After a few dozen picks the copycat walks anywhere for a coin when it's healthy, and stays close when it's hurt. It needs no training, no batches and no budget: it learns from your first click.
+
+Its explain points at a moment you played. Give each moment a note, and the explain line shows it. Here, where you were when you picked:
+
+```gml
+// o_player > Global Left Pressed, replace the gmsa_learn_observe line for global.taste
+if (_chosen >= 0) gmsa_learn_observe(global.taste, gmsa_observe(agent, _offered, _chosen), (x < room_width / 2) ? "on the west side" : "on the east side");
+```
+
+```
+loot: like 9 choices ago, on the west side (hp 30%, distance 8%, kind_0 100%, loot), 5 of 6 similar moments agree (p 0.77)
+```
+
+Notes are for explaining: every other model ignores them, so passing one never hurts.
+
+**What it costs.** Every prediction compares the moment with every one it remembers: about 0.6 ms on the VM once its memory of 256 moments is full. One copycat re-ranked by it is fine, every goblin in the room isn't. Naive Bayes costs about 0.2 ms. Both are measured in the [API Reference](ApiReference.md#what-naive-bayes-and-nearest-neighbor-cost).
+
+**Which one?**
+
+| Model | Use it for |
+| --- | --- |
+| Naive Bayes | Many inputs, each mattering on its own. Learns in dozens of picks, and tells items apart by what was on offer |
+| Nearest neighbor | Habits that depend on combinations, places, rare moments. Explains itself with a moment you played. Costs more, and more with a bigger memory |
+
+Three things to remember:
+
+- **Give Naive Bayes inputs that say different things.** Two that say the same (`hp` and `is_hurt`) would count twice. It notices and softens the double count, but one input is cleaner.
+- **Nearest neighbor's memory is its detail and its cost.** It keeps 256 moments by default, and once full, old ones make way for new ones. A habit that never changes can take a bigger `capacity` and a longer `half_life`.
+- **A rare moment needs a few sightings.** Nearest neighbor remembers surprising moments longest, but one sighting competes with every ordinary moment near it. In testing it caught a rare moment 30% of the time on its 2nd sighting and 86% from the 7th on.
+
+The [API Reference](ApiReference.md#naive-bayes-and-nearest-neighbor) has how both work, their settings and what they cost. Demo 17, the scout, has Naive Bayes find the two scout reports out of eight that decide an attack. Demo 18, the ambush, puts both on one fighter who escapes only when cornered. Demo 19, the map, draws what each one learned about where a wanderer does what.
+
+---
+
+## 21. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -1586,6 +1663,24 @@ A full n-gram forgets a tenth of its contexts at once, a few milliseconds on the
 
 **A sequence model throws that learn spaces have none.**
 The n-gram and the TDNN need an agent's history. Learned methods and other spaces use the other models.
+
+**Naive Bayes names an input that doesn't matter.**
+A fine bin with little data in it, early on or with a short `half_life`: `fog 38-50% x0.55`. It fades as the bins fill. A longer `half_life` steadies it.
+
+**Naive Bayes can't learn a habit that depends on two inputs together.**
+That's what "naive" means: each input is learned on its own. Use nearest neighbor, or RankNet.
+
+**Nearest neighbor's guesses keep shifting after a while.**
+Its memory is full, and old moments make way for new ones. Raise `capacity` for more detail, and for a habit that doesn't change, raise `half_life` too.
+
+**Nearest neighbor makes thinking slow.**
+Each prediction compares against every remembered moment. Give it to a few agents, or read it through `gmsa_learn_input`, which shares one prediction per frame. Lower `capacity`, and with many items on offer, lower `candidates`.
+
+**Nearest neighbor forgot a rare moment it saw once.**
+One sighting isn't enough: a rare moment needs a few before it beats the common moments around it. Keep `importance` on, and give it a bigger `capacity` if many ordinary moments push it out.
+
+**The explain line shows no note.**
+Only nearest neighbor keeps notes, and only from calls that pass one: the last argument of `gmsa_learn_observe`, `gmsa_learn_outcome` or `gmsa_learn_reward`.
 
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.

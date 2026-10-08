@@ -20,6 +20,7 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [Learn](#learn)
 - [Learning From Outcomes](#learning-from-outcomes)
 - [Learning Sequences](#learning-sequences)
+- [Naive Bayes and Nearest Neighbor](#naive-bayes-and-nearest-neighbor)
 - [Net](#net)
 - [Plan](#plan)
 - [PlanLearn](#planlearn)
@@ -91,6 +92,8 @@ The kind of a learning model, see [Learn](#learn).
 | `gmsa_learn_tier.LAMBDAMART` | Boosted ranking trees, made with `gmsa_learn_lambdamart_create` |
 | `gmsa_learn_tier.NGRAM` | What follows what, in which situation, made with `gmsa_learn_ngram_create` |
 | `gmsa_learn_tier.TDNN` | A network over the last few choices, made with `gmsa_learn_tdnn_create` |
+| `gmsa_learn_tier.BAYES` | Each input learned on its own, made with `gmsa_learn_bayes_create` |
+| `gmsa_learn_tier.NEIGHBOR` | Whole moments remembered, made with `gmsa_learn_neighbor_create` |
 
 ### gmsa_learn_target
 What a learning model learns from, see [Learning From Outcomes](#learning-from-outcomes).
@@ -869,6 +872,8 @@ gmsa_profile_add_input(_p, gmsa_input_pull("will_drink", gmsa_learn_input(global
 | LambdaMART | Boosted decision trees ranking the options | Hundreds of choices, trained in batches | The most detailed rankings, sharp thresholds | Slowest to predict, needs `gmsa_learn_train`, can miss situations seen fewer than about 20 times |
 | N-gram | What follows what, in which situation | Dozens of choices | Habits in order, combos, many habits in one model, explains itself in plain words | Actions only, not targets. See [Learning Sequences](#learning-sequences) |
 | TDNN | A network over the last few choices, scoring each option | Hundreds of choices | Which target in order, patterns that skip moves | Slower to learn and to run. See [Learning Sequences](#learning-sequences) |
+| Naive Bayes | Each input's say per action, from what was on offer and what was picked | Dozens of choices, even with many inputs | Many inputs, which target, explains each input's say | Can't learn combinations of inputs. See [Naive Bayes and Nearest Neighbor](#naive-bayes-and-nearest-neighbor) |
+| Nearest neighbor | Whole moments, predicting from the most similar | Dozens of choices, a few sightings of a rare moment | Combinations of inputs, places, rare moments, explains by pointing at a past moment | Costs grow with its memory. See [Naive Bayes and Nearest Neighbor](#naive-bayes-and-nearest-neighbor) |
 | Custom | Whatever you write | | Game-specific patterns | |
 
 ### What models cost
@@ -882,7 +887,7 @@ Measured on the VM target, per call, at 3 and 10 options on offer. YYC is faster
 | RankNet | 417 / 1253 us | 131 / 418 us | 105 / 348 us |
 | LambdaMART | 23 / 52 us, stores only | 486 / 1557 us | 513 / 1650 us |
 
-The sequence learners are measured in [What sequence learners cost](#what-sequence-learners-cost).
+The sequence learners are measured in [What sequence learners cost](#what-sequence-learners-cost), Naive Bayes and nearest neighbor in [What Naive Bayes and nearest neighbor cost](#what-naive-bayes-and-nearest-neighbor-cost).
 
 LambdaMART training with 100 trees takes about 1.4 s for 500 rows (100 choices of 5 options) and 6.6 s for 2,500 rows, or the same work spread over frames with a budget, see [gmsa_learn_train](#gmsa_learn_train).
 
@@ -911,7 +916,7 @@ gmsa_learn_count_create([params]) -> model
 | `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
 
 How it works:
-- Each situational input (one that doesn't depend on the target) is cut into bins, and the combination of bins is the **situation**. Per-target inputs are ignored.
+- Each situational input (one that doesn't depend on the target) is cut into bins, and the combination of bins is the **situation**. Per-target inputs are ignored. With no situational inputs, every moment is the same situation.
 - Per situation, it counts how often each action was chosen, with older choices fading by `half_life`.
 - A prediction is each action's smoothed share of its situation. Options with the same action split that action's share.
 - **Confidence is per situation:** `n / (n + confidence_k)`, where `n` is the amount of data for this situation. A model with plenty of data overall but none for the current situation says it doesn't know.
@@ -1063,6 +1068,7 @@ sample = {
     chosen    : 0,                   // -1 when predicting
     weight    : 1,                   // outcomes: the credit times the odds correction
     reward    : undefined,           // outcomes: the reported reward
+    note      : undefined,           // the note given with it, as text, see Notes on moments
 };
 ```
 
@@ -1075,10 +1081,10 @@ Predictions are cleaned before anyone uses them: negative or NaN values become 0
 ### gmsa_learn_observe
 
 ```gml
-gmsa_learn_observe(model, decision) -> bool
+gmsa_learn_observe(model, decision, [note]) -> bool
 ```
 
-Trains the model on a decision with a chosen option, usually from `gmsa_observe`. Nothing trains automatically: one observation can train several models, and choices you don't want learned (tutorials, cutscenes) are simply not passed in.
+Trains the model on a decision with a chosen option, usually from `gmsa_observe`. `note` is kept with the moment by nearest neighbor and shown when explaining, see [Notes on moments](#notes-on-moments). Nothing trains automatically: one observation can train several models, and choices you don't want learned (tutorials, cutscenes) are simply not passed in.
 
 **Returns** false when the model is frozen.
 
@@ -1373,10 +1379,10 @@ The decision the agent is acting on right now, or `undefined`. A ticket holds ev
 ### gmsa_learn_outcome
 
 ```gml
-gmsa_learn_outcome(model, ticket, reward) -> bool
+gmsa_learn_outcome(model, ticket, reward, [note]) -> bool
 ```
 
-Teaches an outcome model how the decision behind a ticket turned out. Use it when you know exactly which decision caused the result: this shot hit, this sale happened.
+Teaches an outcome model how the decision behind a ticket turned out. Use it when you know exactly which decision caused the result: this shot hit, this sale happened. `note`, see [Notes on moments](#notes-on-moments).
 
 **Returns** false when the model is frozen.
 
@@ -1385,13 +1391,14 @@ Teaches an outcome model how the decision behind a ticket turned out. Use it whe
 ### gmsa_learn_reward
 
 ```gml
-gmsa_learn_reward(model, agent, reward) -> real
+gmsa_learn_reward(model, agent, reward, [note]) -> real
 ```
 
 Something good or bad just happened to a tracked agent, and you don't know which decision caused it: it took damage, it found gold. The credit is spread over its recent decisions:
 
 - The decision it's acting on now gets the full reward.
 - An ended decision gets less the longer ago it ended, fading to nothing at the `window`.
+- A `note` goes with every decision credited, see [Notes on moments](#notes-on-moments).
 
 **Returns** how many decisions were credited.
 
@@ -1516,7 +1523,7 @@ Like [gmsa_learn_predict](#gmsa_learn_predict): `p[i]` matches `options[i]`. The
 ### gmsa_learn_space_observe
 
 ```gml
-gmsa_learn_space_observe(model, space, options, chosen) -> bool
+gmsa_learn_space_observe(model, space, options, chosen, [note]) -> bool
 ```
 
 A choice model learns that `options[chosen]` was picked. **Returns** false when the model is frozen.
@@ -1524,7 +1531,7 @@ A choice model learns that `options[chosen]` was picked. **Returns** false when 
 ### gmsa_learn_space_outcome
 
 ```gml
-gmsa_learn_space_outcome(model, space, options, chosen, probability, reward, [credit]) -> bool
+gmsa_learn_space_outcome(model, space, options, chosen, probability, reward, [credit], [note]) -> bool
 ```
 
 An outcome model learns how `options[chosen]` turned out. `probability` is the chance it had of being chosen (above 0, at most 1), used for the same fair learning as tracked decisions. `credit` (above 0, at most 1, default 1) scales the update. **Returns** false when the model is frozen.
@@ -1779,6 +1786,197 @@ Measured on the VM target, per call, with a player of 4 actions and 1 input afte
 - **Outcome learners learn only what the agent tries.** A move that pays off in one rare moment and is bad everywhere else is seldom tried there, so it's learned slowly or not at all. In testing, "a heavy attack lands after a feint and a sweep", a moment that came up 2% of the time, was the model's favourite there only about 30% of the time even after 1,500 moves. Exploration is the agent's selection, see [Fair learning and exploration](#fair-learning-and-exploration).
 - **Hints and thresholds read `sure`, not `confidence`,** see [gmsa_learn_predict](#gmsa_learn_predict).
 - **A history is per model and per agent.** Two models watching one player keep two histories, both on the player's agent.
+
+---
+
+## Naive Bayes and Nearest Neighbor
+
+Two more learners that see one moment at a time, each learning what the others can't:
+
+- **Naive Bayes:** learns each input on its own, per action, then combines them. It learns from a few dozen choices even with many inputs, where Count's combinations explode, and tells targets apart by comparing what was on offer with what was picked. It explains itself input by input. It can't learn what only shows when inputs are read together.
+- **Nearest neighbor:** remembers whole moments (the situation, every option on offer, the pick) and predicts from the most similar ones. It learns combinations of inputs, places on a map and rare moments, needs no training, and explains itself by pointing at a past moment. It costs more, and its cost grows with its memory.
+
+Both learn from choices and from outcomes, save and load, explain, work as re-rankers and predictor inputs like every other model, and work with [learn spaces](#learn-spaces).
+
+```gml
+// eight scout reports, two of which decide where the player attacks
+global.attacks = gmsa_learn_bayes_create();
+gmsa_learn_observe(global.attacks, gmsa_observe(player_agent, lanes, _lane));
+
+// where on the map the player does what, with a note the explain line will show
+global.spots = gmsa_learn_neighbor_create();
+gmsa_learn_observe(global.spots, gmsa_observe(player_agent, acts, _act), "by the mill");
+
+var _e = gmsa_agent_evaluate(player_agent);
+var _out = gmsa_learn_predict(global.spots, _e);
+var _lines = gmsa_learn_explain(global.spots, _e, _out.best);
+// _lines[0]: fish: like 12 choices ago, by the mill (x 40%, y 62%, fish), 7 of 8 similar moments agree (p 0.81)
+```
+
+### Choosing between them
+
+How often the favourite was right in testing, with the default settings (simulated players with some random choices):
+
+| Pattern | Naive Bayes | Nearest neighbor | For comparison |
+| --- | --- | --- | --- |
+| 8 scout reports, 2 decide the attack (Demo 17), after 200 to 300 choices | 0.90 | | Count 0.46 to 0.58: with 8 inputs it can only cut each in two |
+| 8 inputs, 4 matter, not one-directional, after 400 to 600 choices (best about 0.92) | 0.65 | | Count on the 4 that matter 0.57, Linear 0.43 |
+| One action when exactly one of two inputs is high | 0.50 | 0.85 | |
+| A map: fish by the river, hunt in the forests, rest elsewhere (Demo 19), at river and forest stops | 0.05 to 0.12 | 0.76 to 0.84 | |
+| Cornered, low hp and many enemies at once, 1 moment in 20 (Demo 18), cornered moments | 0.57 to 0.63 | 0.82 to 0.87 | |
+| The same player, every moment | 0.94 | 0.91 | |
+| Cheap potions, rare on the shelf and wanted | 0.81 | 0.93 | Linear 0.93 |
+| Outcomes, effects added up | 0.62 to 0.65 | 0.63 | Linear 0.45 |
+
+- **Naive Bayes** when there are many inputs and little data, and each input matters on its own ("hurt: drink", "poor: loot"). In Demo 17 it reads eight scout reports and finds the two that matter, passing 0.8 within about 100 attacks.
+- **Nearest neighbor** when inputs only mean something together: a place from x and y, "low hp with many enemies", rare moments worth remembering. Also when "last time it looked like this" is the explanation you want to show.
+- **Both at once is fine.** One recorded choice can teach both, as in Demos 18 and 19. On ordinary moments decided by one input, Naive Bayes is slightly better.
+
+### gmsa_learn_bayes_create
+
+```gml
+gmsa_learn_bayes_create([params]) -> model
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `bins` | integer | 8 | The finest cut of each input |
+| `input_bins` | struct | `{}` | The finest cut per input name, instead of `bins`: `{ gold : 32, is_night : 2 }` |
+| `inputs` | array | all | Names of the inputs it learns from, situational and per-target alike |
+| `smoothing` | real | 4 | How strongly each finer cut leans on the coarser one, in choices |
+| `temper` | `"auto"` or real | `"auto"` | Softens the combined evidence when inputs overlap, see below. A number fixes it, 1 for none |
+| `half_life` | real | 50 | Observations after which an old choice counts half |
+| `confidence_k` | real | 5 | Data in an option's bins needed for 50% confidence |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
+
+No setting has an upper limit.
+
+How it works:
+- **Per action, a base:** how often it's picked when it's on offer, or with outcomes its average reward.
+- **Per action and input, counts per bin:** how often an option in that bin was on offer, and how often it was picked. The ratio is the preference, so it learns which target ("potions under 30 gold") and doesn't mistake what's usually on the shelf for what's liked. With cheap potions common and a player who doesn't care, it stays honest: counting only what was picked claims a preference that isn't there.
+- **Several cuts at once:** halves, quarters, eighths, up to the input's bins. Each finer cut starts from the coarser one and is pulled toward its own counts as data piles up, so it's useful after a few choices and detailed after many.
+- **Combined:** each input's say is a factor on the odds, or with outcomes an effect added to the base. "Naive" means the inputs are treated as unrelated, so their says simply multiply, or add.
+- **Tempered:** inputs that say the same thing (`hp` and `is_hurt`) would count twice and make it overconfident. With `temper` set to `"auto"` it checks how well softer versions (exponents 0.75, 0.5, 0.35 and 0.25) would have predicted each new choice, and uses one only when it predicted at least 5% better. In testing, three inputs that all said "hurt" brought the favourite's probability from 0.99 to 0.94, where it was right 0.95 of the time. Independent inputs stayed untouched.
+- **Old choices fade** by `half_life`, at no cost per choice.
+- **Confidence is per option:** `n / (n + confidence_k)`, where `n` is the data in that option's finest bins, averaged over its inputs.
+- The inputs it learns from are fixed the first time it's used.
+
+Explain names the action's base and the three inputs with the biggest say:
+
+```
+drink: picked 34% of the time, hp 25-37% x3.10, gold 50-62% x1.20, danger 0-12% x0.85 (p 0.64)
+heavy: base -0.20, distance 0-12% +0.52, stunned 88-100% +0.40, expected +0.73
+```
+
+**Choosing the settings:**
+- **`bins`:** coarse cuts speak first, so a high value costs little early. In testing, several cuts up to 8 beat fixed bins: 0.65 against 0.62 with 4 fixed bins and 0.58 with 16. An on or off input needs only 2: `input_bins : { is_night : 2 }`.
+- **`smoothing`:** 4 was as good as 2 or better in every test, and kept an input that doesn't matter from borrowing another input's effect when outcomes were few.
+- **`half_life`:** 50 remembers about the last 70 choices, quick to follow a changed habit and a little jumpy. In Demo 17, 200 held 0.91 instead of 0.86, but 100 choices after the habit changed it was still at 0.45, against 0.72.
+
+**Throws** when `bins` or an `input_bins` value isn't a whole number of 1 or more, `input_bins` isn't a struct, `smoothing` isn't above 0, `temper` isn't `"auto"` or a number above 0, or `inputs` is empty. Loading throws when the save cuts an input into a different number of bins than the model does.
+
+### gmsa_learn_neighbor_create
+
+```gml
+gmsa_learn_neighbor_create([params]) -> model
+```
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `capacity` | integer | 256 | The most moments remembered |
+| `k` | integer | 8 | The nearest moments that vote |
+| `candidates` | integer | 24 | With no situational inputs: the moments compared in detail, those whose pick is most like an option on offer |
+| `weights` | struct | `{}` | Your weight per input name, 0 ignores the input: `{ hp : 2, gold : 0.25, time_of_day : 0 }` |
+| `learn_weights` | bool | true | Also learn each input's weight from the choices or outcomes, on top of yours |
+| `importance` | real | 1 | How much longer surprising moments (choices) or big rewards (outcomes) are kept, 0 forgets the oldest first |
+| `merge` | bool | true | The same moment again adds to one memory with a count, instead of a new one |
+| `similar` | real | 0.15 | How close an option's own inputs must be for it to count as the same kind of option |
+| `reach` | real | 0.25 | How far a moment can be and still count fully toward confidence |
+| `inputs` | array | all | Names of the inputs it compares |
+| `half_life` | real | 200 | Observations after which an old moment counts half |
+| `confidence_k` | real | 2 | Weight of nearby moments needed for 50% confidence |
+| `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
+
+No setting has an upper limit: `capacity` is the speed and detail setting, yours to choose.
+
+How it works:
+- **A moment is a whole decision:** the situation, every option on offer with its own inputs, and the pick. With outcomes, the option tried and its reward.
+- **Choices:** it finds the `k` moments nearest by situation and asks, for each option on offer now, how often an option like it was picked when it was on offer there. Nearer moments count more (by the inverse of the squared distance, [Dudani 1976](https://doi.org/10.1109/TSMC.1976.5408784)), older ones less, and few or far moments pull the answer toward an even split.
+- **Outcomes:** for each option on offer, the `k` nearest moments where its action was tried, by situation and by the option's own inputs. The expected reward is their closeness-weighted average. An option never tried in a similar moment counts as 0.
+- **No situational inputs,** as in a shop where only the items differ: the `candidates` moments whose pick is most like an option on offer now are compared in detail.
+- **Distance** is each input's difference, weighted. Every input starts equal, your `weights` scale them, and with `learn_weights` each input's weight is learned too (Relief, [Kira and Rendell 1992](https://mlanthology.org/icml/1992/kira1992icml-practical), [Kononenko 1994](https://mlanthology.org/ecmlpkdd/1994/kononenko1994ecml-estimating)): inputs that differ where a different pick was made gain weight, inputs that differ where the same pick was made lose it. With outcomes, a different result is a reward more than half the spread of the nearby rewards away. Your 0 always ignores an input.
+- **When the memory is full, the least important moment goes.** Importance is 1 plus how surprising the moment was (how unlikely the model thought the pick) or how big its reward was, times `importance`, fading by `half_life`. The same moment again merges into one, with a count.
+- **Confidence:** `n / (n + confidence_k)`, where `n` is the weight of the nearest moments, counting fully within `reach` and less beyond.
+- **Nothing to train:** it learns from the first choice.
+- The inputs it compares are fixed the first time it's used. Saves keep the moments with their notes, and the learned weights.
+
+Explain points at a past moment: how long ago in the model's own count, the [note](#notes-on-moments) the game gave it, its strongest inputs and its pick, then how many similar moments agree:
+
+```
+escape: like 37 choices ago, at the bridge (hp 5%, enemies 96%, stamina 40%, escape), 4 of 5 similar moments agree (p 0.80)
+block: 0 of 6 similar moments picked it, the nearest 3 choices ago (stamina 61%, hp 60%, enemies 20%, attack) (p 0.08)
+heavy: like 12 outcomes ago (distance 8%, stunned 95%, heavy, +0.90), 6 similar moments, expected +0.71
+```
+
+**Choosing the settings:**
+- **`capacity` is how detailed its picture can get, and its cost.** Every prediction compares against every remembered moment. In Demo 19, a memory of 256 drew the map 89% right, and once full about 10% of the map changed its guess every 100 stops as old moments made way for new ones. A memory of 1024 with `half_life` 1000 drew it 93.5% right with 2.4% changing, at about 2.5 times the cost.
+- **`half_life`:** a habit that never changes deserves a long one, so the memory isn't spent forgetting.
+- **`importance`** keeps rare moments longer in a small memory. Rare moments with a memory of 32 were right 0.38 of the time forgetting the oldest first, 0.59 with `importance` 1. With 64, 0.51 and 0.66.
+- **`learn_weights`:** with 6 useless inputs among 8, 0.72 without and 0.80 with (your weights with the useless ones at 0: 0.88). With every input mattering, no change. With outcomes, 8 useless inputs among 12: 0.55 without, 0.60 with.
+- **`candidates`:** with 8 potions on the shelf and cheap ones rare, 24 found a cheap one 99% of the time, 16 96%, and 8 81%. Fewer is faster.
+- **`k`:** votes are weighted by closeness, so 8 holds up. In testing, predictions it was at least 0.6 sure of were right 96% of the time.
+
+**A rare moment isn't learned from one sighting.** In testing it was right the 2nd time 30% of the time, the 3rd time 53%, and from the 7th on 86%. One memory competes with every common moment near it, and wins only when the new moment is close to it in every input.
+
+**Throws** when `capacity`, `k` or `candidates` isn't a whole number of 1 or more, `weights` isn't a struct of numbers of 0 or more, `learn_weights` or `merge` isn't true or false, `importance` is negative, `similar` or `reach` isn't above 0, or `inputs` is empty. Loading throws when the save is malformed.
+
+### Notes on moments
+
+`gmsa_learn_observe`, `gmsa_learn_outcome`, `gmsa_learn_reward`, `gmsa_learn_space_observe` and `gmsa_learn_space_outcome` take an optional last argument, a **note**. Anything goes, stored as text. Nearest neighbor keeps it with the moment and shows it when explaining. Every other model ignores it, and custom models get it as `sample.note`.
+
+```gml
+gmsa_learn_observe(global.spots, gmsa_observe(player_agent, acts, _act), "by the mill");
+gmsa_learn_reward(global.tactics, agent, -1, "ambushed at the gate");
+```
+
+With `gmsa_learn_reward` the note goes with every decision the reward credits.
+
+### What Naive Bayes and nearest neighbor cost
+
+Measured on the VM target, per call, through a learn space, after the memory was full. Count costs about 50 us this way, most of it the learn space itself.
+
+| | Predict | Observe |
+| --- | --- | --- |
+| Count, 4 inputs, 4 actions, for comparison | 55 us | 46 us |
+| Naive Bayes, 4 inputs, 4 actions | 174 us | 257 us |
+| Naive Bayes, 12 inputs | 420 us | 645 us |
+| Naive Bayes, 12 actions | 478 us | 720 us |
+| Naive Bayes, `bins` 64 | 225 us | 350 us |
+| Naive Bayes, outcomes | 179 us | 191 us |
+| Naive Bayes, 1 input, 8 targets | 142 us | 199 us |
+| Nearest neighbor, 64 moments, 4 inputs, 4 actions | 323 us | 371 us |
+| Nearest neighbor, 256 moments (the default) | 615 us | 744 us |
+| Nearest neighbor, 1024 moments | 1.52 ms | 1.98 ms |
+| Nearest neighbor, 2048 moments | 2.65 ms | 3.57 ms |
+| Nearest neighbor, 256, 12 inputs | 1.08 ms | 1.22 ms |
+| Nearest neighbor, 256, 12 actions | 945 us | 1.06 ms |
+| Nearest neighbor, 256, outcomes | 1.33 ms | 1.47 ms |
+| Nearest neighbor, 1024, outcomes | 4.21 ms | 4.68 ms |
+| Nearest neighbor, 256, 1 input, 8 targets | 4.45 ms | 4.61 ms |
+| Nearest neighbor, 1024, 1 input, 8 targets | 10.4 ms | 10.8 ms |
+
+- **Naive Bayes costs about what the n-gram does,** and fading costs it nothing per choice.
+- **Nearest neighbor costs about 1.2 us per remembered moment per call,** plus comparing the options. It suits a model of the player, read once per decision rather than every frame. A predictor input caches its prediction per frame, so many agents reading it cost one prediction.
+- **Targets are its expensive case:** every option on offer is compared with every option of each similar moment. A smaller memory or fewer `candidates` are the speed settings.
+
+### Good to know
+
+- **"Naive" means one input at a time.** What only shows when inputs are read together, it can't learn: a place on a map from x and y, or one action when exactly one input is high. Nearest neighbor can.
+- **Avoid inputs that say the same thing** with Naive Bayes. Tempering softens the double count, but one input is cleaner.
+- **Naive Bayes' explain can name an input that doesn't matter,** such as `fog 38-50% x0.55`: a fine bin with little data in it. A longer `half_life` steadies it.
+- **Nearest neighbor is a little fuzzier on simple rules.** On moments decided by one input with a clean cut, Naive Bayes was slightly better in testing, 0.94 against 0.91.
+- **Inputs that vary smoothly rarely repeat exactly,** so merging matters most with on or off and few-valued inputs.
+- **Learn spaces work with both,** unlike the sequence learners. Demo 19 asks both about spots the wanderer isn't standing on, to draw each one's map.
 
 ---
 
