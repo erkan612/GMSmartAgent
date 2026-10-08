@@ -1,20 +1,20 @@
 function gmsa_bench_all() {
     show_debug_message("[GMSA Bench] running on " + (code_is_compiled() ? "YYC" : "VM"));
-    //__gmsa_bench_curves();
-    //__gmsa_bench_scale_targets([10, 50, 100, 200, 500]);
-    //__gmsa_bench_scale_considerations([1, 4, 8, 16]);
-    //__gmsa_bench_scale_actions([5, 20, 50, 100]);
-    //__gmsa_bench_scale_agents([100, 1000, 5000, 10000], 2000);
-    //__gmsa_bench_net();
-    //__gmsa_bench_learn_tiers([3, 10, 30]);
-    //__gmsa_bench_lambdamart_train([100, 500], 2000);
-    //__gmsa_bench_outcomes([3, 10]);
-    //__gmsa_bench_plan([10, 100]);
-    //__gmsa_bench_plan_slices();
-	//__gmsa_bench_plan_learn();
-	//__gmsa_bench_plan_goap();
-	//__gmsa_bench_learn_sequences();
-	//__gmsa_bench_learn_bayes_neighbor();
+    __gmsa_bench_curves();
+    __gmsa_bench_scale_targets([10, 50, 100, 200, 500]);
+    __gmsa_bench_scale_considerations([1, 4, 8, 16]);
+    __gmsa_bench_scale_actions([5, 20, 50, 100]);
+    __gmsa_bench_scale_agents([100, 1000, 5000, 10000], 2000);
+    __gmsa_bench_net();
+    __gmsa_bench_learn_tiers([3, 10, 30]);
+    __gmsa_bench_lambdamart_train([100, 500], 2000);
+    __gmsa_bench_outcomes([3, 10]);
+    __gmsa_bench_plan([10, 100]);
+    __gmsa_bench_plan_slices();
+	__gmsa_bench_plan_learn();
+	__gmsa_bench_plan_goap();
+	__gmsa_bench_learn_sequences();
+	__gmsa_bench_learn_bayes_neighbor();
 	__gmsa_bench_rating();
 	__gmsa_bench_style([200, 1000], 2000);
 }
