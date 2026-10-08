@@ -549,6 +549,8 @@ In the bat demo, with 1500 simple agents on a 2 ms budget, tiers make this diffe
 | Tiers on | Decide every ~6 frames | Decide every ~60 frames |
 | Tiers off | Everyone decides every ~21 frames | |
 
+Measured on VM, where every run from the IDE happens. On YYC the same 2 ms fits about three and a half times as many thinks, so every agent decides that much more often.
+
 The total work is identical. Tiers just put the fresh decisions where the player is looking. Keep the high tier small: if it alone needs more than the whole budget, lower tiers stop deciding entirely.
 
 **Receiving decisions: polling or callbacks.** So far the goblin polls with `gmsa_agent_consume` in its Step event. The alternative is a callback the scheduler calls right after the agent decides:
@@ -1533,7 +1535,7 @@ loot: like 9 choices ago, on the west side (hp 30%, distance 8%, kind_0 100%, lo
 
 Notes are for explaining: every other model ignores them, so passing one never hurts.
 
-**What it costs.** Every prediction compares the moment with every one it remembers: about 0.6 ms on the VM once its memory of 256 moments is full. One copycat re-ranked by it is fine, every goblin in the room isn't. Naive Bayes costs about 0.2 ms. Both are measured in the [API Reference](ApiReference.md#what-naive-bayes-and-nearest-neighbor-cost).
+**What it costs.** Every prediction compares the moment with every one it remembers: about 0.6 ms on VM once its memory of 256 moments is full, 0.1 ms on YYC. One copycat re-ranked by it is fine, every goblin in the room isn't. Naive Bayes costs about 0.2 ms on VM, 0.04 ms on YYC. Both are measured in the [API Reference](ApiReference.md#what-naive-bayes-and-nearest-neighbor-cost).
 
 **Which one?**
 
@@ -1812,7 +1814,7 @@ It needs hundreds of choices, and its replays need training time: `gmsa_learn_sc
 That's expected early: options that differ only by an input, like coins by distance, are separated gradually. Lower the threshold, or give it more choices.
 
 **Recording a choice hitches now and then.**
-A full n-gram forgets a tenth of its contexts at once, a few milliseconds on the VM. Lower its `capacity` for smaller, more frequent trims, or its `length` so it fills more slowly.
+A full n-gram forgets a tenth of its contexts at once, 6 to 11 ms on VM and 2 to 4 ms on YYC. Lower its `capacity` for smaller, more frequent trims, or its `length` so it fills more slowly.
 
 **A sequence model throws that learn spaces have none.**
 The n-gram and the TDNN need an agent's history. Learned methods and other spaces use the other models.

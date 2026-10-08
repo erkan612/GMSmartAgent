@@ -512,50 +512,65 @@ gmsa_plan_add_method(_job, "the_plan", { subtasks : ["case_the_bank", "get_insid
 ---
  
 ## Performance
- 
-Measured on the VM target with trivial callbacks, so these numbers are GMSmartAgent's own overhead. Your input callbacks (distance queries, line of sight) come on top. YYC is faster.
- 
-| Measurement | Result |
-| --- | --- |
-| Curve evaluation | ~1.2 us |
-| Cost per scored option | ~8 us, flat from 10 to 500 targets |
-| Simple agent think (3 options) | ~23 us |
-| Thinks per step, 2 ms budget | ~84, from 100 up to 10,000 agents |
-| Budget overshoot | under 60 us once running, up to ~170 us on the first lap with 10,000 agents |
- 
-What that means at 60 fps with a 2 ms budget:
- 
-| Agents | Simple agents re-think every | Agents with ~20 options re-think every |
+
+Measured with trivial callbacks, so these numbers are GMSmartAgent's own overhead. Your input callbacks (distance queries, line of sight) come on top. **VM** is what every run from the IDE uses, and HTML5 and GX.games builds too: plan for it as the worst case. **YYC** is the compiled target most release builds use.
+
+| Measurement | VM | YYC |
 | --- | --- | --- |
-| 500 | ~6 frames | ~40 frames |
-| 1,000 | ~12 frames | ~85 frames |
- 
+| Curve evaluation | ~1.2 us | ~0.3 us |
+| Cost per scored option | ~8 us, flat from 10 to 500 targets | ~2 us |
+| Simple agent think (3 options) | ~23 us | ~7 us |
+| Thinks per step, 2 ms budget | ~84, from 100 up to 10,000 agents | ~280 to 330 |
+| Budget overshoot | under 60 us once running, up to ~170 us on the first lap with 10,000 agents | under 15 us |
+
+What that means at 60 fps with a 2 ms budget:
+
+| Agents | Simple agents re-think every, VM / YYC | Agents with ~20 options re-think every, VM / YYC |
+| --- | --- | --- |
+| 500 | ~6 / ~2 frames | ~40 / ~10 frames |
+| 1,000 | ~12 / ~3 frames | ~85 / ~20 frames |
+
 Learning models add their own cost to every re-ranked think, at 3 options:
 
-| Model | Added per think | Best for |
+| Model | Added per think, VM | YYC | Best for |
+| --- | --- | --- | --- |
+| Count, Linear | ~40 us | ~10 us | Every agent in the room |
+| RankNet | ~100 us | ~20 us | A few agents, a boss or a companion |
+| LambdaMART | ~500 us | ~70 us | A few agents, or a shared predictor input read once per frame |
+
+The rest, per call:
+
+| | VM | YYC |
 | --- | --- | --- |
-| Count, Linear | ~40 us | Every agent in the room |
-| RankNet | ~100 us | A few agents, a boss or a companion |
-| LambdaMART | ~500 us | A few agents, or a shared predictor input read once per frame |
+| N-gram, predict / learn a choice | 0.2 to 0.5 ms / 0.15 to 1.3 ms | 0.03 to 0.13 ms / 0.04 to 0.5 ms |
+| TDNN, 4 options: predict / learn a choice / each replayed choice | 0.35 / 1.3 / 1.2 ms | 0.05 / 0.23 / 0.2 ms |
+| Naive Bayes, predict / learn a choice | 0.2 to 0.5 ms / 0.2 to 0.7 ms | 0.04 to 0.11 ms / 0.05 to 0.16 ms |
+| Nearest neighbor, 256 moments (the default), predict / learn | 0.6 / 0.75 ms | 0.11 / 0.14 ms |
+| Nearest neighbor, 1024 moments | 1.5 / 2 ms | 0.27 / 0.4 ms |
+| Nearest neighbor, choosing among 8 items | 4.5 ms | 0.7 ms |
+| An outcome, Count, Linear or LambdaMART / RankNet | ~25 / ~180 us | ~6 to 10 / ~36 us |
+| LambdaMART training, 100 trees on 500 rows | 1.4 s, spread by its budget | 0.31 s |
+| Planning, per node searched | 9 to 13 us | 2 to 3.5 us |
+| Making a plan of about ten steps | ~0.3 ms | ~80 us |
+| A six-step raid with step reliability and a learned recipe, make to reward | 0.47 ms | 0.14 ms |
+| A goal over 17 actions, pruned / not pruned | 1.3 ms / 82 ms | 0.27 ms / 16 ms |
+| Rating match, 1 v 1 / free for all of 8 | 45 / 313 us | 14 / 79 us |
+| Rating chance | 8 us | 3 us |
+| Balance 30 players into 5 teams, worst | 25 ms | 6.5 ms |
+| Style tracker event / match against 8 styles | 2 to 4 / 56 us | under 1 / 12 us |
+| Style fit, 200 / 1,000 sessions | 15 / 21 s of slices | 2.5 / 3.5 s |
 
-The sequence learners cost more per prediction. The n-gram predicts in about 0.2 to 0.5 ms and learns a choice in 0.15 to 1.3 ms. The TDNN predicts in about 0.35 ms with 4 options and learns a choice in 1.3 ms, plus about 1.2 ms per replayed choice, spread over frames by its training budget. See [What sequence learners cost](ApiReference.md#what-sequence-learners-cost).
+- **Nearest neighbor's cost grows with its memory,** about 1.2 us per remembered moment on VM, 0.2 us on YYC.
+- **Heavy work runs in slices you budget:** LambdaMART training, the TDNN's replays, plans and goals across frames, style fits. Measured overshoot of LambdaMART training at a 2 ms budget: under 130 us. In a long session, a garbage collection can occasionally land inside any budgeted call, which is GameMaker's, not the budget's.
+- **Learning in plans is paid per plan and per step, never per frame.** A player fact costs one evaluation of the player's model per frame, about 65 us on VM, shared by every planner that reads it.
+- **Goals grow with every action that looks like progress,** so goals leave out the actions that can't help. Big searches can be spread over frames like any plan.
 
-Naive Bayes predicts in about 0.2 to 0.5 ms and learns a choice in 0.2 to 0.7 ms, however much it has seen. Nearest neighbor's cost grows with its memory, about 1.2 us per remembered moment: with the default 256 moments it predicts in about 0.6 ms and learns a choice in 0.75 ms, with 1024 in 1.5 and 2 ms. Choosing among many items is its expensive case, about 4.5 ms with 8 on offer. See [What Naive Bayes and nearest neighbor cost](ApiReference.md#what-naive-bayes-and-nearest-neighbor-cost).
-
-LambdaMART trains inside a budget you set, with a measured overshoot under 130 us at 2 ms. Learning from outcomes costs about 25 us per reported result with Count, Linear or LambdaMART, and about 180 us with RankNet. The [API Reference](ApiReference.md#what-models-cost) has the full table.
-
-Planning costs about 9 to 13 us per node searched. A plan of around ten steps takes about 0.3 ms to make, and each step after that about 30 us to check and hand over. The default budget of 250 nodes keeps a hopeless search to a few milliseconds. Scheduled planners make their plans inside the scheduler budget, going over it by under 40 us, and cost about 0.7 us per step while idle. See [What planning costs](ApiReference.md#what-planning-costs).
-
-Learning in plans is paid per plan and per step, never per frame. With step reliability and a learned recipe both on, a six-step raid costs about 0.47 ms from making the plan to its reward, against 0.18 ms without learning. A player fact costs one evaluation of the player's model per frame, about 65 us, shared by every planner that reads it. See [What learning in plans costs](ApiReference.md#what-learning-in-plans-costs).
-
-Goals cost about 10 us per node searched, flat at every size. A goal over a handful of actions takes about 0.35 ms. Searches grow with every action that looks like progress, so goals leave out the actions that can't help: with 17 actions of which 6 are irrelevant, 1.3 ms pruned against 82 ms searching everything. Big searches can be spread over frames like any plan.
-
-A rating match costs 45 us for a 1 v 1 and about 0.3 ms for a free for all of 8, a chance 8 us, and splitting 30 players into 5 fair teams 22 ms at most, a lobby screen call. A style tracker costs 2 to 4 us per event, and matching a player 30 to 60 us. Finding styles is background work in slices: 200 sessions take about 15 s of slices on VM and 2.5 s on YYC, 1000 sessions about 21 s on VM. See [What rating costs](ApiReference.md#what-rating-costs) and [What style costs](ApiReference.md#what-style-costs).
+The API Reference has the full tables for every module, VM and YYC side by side: [models](ApiReference.md#what-models-cost), [outcomes](ApiReference.md#what-outcome-learning-costs), [sequence learners](ApiReference.md#what-sequence-learners-cost), [Naive Bayes and nearest neighbor](ApiReference.md#what-naive-bayes-and-nearest-neighbor-cost), [planning](ApiReference.md#what-planning-costs), [learning in plans](ApiReference.md#what-learning-in-plans-costs), [rating](ApiReference.md#what-rating-costs) and [style](ApiReference.md#what-style-costs).
 
 Use priority tiers so the agents near the player think first, and give the AI a bigger budget if your game can afford it. Frame rate stays stable either way: adding agents or heavier models slows how often each one re-decides, never the game.
- 
+
 ---
- 
+
 ## Design Principles
  
 - **The caller owns the world.** Collision, spatial queries, pathfinding and movement stay in your game. A second spatial system inside the framework would only fight yours.
@@ -565,12 +580,6 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 - **Allocation-free thinking.** Decisions and options are reused, so many agents don't churn the garbage collector.
 - **Learning stays under the designer.** Models reorder options within what the designer's scoring allows. They can't bring back a vetoed option or lift a score above the designer's, and agents only experiment among the options your scoring ranks highest.
 - **Plans are made of your actions.** The planner only combines the steps, recipes and goals you wrote, it never invents an action. It hands your game one step at a time and never performs anything itself.
-
----
- 
-## Roadmap
-
-- **Later** - GMNav input providers such as path cost and reachability, a full debug view with overlays and a scheduler budget view, YYC benchmarks, and a recurrent learner (GRU) for patterns longer than any window.
 
 ---
  

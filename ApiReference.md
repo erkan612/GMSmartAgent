@@ -880,18 +880,25 @@ gmsa_profile_add_input(_p, gmsa_input_pull("will_drink", gmsa_learn_input(global
 
 ### What models cost
 
-Measured on the VM target, per call, at 3 and 10 options on offer. YYC is faster.
+Per call, at 3 and 10 options on offer. VM is every run from the IDE (and HTML5), the worst case to plan for. YYC is the compiled target.
 
-| Model | Observe | Predict | Added to a re-ranked think |
+| Model, VM | Observe | Predict | Added to a re-ranked think |
 | --- | --- | --- | --- |
 | Count | 28 / 46 us | 32 / 63 us | 42 / 103 us |
 | Linear | 39 / 102 us | 31 / 77 us | 39 / 105 us |
 | RankNet | 417 / 1253 us | 131 / 418 us | 105 / 348 us |
 | LambdaMART | 23 / 52 us, stores only | 486 / 1557 us | 513 / 1650 us |
 
+| Model, YYC | Observe | Predict | Added to a re-ranked think |
+| --- | --- | --- | --- |
+| Count | 10 / 14 us | 10 / 17 us | 13 / 23 us |
+| Linear | 9 / 24 us | 7 / 18 us | 9 / 24 us |
+| RankNet | 71 / 209 us | 20 / 63 us | 20 / 65 us |
+| LambdaMART | 7 / 14 us, stores only | 68 / 212 us | 70 / 219 us |
+
 The sequence learners are measured in [What sequence learners cost](#what-sequence-learners-cost), Naive Bayes and nearest neighbor in [What Naive Bayes and nearest neighbor cost](#what-naive-bayes-and-nearest-neighbor-cost).
 
-LambdaMART training with 100 trees takes about 1.4 s for 500 rows (100 choices of 5 options) and 6.6 s for 2,500 rows, or the same work spread over frames with a budget, see [gmsa_learn_train](#gmsa_learn_train).
+LambdaMART training with 100 trees takes about 1.4 s for 500 rows (100 choices of 5 options) and 6.6 s for 2,500 rows on VM, 0.31 s and 1.47 s on YYC, or the same work spread over frames with a budget, see [gmsa_learn_train](#gmsa_learn_train).
 
 - **Count and Linear are the crowd models.** Attach them to as many agents as you like.
 - **RankNet and LambdaMART suit a few agents**, a boss or a companion, or a predictor input: `gmsa_learn_input` caches its prediction per frame, so every agent reading it shares one evaluation.
@@ -1111,10 +1118,10 @@ gmsa_learn_train(global.style);
 if (training) training = !gmsa_learn_train(global.style, 2000);
 ```
 
-- Each call does at least one small unit of work, then stops when its time is up. Measured overshoot at a 2 ms budget: under 130 us.
+- Each call does at least one small unit of work, then stops when its time is up. Measured overshoot at a 2 ms budget: under 130 us on VM, under 50 us on YYC. In a long session a garbage collection can occasionally land inside a call, which is GameMaker's, not the budget's.
 - Training works on a snapshot of the buffer. Choices observed meanwhile wait for the next training.
 - The previous result keeps predicting until training finishes. Predictor inputs update as soon as it does.
-- **The TDNN** learns each choice inside `gmsa_learn_observe` and queues `replay` earlier ones. Each call works through the queue, one replay at a time, about 1.2 ms each with 4 options on the VM. Without training calls it still learns, like `replay : 0`, more slowly.
+- **The TDNN** learns each choice inside `gmsa_learn_observe` and queues `replay` earlier ones. Each call works through the queue, one replay at a time, about 1.2 ms each with 4 options on VM, 0.2 ms on YYC. Without training calls it still learns, like `replay : 0`, more slowly.
 
 **Throws** when `model` isn't a model or `budget` is negative.
 
@@ -1454,16 +1461,14 @@ For outcomes from a few hundred episodes, use Count, Linear or LambdaMART. RankN
 
 ### What outcome learning costs
 
-Measured on the VM target:
-
-| | 3 options | 10 options |
+| | 3 options, VM / YYC | 10 options, VM / YYC |
 | --- | --- | --- |
-| Tracking, per decision switch | 10 us | 20 us |
-| `gmsa_learn_outcome`: Count, Linear, LambdaMART | 21 to 29 us | 39 to 47 us |
-| `gmsa_learn_outcome`: RankNet | 181 us | 275 us |
+| Tracking, per decision switch | 10 / 5 us | 20 / 13 us |
+| `gmsa_learn_outcome`: Count, Linear, LambdaMART | 21 to 29 / 6 to 10 us | 39 to 47 / 10 to 14 us |
+| `gmsa_learn_outcome`: RankNet | 181 / 36 us | 275 / 57 us |
 | `gmsa_learn_reward` over a full history of 8 | about 8 outcomes | |
 
-LambdaMART stores one row per outcome, so training on 500 outcomes takes about 0.5 s, a third of training on choices.
+LambdaMART stores one row per outcome, so training on 500 outcomes takes about 0.5 s on VM and 0.12 s on YYC, a third of training on choices.
 
 ### History entries and tickets
 
@@ -1684,7 +1689,7 @@ after feint then sweep: heavy averages +0.95 from 12.0 outcomes
 **Choosing the settings:**
 - **`length`** is the longest pattern it can learn: 1 learns what follows the last move, 3 learns patterns of four moves, such as jab, jab, uppercut, then a dodge. Longer needs more choices per context and multiplies the contexts, so match it to the longest pattern your game has. In testing, length 8 learned 3-move combos as well as length 3.
 - **`bins`** is the finest detail. Coarse cuts speak first and finer ones take over where data piles up, so a high value costs little accuracy early.
-- **`capacity`:** contexts grow with `length`, the number of inputs and the number of actions. At length 3 with 1 input and 4 actions, 800 choices made 820 contexts. Length 8, or 4 inputs, filled 4,096. A full model forgets a tenth of its contexts at once, a 6 to 11 ms step on the VM about every 20 choices, so a smaller capacity means smaller steps.
+- **`capacity`:** contexts grow with `length`, the number of inputs and the number of actions. At length 3 with 1 input and 4 actions, 800 choices made 820 contexts. Length 8, or 4 inputs, filled 4,096. A full model forgets a tenth of its contexts at once, a 6 to 11 ms step on VM (2 to 4 ms on YYC) about every 20 choices, so a smaller capacity means smaller steps.
 - **`half_life`:** longer remembers many rare habits better (100 instead of 50 raised the seven-habit test from 0.79 to 0.82) and relearns a changed habit more slowly.
 
 **Throws** when `length`, `bins` or `capacity` isn't a whole number of 1 or more, `blend_k` is negative, or `inputs` isn't an array. When learning outcomes, learning or predicting throws if the agent isn't tracked or its tracker keeps `length` decisions or fewer.
@@ -1761,27 +1766,27 @@ As [gmsa_learn_ngram_break](#gmsa_learn_ngram_break), for a TDNN.
 
 ### What sequence learners cost
 
-Measured on the VM target, per call, with a player of 4 actions and 1 input after 800 choices, unless the row says otherwise:
+Per call, with a player of 4 actions and 1 input after 800 choices, unless the row says otherwise. Each cell is VM / YYC:
 
 | | Predict | Observe | Training per choice |
 | --- | --- | --- | --- |
-| N-gram, length 1 | 121 us | 145 us | |
-| N-gram, length 3 | 205 us | 267 us | |
-| N-gram, length 8 | 366 us | 657 us | |
-| N-gram, length 3, 4 inputs | 201 us | 367 us | |
-| N-gram, length 3, 12 actions | 363 us | 453 us | |
-| N-gram, length 8, 4 inputs, 12 actions | 476 us | 1248 us | |
-| TDNN, `replay` 0 | 335 us | 1314 us | none |
-| TDNN, `replay` 4 | 339 us | 1319 us | 4.9 ms |
-| TDNN, `replay` 8 | 341 us | 1323 us | 9.9 ms |
-| TDNN, length 8 | 538 us | 2302 us | 8.7 ms |
-| TDNN, 4 inputs | 438 us | 1627 us | 6.1 ms |
-| TDNN, 12 actions | 1152 us | 4023 us | 15.1 ms |
-| TDNN, `layers` `[32, 16]` | 1219 us | 5562 us | 21.9 ms |
+| N-gram, length 1 | 121 / 33 us | 145 / 41 us | |
+| N-gram, length 3 | 205 / 54 us | 267 / 74 us | |
+| N-gram, length 8 | 366 / 105 us | 657 / 219 us | |
+| N-gram, length 3, 4 inputs | 201 / 64 us | 367 / 129 us | |
+| N-gram, length 3, 12 actions | 363 / 82 us | 453 / 124 us | |
+| N-gram, length 8, 4 inputs, 12 actions | 476 / 127 us | 1248 / 534 us | |
+| TDNN, `replay` 0 | 335 / 52 us | 1314 / 234 us | none |
+| TDNN, `replay` 4 | 339 / 53 us | 1319 / 233 us | 4.9 / 0.83 ms |
+| TDNN, `replay` 8 | 341 / 55 us | 1323 / 232 us | 9.9 / 1.65 ms |
+| TDNN, length 8 | 538 / 79 us | 2302 / 413 us | 8.7 / 1.52 ms |
+| TDNN, 4 inputs | 438 / 65 us | 1627 / 275 us | 6.1 / 0.99 ms |
+| TDNN, 12 actions | 1152 / 161 us | 4023 / 659 us | 15.1 / 2.45 ms |
+| TDNN, `layers` `[32, 16]` | 1219 / 128 us | 5562 / 919 us | 21.9 / 3.55 ms |
 
 - **The n-gram suits many agents and every frame,** the TDNN a few predictions at a time, a shop or a boss. Predictor inputs cache their prediction per frame, so many agents reading one costs one prediction.
 - **The TDNN's training per choice is spread by the budget** you give it, see [gmsa_learn_schedule](#gmsa_learn_schedule). Keep its options few: its cost grows with every option on offer.
-- **A full n-gram** (here length 8, or 4 inputs) forgets a tenth of its contexts about every 20 choices, the slowest observe then taking 6 to 11 ms. The defaults at length 3 and 1 input never fill.
+- **A full n-gram** (here length 8, or 4 inputs) forgets a tenth of its contexts about every 20 choices, the slowest observe then taking 6 to 11 ms on VM, 2 to 4 ms on YYC. The defaults at length 3 and 1 input never fill.
 
 ### Good to know
 
@@ -1945,30 +1950,30 @@ With `gmsa_learn_reward` the note goes with every decision the reward credits.
 
 ### What Naive Bayes and nearest neighbor cost
 
-Measured on the VM target, per call, through a learn space, after the memory was full. Count costs about 50 us this way, most of it the learn space itself.
+Per call, through a learn space, after the memory was full. Count costs about 50 us on VM this way (15 us on YYC), most of it the learn space itself.
 
-| | Predict | Observe |
-| --- | --- | --- |
-| Count, 4 inputs, 4 actions, for comparison | 55 us | 46 us |
-| Naive Bayes, 4 inputs, 4 actions | 174 us | 257 us |
-| Naive Bayes, 12 inputs | 420 us | 645 us |
-| Naive Bayes, 12 actions | 478 us | 720 us |
-| Naive Bayes, `bins` 64 | 225 us | 350 us |
-| Naive Bayes, outcomes | 179 us | 191 us |
-| Naive Bayes, 1 input, 8 targets | 142 us | 199 us |
-| Nearest neighbor, 64 moments, 4 inputs, 4 actions | 323 us | 371 us |
-| Nearest neighbor, 256 moments (the default) | 615 us | 744 us |
-| Nearest neighbor, 1024 moments | 1.52 ms | 1.98 ms |
-| Nearest neighbor, 2048 moments | 2.65 ms | 3.57 ms |
-| Nearest neighbor, 256, 12 inputs | 1.08 ms | 1.22 ms |
-| Nearest neighbor, 256, 12 actions | 945 us | 1.06 ms |
-| Nearest neighbor, 256, outcomes | 1.33 ms | 1.47 ms |
-| Nearest neighbor, 1024, outcomes | 4.21 ms | 4.68 ms |
-| Nearest neighbor, 256, 1 input, 8 targets | 4.45 ms | 4.61 ms |
-| Nearest neighbor, 1024, 1 input, 8 targets | 10.4 ms | 10.8 ms |
+| | Predict, VM | Observe, VM | Predict, YYC | Observe, YYC |
+| --- | --- | --- | --- | --- |
+| Count, 4 inputs, 4 actions, for comparison | 55 us | 46 us | 17 us | 15 us |
+| Naive Bayes, 4 inputs, 4 actions | 174 us | 257 us | 42 us | 62 us |
+| Naive Bayes, 12 inputs | 420 us | 645 us | 97 us | 148 us |
+| Naive Bayes, 12 actions | 478 us | 720 us | 108 us | 161 us |
+| Naive Bayes, `bins` 64 | 225 us | 350 us | 50 us | 78 us |
+| Naive Bayes, outcomes | 179 us | 191 us | 40 us | 45 us |
+| Naive Bayes, 1 input, 8 targets | 142 us | 199 us | 34 us | 48 us |
+| Nearest neighbor, 64 moments, 4 inputs, 4 actions | 323 us | 371 us | 57 us | 72 us |
+| Nearest neighbor, 256 moments (the default) | 615 us | 744 us | 106 us | 143 us |
+| Nearest neighbor, 1024 moments | 1.52 ms | 1.98 ms | 270 us | 403 us |
+| Nearest neighbor, 2048 moments | 2.65 ms | 3.57 ms | 467 us | 727 us |
+| Nearest neighbor, 256, 12 inputs | 1.08 ms | 1.22 ms | 161 us | 218 us |
+| Nearest neighbor, 256, 12 actions | 945 us | 1.06 ms | 144 us | 180 us |
+| Nearest neighbor, 256, outcomes | 1.33 ms | 1.47 ms | 237 us | 274 us |
+| Nearest neighbor, 1024, outcomes | 4.21 ms | 4.68 ms | 660 us | 787 us |
+| Nearest neighbor, 256, 1 input, 8 targets | 4.45 ms | 4.61 ms | 690 us | 774 us |
+| Nearest neighbor, 1024, 1 input, 8 targets | 10.4 ms | 10.8 ms | 1.59 ms | 1.89 ms |
 
 - **Naive Bayes costs about what the n-gram does,** and fading costs it nothing per choice.
-- **Nearest neighbor costs about 1.2 us per remembered moment per call,** plus comparing the options. It suits a model of the player, read once per decision rather than every frame. A predictor input caches its prediction per frame, so many agents reading it cost one prediction.
+- **Nearest neighbor costs about 1.2 us per remembered moment per call on VM, 0.2 us on YYC,** plus comparing the options. It suits a model of the player, read once per decision rather than every frame. A predictor input caches its prediction per frame, so many agents reading it cost one prediction.
 - **Targets are its expensive case:** every option on offer is compared with every option of each similar moment. A smaller memory or fewer `candidates` are the speed settings.
 
 ### Good to know
@@ -2123,7 +2128,7 @@ Loads a save, as a struct or a JSON string, into a net with the same layer sizes
 | `optimizer`, `learn_rate`, `momentum`, `weight_decay`, `beta1`, `beta2`, `epsilon`, `seed`, `sparse` | Settings |
 | `steps` | Updates applied since creation, reset or load |
 
-Cost on the VM: 6 inputs with `[8, 1]` take 30 us per forward and 155 us per training step with Adam. 12 inputs with `[16, 8, 1]` take 125 us and 739 us.
+Cost on VM: 6 inputs with `[8, 1]` take 30 us per forward and 155 us per training step with Adam. 12 inputs with `[16, 8, 1]` take 125 us and 739 us. On YYC: 3.5 us and 30 us, and 13 us and 151 us.
 
 ---
 
@@ -2710,7 +2715,7 @@ While a plan is being made or repaired:
 - The facts were read when planning started. A plan made over several calls is checked against fresh facts before it starts, and repaired if the world moved on.
 - The node `budget` still caps the whole plan. The time slice only decides how much happens per call.
 
-What isn't sliced: the node a call has already started, and finishing a plan (checking it against fresh facts and picking the first target, about 5 us per step of the plan). A call can therefore go over its slice by a few tens of microseconds for typical plans.
+What isn't sliced: the node a call has already started, and finishing a plan (checking it against fresh facts and picking the first target, about 5 us per step of the plan on VM, under 1 us on YYC). A call can therefore go over its slice by a few tens of microseconds for typical plans.
 
 ### Goals
 
@@ -2827,26 +2832,26 @@ gmsa_plan_add_step(_d, "grab_coin", {
 
 ### What planning costs
 
-| Measure | VM |
-| --- | --- |
-| Making an 11 step plan | 329 us, 23 nodes |
-| Making a 101 step plan | 2.7 ms, 203 nodes |
-| Backtracking through 19 wrong methods | 879 us, 98 nodes |
-| One node | about 9 us of search, about 13 us counting make's fixed work |
-| `gmsa_plan_step_done` | about 5 us per step left in the plan |
-| `gmsa_plan_refresh` | 100 us with a repair, 16 us with nothing broken |
-| `gmsa_plan_explain`, 4 step plan | 71 us |
-| The 101 step plan in 200 us slices | 3.3 ms over 13 calls, about 20% more in total, worst call 1.1 ms (finishing the long plan) |
-| Idle scheduled planners | about 0.7 us each per scheduler step |
-| 12 planners asking at once, about 100 nodes each | ready after 117 steps at a 100 us budget, 24 at 500 us, 7 at 2000 us |
-| Scheduler steps with planning | over the budget by 22 to 37 us, at every budget |
-| A goal: one node | about 10 to 11 us, flat at every search size |
-| A goal over 5 steps, or a recipe with a goal inside | about 350 us, 23 to 25 nodes |
-| A goal, 17 steps, of which 6 can't help: pruned / not pruned | 1.3 ms, 121 nodes / 82 ms, 7633 nodes |
-| The unpruned 17 step search in 1 ms slices | 114 calls, worst call 1.1 ms |
+| Measure | VM | YYC |
+| --- | --- | --- |
+| Making an 11 step plan | 329 us, 23 nodes | 80 us |
+| Making a 101 step plan | 2.7 ms, 203 nodes | 0.69 ms |
+| Backtracking through 19 wrong methods | 879 us, 98 nodes | 204 us |
+| One node | about 9 us of search, about 13 us counting make's fixed work | about 3.4 us counting make's fixed work |
+| `gmsa_plan_step_done` | about 5 us per step left in the plan | about 0.5 to 0.7 us per step left |
+| `gmsa_plan_refresh` | 100 us with a repair, 16 us with nothing broken | 25 us, 4 us |
+| `gmsa_plan_explain`, 4 step plan | 71 us | 29 us |
+| The 101 step plan in 200 us slices | 3.3 ms over 13 calls, about 20% more in total, worst call 1.1 ms (finishing the long plan) | 0.93 ms over 4 calls, worst call 0.5 ms |
+| Idle scheduled planners | about 0.7 us each per scheduler step | about 0.25 to 0.3 us each |
+| 12 planners asking at once, about 100 nodes each | ready after 117 steps at a 100 us budget, 24 at 500 us, 7 at 2000 us | 30, 7 and 2 steps |
+| Scheduler steps with planning | over the budget by 22 to 37 us, at every budget | over by 5 to 14 us |
+| A goal: one node | about 10 to 11 us, flat at every search size | about 2 to 2.8 us |
+| A goal over 5 steps, or a recipe with a goal inside | about 350 us, 23 to 25 nodes | about 75 to 80 us |
+| A goal, 17 steps, of which 6 can't help: pruned / not pruned | 1.3 ms, 121 nodes / 82 ms, 7633 nodes | 0.27 ms / 16 ms |
+| The unpruned 17 step search in 1 ms slices | 114 calls, worst call 1.1 ms | 46 calls, worst call 1.15 ms |
 | Cost functions, variety | 10 to 20% more per node, almost nothing |
 
-The default budget of 250 nodes keeps a hopeless search to a few milliseconds on the VM, many times what typical domains use. Raise it for large domains, and plan across frames when a plan costs more than a frame can spare. Game plans usually have under 20 steps, where every running call stays well under 0.1 ms. Schedule planners for agents that may plan, hundreds of idle scheduled planners add up. Goals cost more than recipes: the search tries every allowed step in every promising state, and states multiply with every step that looks like progress. Keep goals to the steps that matter (pruning does most of it), and plan across frames when a search needs more than a few hundred nodes.
+The default budget of 250 nodes keeps a hopeless search to a few milliseconds on VM, about a millisecond on YYC, many times what typical domains use. Raise it for large domains, and plan across frames when a plan costs more than a frame can spare. Game plans usually have under 20 steps, where every running call stays well under 0.1 ms. Schedule planners for agents that may plan, hundreds of idle scheduled planners add up. Goals cost more than recipes: the search tries every allowed step in every promising state, and states multiply with every step that looks like progress. Keep goals to the steps that matter (pruning does most of it), and plan across frames when a search needs more than a few hundred nodes.
 
 ### Planner fields
 
@@ -3010,22 +3015,22 @@ gmsa_plan_add_step(_d, "break_in_1", { requires : [["next_1", "<", 0.4]], effect
 
 ### What learning in plans costs
 
-Measured on the VM target with Demo 11's raid: six steps, one task of three methods, the situation from two facts.
+Measured with Demo 11's raid: six steps, one task of three methods, the situation from two facts. Each cell is VM / YYC:
 
 | Setup | Making the plan | The whole raid, make to reward | A raid whose first entrance fails |
 | --- | --- | --- | --- |
-| No learning | 94 us | 184 us | 281 us |
-| Step reliability | 129 us | 306 us | 442 us |
-| Learned methods (Count) | 149 us | 393 us | 605 us |
-| Both | 186 us | 466 us | 705 us |
+| No learning | 94 / 24 us | 184 / 46 us | 281 / 69 us |
+| Step reliability | 129 / 32 us | 306 / 81 us | 442 / 117 us |
+| Learned methods (Count) | 149 / 41 us | 393 / 116 us | 605 / 179 us |
+| Both | 186 / 50 us | 466 / 138 us | 705 / 209 us |
 
-| Player facts | VM |
-| --- | --- |
-| One read, first in a frame | 65 us, one evaluation of the observed agent |
-| One read, cached | 2.7 us |
-| Making a plan reading three, first in a frame / cached | 139 / 72 us, 49 us with plain facts |
+| Player facts | VM | YYC |
+| --- | --- | --- |
+| One read, first in a frame | 65 us, one evaluation of the observed agent | 17 us |
+| One read, cached | 2.7 us | 0.8 us |
+| Making a plan reading three, first in a frame / cached | 139 / 72 us, 49 us with plain facts | 37 / 19 us, 13 us with plain facts |
 
-- Step reliability costs about 6 us per method step when a task is planned, and about 30 us per step result learned.
+- Step reliability costs about 6 us per method step when a task is planned on VM, and about 30 us per step result learned (about a quarter of that on YYC).
 - Learned methods cost one prediction when the task is planned, and one outcome per method result and per reward.
 - All of it is paid per plan or per step, never per frame.
 
@@ -3583,7 +3588,7 @@ Every style, found and hand-written, with its name, weight, typical values and s
 | Explain, 3 styles | 71 us | 27 us |
 | Explain, 8 styles | 109 us | 35 us |
 | Fit, 200 sessions, 4 measures, the defaults | 15.2 s | 2.5 s |
-| Fit, 1000 sessions | 20.9 s | about 3.5 s, estimated |
+| Fit, 1000 sessions | 20.9 s | 3.5 s |
 
 - **Fitting is background work,** in slices of a few milliseconds, or done once on playtest data. The defaults spend time on reliability: Demo 22 fits 200 sessions with `restarts` 5 and `max_styles` 6, in about 4 seconds of slices on VM, and found the right styles in 198 of 200 simulated runs.
 - **Past `sample` sessions the cost grows slowly:** the restarts stay on 200 sessions, only the finishing passes see them all.
