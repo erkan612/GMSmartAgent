@@ -278,7 +278,9 @@ function gmsa_style_match(_set, _source) {
     var _x = __gmsa_style_values_of(_set, _source);
     var _confidence = 1;
     if (is_struct(_source) && variable_struct_exists(_source, "__gmsa_style_tracker")) {
-        _confidence = _source.ticks / (_source.ticks + _source.confidence_k);
+        // 1 once the tracker has seen as much play as it remembers: steady play settles at about half_life / ln 2 ticks
+        var _full = -1 / ln(_source.decay);
+        _confidence = min(1, _source.ticks / (_source.ticks + _source.confidence_k) * (_full + _source.confidence_k) / _full);
     }
     var _d = array_length(_set.measures);
     var _total = __gmsa_style_total_weight(_set);
