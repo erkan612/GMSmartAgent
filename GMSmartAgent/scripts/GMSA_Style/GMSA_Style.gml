@@ -76,6 +76,8 @@ function gmsa_style_fit(_set, _sessions, _params = {}) {
     if (!is_numeric(_keep) || _keep < 0) throw "GMSA: style fit keep must be a number of 0 or more";
     var _patience = __gmsa_param(_params, "patience", 2);
     if (!__gmsa_style_whole(_patience, 1)) throw "GMSA: style fit patience must be a whole number of 1 or more";
+    var _sample = __gmsa_param(_params, "sample", 200);
+    if (!__gmsa_style_whole(_sample, 1)) throw "GMSA: style fit sample must be a whole number of 1 or more";
     var _seed = __gmsa_param(_params, "seed", 1);
     var _n = array_length(_sessions);
     var _d = array_length(_set.measures);
@@ -103,7 +105,7 @@ function gmsa_style_fit(_set, _sessions, _params = {}) {
 
     var _job = {
         __gmsa_style_job : true, set : _set, n : _n, d : _d, x : _x, centre : _centre, scale : _scale,
-        kmin : _kmin, kmax : _kmax, restarts : _restarts, iterations : _iterations, keep : _keep, patience : _patience, worse : 0,
+        kmin : _kmin, kmax : _kmax, restarts : _restarts, iterations : _iterations, keep : _keep, patience : _patience, worse : 0, sample : _sample, cx : _x, cn : _n, polish : false,
         rng : gmsa_rng_create(_seed), done : false,
         k : _kmin, r : 0, phase : 0, cursor : 0, iter : 0, prev : -infinity,
         seeds : [], dmin : array_create(_n, infinity), newest : 0, total : 0, pick : 0,
@@ -118,6 +120,7 @@ function gmsa_style_fit(_set, _sessions, _params = {}) {
         gmsa_style_fit_work(self, _budget);
         return true;
     });
+    __gmsa_style_fit_sample(_job);
     return _job;
 }
 
@@ -473,10 +476,10 @@ function __gmsa_style_logp(_st, _x, _d) {
 }
 
 function __gmsa_style_fit_chunk(_job) {
-    var _n = _job.n;
+    var _n = _job.cn; // the sessions this run works on: a sample during restarts, all of them otherwise
     var _d = _job.d;
     var _k = _job.k;
-    var _x = _job.x;
+    var _x = _job.cx;
 
     if (_job.phase == 0) {
         if (array_length(_job.seeds) == 0) {
@@ -491,7 +494,7 @@ function __gmsa_style_fit_chunk(_job) {
         if (array_length(_job.seeds) < _k) {
             if (_job.cursor == 0) {
                 _job.total = 0;
-                _job.pick = min(_n - 1, floor(gmsa_rng_next(_job.rng) * _n));  // kept only when every session sits on a starting point
+                _job.pick = min(_n - 1, floor(gmsa_rng_next(_job.rng) * _n)); // kept only when every session sits on a starting point
             }
             var _end = min(_n, _job.cursor + max(1, floor(256 / _d)));
             var _nb = _job.newest * _d;
@@ -561,7 +564,7 @@ function __gmsa_style_fit_chunk(_job) {
         _ll += _top + ln(_sum);
         for (var _c = 0; _c < _k; _c++) {
             var _r = _lp[_c] / _sum;
-            if (_r < 0.000001) continue;  // a session this far from a style adds nothing to it worth the time
+            if (_r < 0.000001) continue; // a session this far from a style adds nothing to it worth the time
             _nk[@ _c] += _r;
             var _ab = _c * _d;
             for (var _j = 0; _j < _d; _j++) {
@@ -578,7 +581,7 @@ function __gmsa_style_fit_chunk(_job) {
     // maximization: new weights, typical values and spreads
     for (var _c = 0; _c < _k; _c++) {
         var _nc = _nk[_c];
-        if (_nc < 0.000000001) continue;  // a style nobody belongs to keeps what it had
+        if (_nc < 0.000000001) continue; // a style nobody belongs to keeps what it had
         _job.w[_c] = _nc / _n;
         for (var _j = 0; _j < _d; _j++) {
             var _m = _s1[_c * _d + _j] / _nc;
@@ -595,21 +598,46 @@ function __gmsa_style_fit_chunk(_job) {
         return;
     }
 
-    // a restart finished: the best at this number of styles so far?
-    if (_now > _job.best_ll) {
+    if (_job.polish) {
+        // the best restart, finished on every session: what this number of styles is judged by
+        _job.polish = false;
         _job.best_ll = _now;
         _job.best_w = __gmsa_style_copy(_job.w);
         _job.best_mu = __gmsa_style_copy(_job.mu);
         _job.best_va = __gmsa_style_copy(_job.va);
+        _job.phase = 0;
+        _job.seeds = [];
+    } else {
+        // a restart finished: the best at this number of styles so far?
+        if (_now > _job.best_ll) {
+            _job.best_ll = _now;
+            _job.best_w = __gmsa_style_copy(_job.w);
+            _job.best_mu = __gmsa_style_copy(_job.mu);
+            _job.best_va = __gmsa_style_copy(_job.va);
+        }
+        _job.r += 1;
+        _job.phase = 0;
+        _job.seeds = [];
+        // one style has one answer, restarts can't improve on it
+        if (_job.r < ((_k == 1) ? 1 : _job.restarts)) return;
+        if (_job.cn < _job.n) {
+            // the restarts ran on a sample: the best of them carries on over every session
+            _job.w = __gmsa_style_copy(_job.best_w);
+            _job.mu = __gmsa_style_copy(_job.best_mu);
+            _job.va = __gmsa_style_copy(_job.best_va);
+            _job.cx = _job.x;
+            _job.cn = _job.n;
+            _job.polish = true;
+            __gmsa_style_fit_begin_pass(_job);
+            _job.iter = 0;
+            _job.prev = -infinity;
+            _job.phase = 1;
+            return;
+        }
     }
-    _job.r += 1;
-    _job.phase = 0;
-    _job.seeds = [];
-    // one style has one answer, restarts can't improve on it
-    if (_job.r < ((_k == 1) ? 1 : _job.restarts)) return;
 
     // every restart at this number done: is it the best number so far, by BIC?
-    var _bic = -2 * _job.best_ll + (_k * 2 * _d + _k - 1) * ln(_n);
+    var _bic = -2 * _job.best_ll + (_k * 2 * _d + _k - 1) * ln(_job.n);
     if (_bic < _job.top_bic) {
         _job.top_bic = _bic;
         _job.top_k = _k;
@@ -625,8 +653,35 @@ function __gmsa_style_fit_chunk(_job) {
     _job.r = 0;
     _job.best_ll = -infinity;
     // stop trying more styles once patience counts in a row were no better
-    if (_job.k <= _job.kmax && _job.worse < _job.patience) return;
+    if (_job.k <= _job.kmax && _job.worse < _job.patience) {
+        __gmsa_style_fit_sample(_job);
+        return;
+    }
     __gmsa_style_fit_finish(_job);
+}
+
+function __gmsa_style_fit_sample(_job) {
+    var _n = _job.n;
+    var _m = min(_n, max(_job.sample, _job.k));
+    if (_m == _n) {
+        _job.cx = _job.x;
+        _job.cn = _n;
+        return;
+    }
+    var _d = _job.d;
+    var _x = _job.x;
+    var _idx = array_create(_n, 0);
+    for (var _i = 0; _i < _n; _i++) _idx[_i] = _i;
+    var _cx = array_create(_m * _d, 0);
+    for (var _i = 0; _i < _m; _i++) {
+        var _j = _i + min(_n - _i - 1, floor(gmsa_rng_next(_job.rng) * (_n - _i)));
+        var _t = _idx[_j];
+        _idx[_j] = _idx[_i];
+        _idx[_i] = _t;
+        for (var _q = 0; _q < _d; _q++) _cx[_i * _d + _q] = _x[_t * _d + _q];
+    }
+    _job.cx = _cx;
+    _job.cn = _m;
 }
 
 function __gmsa_style_fit_begin_pass(_job) {
@@ -712,4 +767,5 @@ function __gmsa_style_fit_finish(_job) {
     _job.bic = _job.top_bic;
     _job.done = true;
     _job.x = []; // the sessions aren't needed any more
+    _job.cx = [];
 }
