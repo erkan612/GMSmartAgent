@@ -40,5 +40,6 @@ function gmsa_tests_all(_verbose = false) {
     //test_learn_schedule();
     test_learn_bayes();
     test_learn_neighbor();
+    test_rating();
     return gmsa_test_run(_verbose);
 }

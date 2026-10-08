@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Rating",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Rating",
+  "parent":{
+    "name":"Rating",
+    "path":"folders/GMSmartAgent/Rating.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}
