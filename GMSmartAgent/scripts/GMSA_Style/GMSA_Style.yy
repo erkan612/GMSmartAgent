@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Style",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Style",
+  "parent":{
+    "name":"Style",
+    "path":"folders/GMSmartAgent/Style.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

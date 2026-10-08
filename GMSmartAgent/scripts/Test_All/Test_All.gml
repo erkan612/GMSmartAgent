@@ -41,5 +41,6 @@ function gmsa_tests_all(_verbose = false) {
     test_learn_bayes();
     test_learn_neighbor();
     test_rating();
+    test_style();
     return gmsa_test_run(_verbose);
 }
