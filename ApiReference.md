@@ -26,6 +26,7 @@ Complete reference for every public function, enum and data structure in GMSmart
 - [PlanLearn](#planlearn)
 - [Rating](#rating)
 - [Style](#style)
+- [Kit](#kit)
 - [Test](#test)
 - [Data Structures](#data-structures)
 - [Callback Signatures](#callback-signatures)
@@ -157,6 +158,15 @@ What a plan report is about, see [Reports](#reports).
 | `gmsa_plan_report.STEP_FAILURE` | A step was reported failed, or had no target |
 | `gmsa_plan_report.GOAL_SUCCESS` | A goal's chain finished |
 | `gmsa_plan_report.GOAL_FAILURE` | A goal's chain broke and was searched again, or the plan failed with it |
+
+### gmsa_kit_step
+What a Kit action's or plan step's `step` returns, see [gmsa_kit_step](#step-results).
+
+| Element | Meaning |
+| --- | --- |
+| `gmsa_kit_step.RUNNING` | Still going, the same as `false` or returning nothing |
+| `gmsa_kit_step.DONE` | Done, the same as `true` |
+| `gmsa_kit_step.FAILED` | Didn't work out |
 
 ### gmsa_test_status
 Result of a test case, see [Test](#test).
@@ -3604,6 +3614,487 @@ Every style, found and hand-written, with its name, weight, typical values and s
 
 ---
 
+## Kit
+
+Agents and plans described as data, assembled and run for you. A profile is one struct, each action carries its own code, and one call a step runs the whole cycle: thinking, taking what was chosen, starting it, running it, stopping it and deciding again.
+
+Kit invents nothing. Everything it builds is a real profile, a real agent, a real planner and a real domain, so every plain call in this reference still works on them, and you can use Kit for one agent and plain calls for the next.
+
+| You want to | Use |
+| --- | --- |
+| Describe an agent's choices in one struct | [gmsa_kit_profile](#gmsa_kit_profile) |
+| Read the owner, a target, a distance, a count | [Kit inputs](#kit-inputs) |
+| Say what an action can be done to | [Kit targets](#kit-targets) |
+| Say how much an input matters, by what you mean | [Kit curves](#kit-curves) |
+| Run an agent, once a step | [gmsa_kit_agent_create](#gmsa_kit_agent_create), [gmsa_kit_agent_update](#gmsa_kit_agent_update) |
+| Know what it's doing, or change it from outside | [Around the cycle](#around-the-cycle) |
+| Learn from the player's picks, or from how actions went | [Kit learning](#kit-learning) |
+| Describe a planning domain in one struct, and run plans as actions | [Kit planning](#kit-planning) |
+
+```gml
+function goblin_profile() {
+    return gmsa_kit_profile("goblin", {
+        inputs : {
+            hp       : gmsa_kit_input_var("hp", 0, 100),
+            distance : gmsa_kit_input_distance(300),
+        },
+        actions : {
+            drink : {
+                targets  : gmsa_kit_targets_near(o_potion, 300),
+                consider : { hp : gmsa_kit_curve_low(0.4), distance : gmsa_kit_curve_near() },
+                step     : function(_goblin, _potion) {
+                    var _r = walk_to(_goblin, _potion);
+                    if (_r == true) {
+                        _goblin.hp = min(100, _goblin.hp + 40);
+                        instance_destroy(_potion);
+                    }
+                    return _r;
+                },
+            },
+            loot : {
+                weight   : 0.5,
+                targets  : gmsa_kit_targets_near(o_coin, 300),
+                consider : { distance : gmsa_kit_curve_near() },
+                step     : function(_goblin, _coin) {
+                    var _r = walk_to(_goblin, _coin);
+                    if (_r == true) instance_destroy(_coin);
+                    return _r;
+                },
+            },
+            wander : {
+                weight : 0.05,
+                start  : function(_goblin) { _goblin.spot = { x : _goblin.x + irandom_range(-64, 64), y : _goblin.y + irandom_range(-64, 64) }; },
+                step   : function(_goblin) { return walk_to(_goblin, _goblin.spot); },
+            },
+        },
+    });
+}
+
+// your game's own movement, written once. GMSmartAgent never moves anything
+function walk_to(_inst, _target, _spd = 2) {
+    if (!is_struct(_target) && !instance_exists(_target)) return gmsa_kit_step.FAILED;
+    var _dist = point_distance(_inst.x, _inst.y, _target.x, _target.y);
+    if (_dist <= _spd) {
+        _inst.x = _target.x;
+        _inst.y = _target.y;
+        return true;
+    }
+    var _dir = point_direction(_inst.x, _inst.y, _target.x, _target.y);
+    _inst.x += lengthdir_x(_spd, _dir);
+    _inst.y += lengthdir_y(_spd, _dir);
+    return false;
+}
+```
+
+```gml
+// o_goblin > Create
+hp = 100;
+agent = gmsa_kit_agent_create(goblin_profile(), id);
+
+// o_goblin > Step
+gmsa_kit_agent_update(agent);
+
+// o_goblin > Clean Up
+gmsa_kit_agent_destroy(agent);
+```
+
+Kit is three files: `GMSA_Kit` (profiles, inputs, targets, curves, agents), `GMSA_Kit_Learn` (learning) and `GMSA_Kit_Plan` (planning). They are split for reading only and belong together. Kit depends on the core modules, on Learn for its learning and on Plan for its planning.
+
+### Rules Kit keeps everywhere
+
+- **Mistakes are named at once.** A field Kit doesn't know (`consdier`), a value of the wrong kind, a plan the domain doesn't have: each throws when the profile, domain or agent is made, naming the field and listing the ones it knows.
+- **Names are sorted.** Struct keys keep no order in GML, and the order of actions breaks ties. Kit adds actions, inputs, considerations, facts, steps, tasks and goals in name order, so a profile behaves the same every run.
+- **Made once by name.** `gmsa_kit_profile` and `gmsa_kit_domain` build the first time and return the same one after, so a profile function can be called from every instance's Create.
+- **Callbacks get the owner.** Inputs, targets, handlers and facts are called with the agent's owner, the instance or struct the agent was made for, not the agent.
+- **Functions are functions.** Anywhere Kit takes a function, it takes an anonymous function, a method or a script function by name, and refuses a plain number. A built-in function passed by name can be a plain number in GML, so wrap it: `function(_o) { return instance_number(o_coin); }`.
+
+### gmsa_kit_profile
+
+```gml
+gmsa_kit_profile(name, [def]) -> profile
+```
+
+A built profile from one struct. The first call needs `def`. Every later call with the same name returns the same profile, and `def` is ignored.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `actions` | struct | required | Action name to action, see below. `{}` for an action with nothing to set |
+| `inputs` | struct | `{}` | Input name to input: a [Kit input](#kit-inputs), a plain input with the same name, or `function(owner, target)` returning 0 to 1 |
+| `commitment` | real | 0.15 | Bonus for what the agent is already doing, so it doesn't flip between near-equal options. The core's default is 0 |
+| `select` | gmsa_select | `BEST` | How the winner is picked |
+| `top_n` | int | 3 | For `TOP_N_WEIGHTED` |
+| `learn` | array | | Input names a model reads, the profile's features. See [gmsa_profile_set_features](#gmsa_profile_set_features) |
+| `prepare` | function | | `function(profile)`, run before the build, for any plain call: `gmsa_profile_set_model`, extra actions, anything |
+
+An action:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `weight` | real | 1 | Multiplies the action's score |
+| `cooldown` | real | 0 | Microseconds before it can be chosen again |
+| `targets` | function | | What it can be done to: a [Kit target](#kit-targets), or `function(agent)` returning an array. Without targets the action is done to nothing in particular |
+| `consider` | struct or array | | Input name to curve, `{ hp : gmsa_kit_curve_low() }`, or `[[input, curve], ...]` to set the order |
+| `start` | function | | `function(owner, target, agent)`, when the action begins |
+| `step` | function | | `function(owner, target, agent)`, every update while it runs. Returns how it's going, see [gmsa_kit_step](#step-results) |
+| `stop` | function | | `function(owner, target, agent)`, when it ends, however it ends |
+| `plan` | string | | Runs this task, goal or step of the agent's domain instead of a `step`, see [Plan actions](#plan-actions) |
+| `interruptible` | bool | true | false: once started, nothing better replaces it, see [Actions that can't be interrupted](#actions-that-cant-be-interrupted) |
+
+```gml
+var _p = gmsa_kit_profile("guard", {
+    inputs  : { alert : gmsa_kit_input_var("alert"), distance : gmsa_kit_input_distance(500) },
+    learn   : ["alert", "distance"],
+    prepare : function(_profile) { gmsa_profile_set_model(_profile, global.guard_model, 0.5); },
+    actions : {
+        patrol : { weight : 0.2, step : guard_patrol },
+        chase  : { targets : gmsa_kit_targets_nearest(o_player, 1, 500), consider : { alert : gmsa_kit_curve_high(), distance : gmsa_kit_curve_near() }, step : guard_chase },
+    },
+});
+```
+
+The profile is an ordinary built profile with one extra field, `kit`, which is Kit's and internal.
+
+**Throws** when the name is empty, the first call has no `def`, a field is unknown, `actions` is missing or empty, an input is none of the three kinds or a plain input's name differs from its key, a consideration pair isn't `[input, curve]`, a handler isn't a function, `plan` isn't a name, an action has both `step` and `plan`, or `interruptible` isn't a bool or is false with nothing to end the action. The core's own checks follow at build: unknown inputs in `consider`, and so on.
+
+### gmsa_kit_profile_forget
+
+```gml
+gmsa_kit_profile_forget(name)
+```
+
+Forgets a profile, so the next `gmsa_kit_profile` with its name builds it again from its `def`. For tests and hot reloading. Agents made from the old profile keep it.
+
+### Kit inputs
+
+Each becomes a pull input named by its key in the profile's `inputs`.
+
+| Function | Reads | Per target |
+| --- | --- | --- |
+| `gmsa_kit_input_var(variable, [min = 0], [max = 1])` | The owner's variable | No |
+| `gmsa_kit_input_target_var(variable, [min = 0], [max = 1])` | The target's variable | Yes |
+| `gmsa_kit_input_distance(max)` | Distance from the owner to the target, 0 to `max` pixels | Yes |
+| `gmsa_kit_input_count(what, radius, max)` | How many of `what` are within `radius` of the owner, 0 to `max` | No |
+| `gmsa_kit_input_read(callback, [min = 0], [max = 1], [per_target = false])` | `callback(owner, target)`, anything else | As set |
+
+Variables are read from instances and structs alike. `what` is an object, or an array of instances or structs, and never counts the owner. Values outside `min` to `max` are clamped, like every input.
+
+**Throws** when a variable name is empty, `min` equals `max`, `max` or `radius` isn't above 0, or the callback isn't a function; and while thinking, when a variable isn't a number on the thing it's read from.
+
+### Kit targets
+
+Each returns a targets callback for an action. `what` is an object, or an array of instances or structs. The owner is never its own target, and destroyed instances are skipped.
+
+| Function | Targets |
+| --- | --- |
+| `gmsa_kit_targets_near(what, radius)` | Everything within `radius` of the owner |
+| `gmsa_kit_targets_nearest(what, count, [radius = infinity])` | The `count` nearest within `radius` |
+| `gmsa_kit_targets_all(what)` | Everything |
+| `gmsa_kit_targets_from(callback)` | Your own list, `callback(owner)` returning an array |
+
+**Throws** when `radius` isn't above 0, `count` isn't a whole number of 1 or more, or the callback isn't a function.
+
+### Kit curves
+
+Curves named by what you mean. Every input reaches a curve as 0 to 1, and each of these returns an ordinary curve, so [gmsa_curve_eval](#gmsa_curve_eval) and every other curve call work on it.
+
+| Function | Means | Built on |
+| --- | --- | --- |
+| `gmsa_kit_curve_near([reach = 1])` | Closer is better: 1 at 0, 0 at `reach` | LINEAR |
+| `gmsa_kit_curve_far([reach = 1])` | Farther is better: 0 at 0, 1 at `reach` | LINEAR |
+| `gmsa_kit_curve_near_only([reach = 0.15], [sharpness = 20])` | Only really close counts | LOGISTIC |
+| `gmsa_kit_curve_more([shape = 1])` | More is better. `shape` below 1: any amount counts. Above 1: only big amounts | POWER |
+| `gmsa_kit_curve_less([shape = 1])` | Less is better, the same shapes | POWER |
+| `gmsa_kit_curve_low([threshold = 0.4], [sharpness = 10])` | Urgent as the input drops, like health: 0.5 at `threshold` | LOGISTIC |
+| `gmsa_kit_curve_high([threshold = 0.6], [sharpness = 10])` | Urgent as the input rises, like danger | LOGISTIC |
+| `gmsa_kit_curve_at_least([threshold = 0.5])` | A gate: 1 from `threshold` up, 0 below, and a 0 vetoes the option | STEP |
+| `gmsa_kit_curve_below([threshold = 0.5])` | A gate: 1 below `threshold`, 0 from it up | STEP |
+| `gmsa_kit_curve_peak([center = 0.5], [width = 0.2])` | Best in the middle: 1 at `center`, about 0.37 at `width` away | CUSTOM |
+| `gmsa_kit_curve_band([from = 0.3], [to = 0.7], [ramp = 0])` | Good inside a range. `ramp` above 0 fades to 0 over that far outside | CUSTOM |
+| `gmsa_kit_curve_valley([center = 0.5], [width = 0.5])` | Worst in the middle: 0 at `center`, 1 at `width` away | POWER |
+| `gmsa_kit_curve_ease()` | A smooth S-shaped rise | CUSTOM |
+| `gmsa_kit_curve_soft(curve, [floor = 0.2])` | Any curve, never below `floor`: it matters, it never vetoes. For matters of taste | CUSTOM |
+
+```gml
+gmsa_kit_draw_curve(curve, x, y, w, h)
+```
+
+Draws a curve's shape in a box with its middle lines, in the current draw colour. For tuning screens.
+
+**Throws** when `reach`, `shape`, `width` or `sharpness` isn't above 0, a threshold or center isn't a number, `from` is above `to`, `ramp` is below 0, `floor` is outside 0 to 1, or `soft` gets no curve.
+
+### gmsa_kit_agent_create
+
+```gml
+gmsa_kit_agent_create(profile, [owner], [params]) -> agent
+```
+
+A real agent whose actions Kit runs. `profile` is a Kit profile or any built profile: a plain profile's actions simply have no code.
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| `think_every` | int | 10 | Updates between thinks. Not with a scheduler |
+| `scheduler` | struct | | Thinks on this scheduler's budget instead. Step the scheduler once a frame |
+| `priority` | real | 0 | The scheduler tier. Only with a scheduler |
+| `interval` | real | 0 | Microseconds between thinks on the scheduler. Only with a scheduler |
+| `thinks` | bool | true | false for an agent that never thinks or acts, the player's, for [gmsa_kit_observe_pick](#gmsa_kit_observe_pick) |
+| `model` | struct | | A model that re-ranks the agent's choices, see [Kit learning](#kit-learning) |
+| `influence` | real | 1 | How far the model moves the choice, 0 to 1. Only with a model |
+| `domain` | struct | | A built domain, for actions with `plan`, see [Kit planning](#kit-planning) |
+| `planner` | struct | `{}` | Settings for the agent's planner, as [gmsa_plan_planner_create](#gmsa_plan_planner_create) takes them. Only with a domain |
+
+The agent has one extra field, `kit`, which is Kit's and internal.
+
+**Throws** when the profile isn't built, a param is unknown, `think_every` isn't a whole number of 1 or more, `priority` or `interval` is given without a scheduler or `think_every` with one, an agent that doesn't think gets a scheduler, `think_every`, a model or a domain, `influence` comes without a model, a model's profile has no features, an action runs a plan and there is no domain or the domain doesn't have it, or `planner` comes without a domain.
+
+### gmsa_kit_agent_update
+
+```gml
+gmsa_kit_agent_update(agent)
+```
+
+Once a step, usually in the owner's Step event. In order:
+
+1. **Thinks when due:** at the first update, then every `think_every` updates, or at once after [gmsa_kit_agent_decide](#gmsa_kit_agent_decide). With a scheduler, the scheduler thinks and the update only takes what it chose.
+2. **Takes a fresh decision,** if there is one:
+   - The same action on the same target: nothing changes.
+   - Something else: the current action's `stop`, then the new one becomes the agent's current option (commitment and outcome tracking follow from it), then its `start`.
+   - Nothing worth doing: the current action's `stop`, and the agent idles.
+3. **Runs the current action.** A target that was an instance when chosen and no longer exists ends the action as failed. Otherwise its `step` runs, or its plan, see [Plan actions](#plan-actions). An action without `step` or `plan` stays current until something better wins.
+4. **When the action ends** by its step or plan: its `stop`, and the agent decides again in the same update, so it never stands still for a think.
+
+An agent made with `thinks : false` does nothing here.
+
+### Step results
+
+```gml
+enum gmsa_kit_step { RUNNING, DONE, FAILED }
+```
+
+What a `step` returns. Plain `true` and `false` mean the right thing, so the enum is only needed for failing.
+
+| Return | Means |
+| --- | --- |
+| `false`, `gmsa_kit_step.RUNNING`, or nothing | Still going |
+| `true`, `gmsa_kit_step.DONE` | Done: `stop`, then decide again |
+| `gmsa_kit_step.FAILED` | Didn't work out. The same as done for the action, reported as failed to a plan |
+
+**Throws** when a step returns anything else.
+
+### Handlers
+
+`start`, `step` and `stop` are `function(owner, target, agent)`. `target` is undefined for an action without targets, and GML lets a handler take fewer arguments than it's given: `function(_goblin)` is fine.
+
+`stop` runs once whenever the action ends, however it ends: done, failed, its target gone, replaced by something better, nothing worth doing, or [gmsa_kit_agent_done](#gmsa_kit_agent_done), [gmsa_kit_agent_stop](#gmsa_kit_agent_stop) and [gmsa_kit_agent_destroy](#gmsa_kit_agent_destroy). That makes `start` and `stop` the place for anything that must be undone, like a claim on a target:
+
+```gml
+loot : {
+    targets  : gmsa_kit_targets_near(o_coin, 300),
+    consider : { distance : gmsa_kit_curve_near(), free : gmsa_kit_curve_at_least() },  // free: 0 when another goblin claimed it
+    start    : function(_goblin, _coin) { _coin.claimed = _goblin; },
+    stop     : function(_goblin, _coin) { if (instance_exists(_coin) && _coin.claimed == _goblin) _coin.claimed = noone; },
+    step     : goblin_loot_step,
+},
+```
+
+A handler can call [gmsa_kit_agent_done](#gmsa_kit_agent_done) or [gmsa_kit_agent_stop](#gmsa_kit_agent_stop) on its own agent. Kit notices and doesn't read the step's return.
+
+### Actions that can't be interrupted
+
+An action with `interruptible : false`, once started, isn't replaced by a better option, and not by "nothing worth doing" either. It ends by its own `step` or plan, a target that's gone, or [gmsa_kit_agent_done](#gmsa_kit_agent_done), [gmsa_kit_agent_stop](#gmsa_kit_agent_stop) or [gmsa_kit_agent_destroy](#gmsa_kit_agent_destroy). For an attack swing, a reload, anything that must finish once begun. It needs a `step` or a `plan`, or it would never end.
+
+### Around the cycle
+
+Each of these **throws** when given an agent that isn't from `gmsa_kit_agent_create`.
+
+#### gmsa_kit_agent_doing
+
+```gml
+gmsa_kit_agent_doing(agent) -> string
+```
+
+The current action's name, `""` while idle.
+
+#### gmsa_kit_agent_target
+
+```gml
+gmsa_kit_agent_target(agent) -> any
+```
+
+The current action's target, undefined while idle or for an action without targets.
+
+#### gmsa_kit_agent_done
+
+```gml
+gmsa_kit_agent_done(agent)
+```
+
+Ends the current action from outside (the goblin was hit), and the agent decides again at its next update.
+
+#### gmsa_kit_agent_decide
+
+```gml
+gmsa_kit_agent_decide(agent)
+```
+
+Thinks at the next update, whatever the timer says. With a scheduler, at its next step. For when the world changed: a new enemy, an alarm.
+
+#### gmsa_kit_agent_stop
+
+```gml
+gmsa_kit_agent_stop(agent)
+```
+
+Stops the current action and idles until the next think.
+
+#### gmsa_kit_agent_destroy
+
+```gml
+gmsa_kit_agent_destroy(agent)
+```
+
+Stops the current action and takes the agent, and its planner, out of their scheduler. In the owner's Destroy or Clean Up event. Without a scheduler it only stops.
+
+### Kit learning
+
+A model is attached with `model` and `influence` on [gmsa_kit_agent_create](#gmsa_kit_agent_create), or on the profile in its `prepare`. Either way the profile needs `learn`, its features. A model that learns outcomes turns outcome tracking on by itself, and Kit keeps a ticket for each action as it starts. Which model answers which question is under [Choosing a model](#choosing-a-model).
+
+#### gmsa_kit_observe_pick
+
+```gml
+gmsa_kit_observe_pick(model, agent, target, [action], [note]) -> bool
+```
+
+The player picked this. Everything the player's agent could choose is offered, every action on every target, the ones its curves would veto included, since the player isn't bound by them; the pick is found by its target, and recorded with [gmsa_learn_observe](#gmsa_learn_observe). `action` names it when one target has several. Returns false when the model is frozen.
+
+```gml
+// o_player > Create
+agent = gmsa_kit_agent_create(gmsa_kit_profile("player", { inputs : ..., learn : [...], actions : ... }), id, { thinks : false });
+
+// when the player takes a coin
+gmsa_kit_observe_pick(global.player_model, agent, _coin);
+```
+
+**Throws** when the agent isn't one, `action` isn't a name, nothing on offer has that target (and action), several actions have it and `action` is missing, or the model learns outcomes.
+
+#### gmsa_kit_outcome
+
+```gml
+gmsa_kit_outcome(agent, reward, [note]) -> bool
+```
+
+How the current action went, or the last one while idle, usually from inside its `step`. Through [gmsa_learn_outcome](#gmsa_learn_outcome) with the action's ticket. Returns false when the model is frozen.
+
+**Throws** when the agent has no model, its model learns choices, or it hasn't started an action yet.
+
+#### gmsa_kit_reward
+
+```gml
+gmsa_kit_reward(agent, reward, [note]) -> count
+```
+
+A reward for what the agent did lately: its recent decisions through [gmsa_learn_reward](#gmsa_learn_reward), the nearer the more, and its plan's methods through [gmsa_plan_reward](#gmsa_plan_reward), whichever the agent has. Returns how many were credited.
+
+**Throws** when the agent has neither a model that learns outcomes nor a domain.
+
+### Kit planning
+
+#### gmsa_kit_domain
+
+```gml
+gmsa_kit_domain(name, [def]) -> domain
+```
+
+A built domain from one struct, made once by name like profiles. Its steps carry their own `start`, `step` and `stop`, so running a plan needs no `switch` on step names.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `facts` | struct | Fact name to `function(owner)` returning a number or a bool, or `{ read, min, max }` |
+| `steps` | struct | Step name to step, see below. At least one |
+| `tasks` | struct | Task name to an array of methods, tried in order, or `{ methods, select, top_n }` |
+| `goals` | struct | Goal name to `{ want, actions, variety, prune }`, see [gmsa_plan_add_goal](#gmsa_plan_add_goal) |
+| `prepare` | function | `function(domain, tasks)`, run before the build, with the tasks by name: for `gmsa_plan_learn_methods`, `gmsa_plan_learn_steps`, listeners, a step chance |
+
+A step:
+
+| Field | Description |
+| --- | --- |
+| `requires`, `effects` | Conditions, below |
+| `check`, `targets`, `score`, `cost` | As [gmsa_plan_add_step](#gmsa_plan_add_step) takes them |
+| `start`, `step`, `stop` | `function(owner, target, agent)`, like an action's. `target` is the one the step's `targets` and `score` picked |
+
+A method is `{ name, requires, subtasks, check, score }`. `subtasks` is one name or an array of step, task and goal names. (Not `do`: it's a GML keyword and can't be a struct key.)
+
+Conditions are a struct, `{ has_key : true, gold : [">=", 10] }`, or the plain array form, `[["has_key", true], ["gold", ">=", 10]]`. Effects are written the same way: `{ has_key : true, gold : ["+", 5] }`.
+
+```gml
+var _d = gmsa_kit_domain("raider", {
+    facts : {
+        has_key : function(_o) { return _o.keys > 0; },
+        opened  : function(_o) { return _o.opened; },
+    },
+    steps : {
+        get_key    : { effects : { has_key : true }, targets : raider_keys, score : raider_near, step : raider_fetch },
+        open_chest : { requires : { has_key : true }, effects : { opened : true }, step : raider_open },
+    },
+    tasks : {
+        raid_chest : [
+            { name : "open",  requires : { has_key : true }, subtasks : "open_chest" },
+            { name : "fetch", subtasks : ["get_key", "open_chest"] },
+        ],
+    },
+    prepare : function(_domain, _tasks) { gmsa_plan_learn_methods(_tasks.raid_chest, global.raid_model); },
+});
+```
+
+The domain is an ordinary built domain with one extra field, `kit`, which is Kit's and internal.
+
+**Throws** when the name is empty, the first call has no `def`, a field is unknown, there are no steps, a fact is neither kind, a handler isn't a function, a task isn't an array of methods or has none, a method has no name or its `subtasks` aren't names, or a condition's `[operator, value]` has the wrong length. The core's own checks follow at build: unknown facts, operators and names.
+
+#### Plan actions
+
+An action with `plan : "raid_chest"` on an agent made with `domain`:
+
+- **When it starts,** after its own `start`, the agent's planner makes the plan: at once, or on the agent's scheduler if it has one.
+- **Each update,** the plan's current step runs: its `start` once, then its `step`, whose result is reported to the plan as done or failed. A step without `step` is done at once, after its `start`. A step whose target instance is gone fails. Repairs and retries are the planner's, as always.
+- **When the plan is done or fails,** the action ends the same way and the agent decides again. The planner keeps the finished plan, so [gmsa_kit_reward](#gmsa_kit_reward) still reaches its methods.
+- **When something better wins,** the running step's `stop` runs and the plan is stopped, then the action's own `stop`.
+
+`plan` names a task, a goal or a single step; the action doesn't care which. An action can't have both `plan` and `step`.
+
+#### gmsa_kit_domain_forget
+
+```gml
+gmsa_kit_domain_forget(name)
+```
+
+Forgets a domain, like [gmsa_kit_profile_forget](#gmsa_kit_profile_forget).
+
+#### gmsa_kit_agent_plan_step
+
+```gml
+gmsa_kit_agent_plan_step(agent) -> string
+```
+
+The step the agent's plan is on, `""` when it isn't running one.
+
+#### gmsa_kit_agent_planner
+
+```gml
+gmsa_kit_agent_planner(agent) -> planner
+```
+
+The agent's planner, for [gmsa_plan_lines](#gmsa_plan_lines), [gmsa_plan_explain](#gmsa_plan_explain) and every other plan call. undefined without a domain.
+
+### Kit and plain calls
+
+- **Reading works everywhere.** The Debug overlay, `gmsa_agent_evaluate`, the Learn and Plan explain calls, a profile's or agent's fields: all as for any agent.
+- **Let Kit drive the cycle.** Don't call `gmsa_agent_think`, `gmsa_agent_consume`, `gmsa_agent_set_current_option` or `gmsa_agent_clear_current` on a Kit agent: the update would lose track of what's running. Use [gmsa_kit_agent_decide](#gmsa_kit_agent_decide), [gmsa_kit_agent_done](#gmsa_kit_agent_done) and [gmsa_kit_agent_stop](#gmsa_kit_agent_stop) instead. The same goes for its planner's make, step and stop calls.
+- **Mix freely.** A Kit profile can take plain inputs and plain calls in `prepare`. A Kit agent can run a plain profile. A Kit domain's planner can be used by hand outside a Kit agent.
+
+**Cost.** Kit adds bookkeeping, not work: what a think costs is the core's. In a test scene, up to 100 goblins with three actions and a handful of targets each, thinking every 10 updates and walking, took 15 to 19 us per goblin per update on VM, flat from 20 to 100 goblins, most of it the thinks.
+
+---
+
 ## Test
 
 The Test module ships with GMSmartAgent so you can test your own profiles. It depends on Core, Core never depends on it.
@@ -3844,6 +4335,12 @@ See [Planner fields](#planner-fields) in Plan.
 | Plan listener | `function(report)` | Nothing. The report is reused, copy what you keep |
 | Plan step chance | `function(planner, step, state)` | The step's chance of success, 0 to 1. `step` is an index into `domain.steps` |
 | Scheduler work `work` | `function(budget)` | True when it did something, false when it had nothing to do |
+| Kit input, `gmsa_kit_input_read` and functions in `inputs` | `function(owner, target)` | Raw value. In `inputs`, 0 to 1 |
+| Kit `gmsa_kit_targets_from` | `function(owner)` | Array of targets |
+| Kit action or plan step `start`, `step`, `stop` | `function(owner, target, agent)` | `step`: true, false or a [gmsa_kit_step](#step-results). The others: nothing |
+| Kit profile `prepare` | `function(profile)` | Nothing |
+| Kit domain fact | `function(owner)` | A number or a bool |
+| Kit domain `prepare` | `function(domain, tasks)` | Nothing. `tasks` is the domain's tasks by name |
 
 Custom model methods run with the model as `self`, see [gmsa_learn_custom](#gmsa_learn_custom).
 

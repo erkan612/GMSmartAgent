@@ -11,6 +11,8 @@ GMSmartAgent replaces hand-written `if` chains and rigid state machines with **u
 
 For goals that take several steps (get the key, get through the door, open the chest), the **Plan** module works out the steps and keeps the plan working while the world changes. Utility picks what to do, planning works out how: from recipes you write (HTN), from a goal and a list of actions it searches through itself (GOAP), or both in one plan. Plans can learn too: which recipe works in which situation, which steps to trust, and what the player is about to do. And models can learn sequences: what the player does after what they just did, from a combo to which potion comes after a sword. Others learn each input on its own, so many inputs need only a few dozen choices, or remember whole moments, so "last time it looked like this" becomes a prediction. Beyond choices, GMSmartAgent can also tell how good each player is, from who wins matches of any shape, and how they play, by sorting players into styles found from many sessions or written by hand. Both are ready to use as inputs.
 
+And when you'd rather not wire any of that by hand, **Kit** describes an agent as data, one struct of inputs, actions and the code each action runs, and runs the whole cycle for you with one call a step. Plans too.
+
 GMSmartAgent **only decides**. It never moves anything, never queries your room, never owns collision or spatial data. Your game hands it numbers, GMSmartAgent hands back a ranked list of options, or a plan one step at a time. What the agent does with it is up to you.
 
 ---
@@ -98,6 +100,16 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **Play styles** - Styles found in many players' sessions (a mixture model choosing how many there are), written by hand, or both in one set, named, adjusted, merged, and kept by name when fitted again
 - **Live matching** - A tracker per player, fed as things happen, says how much like each style they play now, how well they fit any, and how sure that is yet
 - **Explained** - "erkan: 1620, fairly sure, 34 matches, last: beat the ogre", "rusher 97%, sniper 3% (fits well, sure): kills 3.10 (rusher 3.00)"
+
+### The Short Way: Kit
+- **One struct, one call** - A profile from one struct, an agent that runs itself with `gmsa_kit_agent_update` once a step: thinking, starting the chosen action, running it, stopping it and deciding again
+- **Code with its action** - Each action carries its own `start`, `step` and `stop`, so there's no `switch` on what was chosen, and `stop` always runs, however the action ends
+- **Curves by intent** - `curve_low(0.4)`, `curve_near()`, `curve_peak()`, `curve_at_least()`, instead of curve types and their parameters
+- **Inputs and targets by name** - The owner's variable, a target's variable, a distance, a count, the things near the owner, the nearest few
+- **Actions that must finish** - An attack swing or a reload that nothing better can cut short
+- **Learning and plans in one line each** - The player's pick recorded with `gmsa_kit_observe_pick`, how an action went with `gmsa_kit_outcome`, a domain from one struct and an action that runs a plan with `plan : "raid_chest"`
+- **Mistakes named at once** - A misspelled field throws when the profile is made, naming it and listing the right ones, instead of being silently ignored
+- **Real underneath** - Everything Kit builds is a real profile, agent, planner and domain, so the Debug view and every plain call still work, and the two mix freely
 
 ### Developer Tools
 - **Debug view** - Ranked options with scores, probabilities and every consideration's value, drawn or as text, with the designer's score shown wherever learning changed it
@@ -231,6 +243,66 @@ gmsa_scheduler_remove(global.ai, agent);
 gmsa_debug_draw(agent.decision, 10, 10);
 ```
  
+---
+
+## The Short Way: Kit
+
+The same enemy, with Kit:
+
+```gml
+function enemy_profile() {
+    return gmsa_kit_profile("enemy", {
+        inputs : {
+            missing_hp : gmsa_kit_input_read(function(_enemy) { return 1 - _enemy.hp / _enemy.hp_max; }),
+            distance   : gmsa_kit_input_distance(300),
+        },
+        actions : {
+            pick_up : {
+                weight   : 0.6,
+                targets  : gmsa_kit_targets_near(o_item, 300),
+                consider : { distance : gmsa_kit_curve_near() },
+                step     : enemy_fetch,
+            },
+            heal : {
+                weight   : 1.2,
+                targets  : gmsa_kit_targets_near(o_heart, 300),
+                consider : { distance : gmsa_kit_curve_near(), missing_hp : gmsa_kit_curve_more() },
+                step     : enemy_fetch,
+            },
+            idle : { weight : 0.05 },
+        },
+    });
+}
+
+// your movement and your rules: walk to the thing, take it on arrival. true when done
+function enemy_fetch(_enemy, _thing) {
+    var _dist = point_distance(_enemy.x, _enemy.y, _thing.x, _thing.y);
+    var _dir = point_direction(_enemy.x, _enemy.y, _thing.x, _thing.y);
+    _enemy.x += lengthdir_x(min(2, _dist), _dir);
+    _enemy.y += lengthdir_y(min(2, _dist), _dir);
+    if (_dist > 2) return false;
+    instance_destroy(_thing);
+    return true;
+}
+```
+
+```gml
+// Create
+hp     = 100;
+hp_max = 100;
+agent  = gmsa_kit_agent_create(enemy_profile(), id, { scheduler : global.ai, interval : 100000 });
+
+// Step
+gmsa_kit_agent_update(agent);
+
+// Clean Up
+gmsa_kit_agent_destroy(agent);
+```
+
+Kit built the same profile, with the same commitment by default, and the agent's update does the cycle the Step event did by hand: it takes what was chosen, runs its `step` until it's done, then decides again at once, without waiting for the next think. An item taken by someone else on the way ends the action and the enemy picks again. The searching is gone too: `gmsa_kit_targets_near` finds the items.
+
+Kit invents nothing. It's a shorter way to write what the rest of this page describes, and what it builds is real, so `gmsa_debug_draw(agent.decision, 10, 10)` works as before, and an agent can start with Kit and grow into plain calls where it needs to. Plans run the same way: a domain from one struct, each step with its own code, and an action with `plan : "raid_chest"`. See [Kit](ApiReference.md#kit) in the API Reference.
+
 ---
 
 ## Testing Your Tuning
@@ -563,6 +635,7 @@ The rest, per call:
 - **Nearest neighbor's cost grows with its memory,** about 1.2 us per remembered moment on VM, 0.2 us on YYC.
 - **Heavy work runs in slices you budget:** LambdaMART training, the TDNN's replays, plans and goals across frames, style fits. Measured overshoot of LambdaMART training at a 2 ms budget: under 130 us. In a long session, a garbage collection can occasionally land inside any budgeted call, which is GameMaker's, not the budget's.
 - **Learning in plans is paid per plan and per step, never per frame.** A player fact costs one evaluation of the player's model per frame, about 65 us on VM, shared by every planner that reads it.
+- **Kit adds bookkeeping, not work.** In a test scene, Kit goblins thinking every 10 updates and walking cost 15 to 19 us each per update on VM, flat from 20 to 100 goblins, most of it their thinks.
 - **Goals grow with every action that looks like progress,** so goals leave out the actions that can't help. Big searches can be spread over frames like any plan.
 
 The API Reference has the full tables for every module, VM and YYC side by side: [models](ApiReference.md#what-models-cost), [outcomes](ApiReference.md#what-outcome-learning-costs), [sequence learners](ApiReference.md#what-sequence-learners-cost), [Naive Bayes and nearest neighbor](ApiReference.md#what-naive-bayes-and-nearest-neighbor-cost), [planning](ApiReference.md#what-planning-costs), [learning in plans](ApiReference.md#what-learning-in-plans-costs), [rating](ApiReference.md#what-rating-costs) and [style](ApiReference.md#what-style-costs).
@@ -579,13 +652,14 @@ Use priority tiers so the agents near the player think first, and give the AI a 
 - **Deterministic.** Same seed and same inputs give the same decisions, so tests and replays are repeatable.
 - **Allocation-free thinking.** Decisions and options are reused, so many agents don't churn the garbage collector.
 - **Learning stays under the designer.** Models reorder options within what the designer's scoring allows. They can't bring back a vetoed option or lift a score above the designer's, and agents only experiment among the options your scoring ranks highest.
+- **Kit is a shortcut, not a second framework.** It builds real profiles, agents and planners from data and runs the cycle you would write by hand. Nothing it does is out of reach of plain calls, and nothing in the framework depends on it.
 - **Plans are made of your actions.** The planner only combines the steps, recipes and goals you wrote, it never invents an action. It hands your game one step at a time and never performs anything itself.
 
 ---
  
 ## Documentation
  
-- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, plans nobody wrote, goblins that read the rhythm of your play, models that learn your taste input by input and moment by moment, and ratings and play styles
+- [**Getting Started**](GettingStarted.md) - From one small enemy to a room full of goblins sharing one AI budget, one that learns to play like you, a crowd that learns which coins bite, goblins that plan their way into a locked chest on a shared budget, plans that learn which recipe works and when the player is watching, plans nobody wrote, goblins that read the rhythm of your play, models that learn your taste input by input and moment by moment, and ratings and play styles, then all of it again the short way, with Kit
 - [**Full Documentation**](ApiReference.md) - Complete reference for every public function, enum and data structure
 ---
  

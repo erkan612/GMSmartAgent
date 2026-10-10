@@ -175,7 +175,7 @@ function __gmsa_kit_plan_setup(_agent, _params, _where) {
     for (var _i = 0; _i < array_length(_names); _i++) if (_kit.handlers[$ _names[_i]].plan != undefined) array_push(_planned, _names[_i]);
     if (_domain == undefined) {
         if (variable_struct_exists(_params, "planner")) throw "GMSA: " + _where + " has planner settings but no domain";
-        if (array_length(_planned) > 0) throw "GMSA: " + _where + " action '" + _planned[0] + "' runs a plan, so the agent needs a domain";
+        if (array_length(_planned) > 0 && _kit.thinks) throw "GMSA: " + _where + " action '" + _planned[0] + "' runs a plan, so the agent needs a domain";
         return;
     }
     if (!_kit.thinks) throw "GMSA: " + _where + " doesn't think, so it runs no plans and needs no domain";

@@ -2,6 +2,8 @@
 
 This guide builds one small enemy, a goblin that loots coins and drinks potions when it's hurt, and grows it step by step into a room full of goblins sharing one AI budget, one of which learns to play like you, who plan their way into a locked chest, who learn which plans work and when you're watching, who work out plans nobody wrote, who read the rhythm of your play, who learn your taste input by input and moment by moment, and who know which of them is quickest and how you play. Each step adds one idea. By the end you'll know every part of GMSmartAgent you need for a real game.
 
+In a hurry? [Chapter 22](#22-the-short-way-kit) writes the same goblin again the short way, with Kit: one struct for the profile and one call a step. Read chapters 2 to 5 for the ideas, then jump there if you like.
+
 For every function's full details, see the [API Reference](ApiReference.md).
 
 ---
@@ -29,7 +31,8 @@ For every function's full details, see the [API Reference](ApiReference.md).
 19. [Learning Sequences](#19-learning-sequences)
 20. [Many Inputs, Whole Moments](#20-many-inputs-whole-moments)
 21. [Who's Quicker, and How You Play](#21-whos-quicker-and-how-you-play)
-22. [Troubleshooting](#22-troubleshooting)
+22. [The Short Way: Kit](#22-the-short-way-kit)
+23. [Troubleshooting](#23-troubleshooting)
 
 ---
 
@@ -1706,7 +1709,355 @@ The [API Reference](ApiReference.md#rating) has how ratings work, every match sh
 
 ---
 
-## 22. Troubleshooting
+## 22. The Short Way: Kit
+
+Twenty-one chapters wired every part by hand: a profile built call by call, a think timer, consume, the chosen option, `set_current_option`, a movement block that checks what it's walking to, a ticket, a planner and a switch on its steps. That's the framework, and knowing it is worth it. **Kit** is the same framework described as data. A profile is one struct, each action carries its own code, and one call a step runs the whole cycle.
+
+Kit invents nothing: everything it builds is a real profile, agent, planner and domain. So this chapter writes a second goblin, `o_kit_goblin`, next to the first one, in the same room, on the same scheduler.
+
+**The profile**, in a new script `Kit_Goblin`:
+
+```gml
+function kit_goblin_profile() {
+    return gmsa_kit_profile("kit goblin", {
+        inputs : {
+            hp       : gmsa_kit_input_var("hp", 0, 100),
+            distance : gmsa_kit_input_distance(300),
+        },
+        actions : {
+            drink : {
+                targets  : gmsa_kit_targets_near(o_potion, 300),
+                consider : { hp : gmsa_kit_curve_low(0.4), distance : gmsa_kit_curve_near() },
+                step     : function(_goblin, _potion) {
+                    var _r = walk_to(_goblin, _potion);
+                    if (_r == true) {
+                        _goblin.hp = min(100, _goblin.hp + 40);
+                        instance_destroy(_potion);
+                    }
+                    return _r;
+                },
+            },
+            loot : {
+                weight   : 0.5,
+                targets  : gmsa_kit_targets_near(o_coin, 300),
+                consider : { distance : gmsa_kit_curve_near() },
+                step     : function(_goblin, _coin) {
+                    var _r = walk_to(_goblin, _coin);
+                    if (_r == true) instance_destroy(_coin);
+                    return _r;
+                },
+            },
+            wander : {
+                weight : 0.05,
+                start  : function(_goblin) { _goblin.spot = { x : random(room_width), y : random(room_height) }; },
+                step   : function(_goblin) { return walk_to(_goblin, _goblin.spot); },
+            },
+        },
+    });
+}
+
+// your movement, written once. true on arrival, false on the way
+function walk_to(_inst, _target, _spd = 2) {
+    if (!is_struct(_target) && !instance_exists(_target)) return gmsa_kit_step.FAILED;
+    var _dist = point_distance(_inst.x, _inst.y, _target.x, _target.y);
+    var _dir = point_direction(_inst.x, _inst.y, _target.x, _target.y);
+    _inst.x += lengthdir_x(min(_spd, _dist), _dir);
+    _inst.y += lengthdir_y(min(_spd, _dist), _dir);
+    return _dist <= _spd;
+}
+```
+
+**The goblin**, a new object `o_kit_goblin`:
+
+```gml
+// o_kit_goblin > Create
+hp = 100;
+agent = gmsa_kit_agent_create(kit_goblin_profile(), id, { scheduler : global.ai, interval : 100000 });
+```
+
+```gml
+// o_kit_goblin > Step
+if (keyboard_check_pressed(vk_down)) hp = max(0, hp - 10);
+gmsa_kit_agent_update(agent);
+```
+
+```gml
+// o_kit_goblin > Clean Up
+gmsa_kit_agent_destroy(agent);
+```
+
+Run it with both goblins in the room. They behave the same: loot, drink when hurt, wander when there's nothing in range.
+
+Here's where chapters 3 to 10 went:
+
+| By hand | With Kit |
+| --- | --- |
+| `gmsa_profile_create`, `add_input`, `add_action`, `add_consideration`, `build`, and the `static` pattern | One `gmsa_kit_profile` call, built the first time and the same profile after |
+| The `find` function | `gmsa_kit_targets_near(o_coin, 300)` |
+| `gmsa_curve_make(gmsa_curve.LOGISTIC, { k : -10, c : 0.4 })` | `gmsa_kit_curve_low(0.4)`, the same curve |
+| `commitment : 0.15` | Kit's default |
+| The think timer, or `gmsa_scheduler_add` | `think_every`, 10 by default, or `scheduler` |
+| Consume, get the chosen option, set it current, keep its target in `goal` | `gmsa_kit_agent_update` |
+| The movement block, checking `goal.object_index` to know what it's doing | Each action's own `step`, given its target |
+| `gmsa_agent_clear_current` and `think_timer = 0` on arrival | A step that returns `true`: the agent decides again at once |
+| Rolling a new wander point on arrival | `start`, which runs each time wandering begins |
+| `gmsa_scheduler_remove` in Clean Up | `gmsa_kit_agent_destroy` |
+
+And one thing the hand-written goblin never did: when a coin it's walking to is taken by someone else, `walk_to` returns `FAILED` and the goblin picks again. Kit does the same by itself for any target instance that's gone.
+
+**A step returns how it's going.** `false` while it's on the way, `true` when it's done, and `gmsa_kit_step.FAILED` when it didn't work out. An action without a `step`, like `wander` would be without one, stays current until something better wins.
+
+**Curves by what you mean.** Kit names the shapes the guide has used all along:
+
+| You mean | Kit curve |
+| --- | --- |
+| Closer is better | `gmsa_kit_curve_near()` |
+| Urgent as it drops, like health | `gmsa_kit_curve_low(0.4)` |
+| Urgent as it rises, like danger | `gmsa_kit_curve_high(0.6)` |
+| Only with enough of it, a gate | `gmsa_kit_curve_at_least(0.5)` |
+| Best in the middle | `gmsa_kit_curve_peak(0.5, 0.2)` |
+| A matter of taste, never a veto | `gmsa_kit_curve_soft(any_curve)` |
+
+The [API Reference](ApiReference.md#kit-curves) has all fourteen. They're ordinary curves, so the tuning from [chapter 8](#8-tuning) works on them as before, and `gmsa_kit_draw_curve(curve, x, y, w, h)` draws one for a tuning screen.
+
+**Mistakes are named at once.** Misspell a field, `consdier : { ... }`, and the profile throws when it's made: `unknown field 'consdier'. Known: weight, cooldown, targets, consider, ...`. Without Kit a struct field nobody reads is silently ignored, and a goblin that ignores its curves is a long evening.
+
+---
+
+**One goblin per coin.** With a few Kit goblins in the room, two of them often walk to the same coin and one arrives for nothing. `start` and `stop` fix that: claim the coin when you set off, let go when you stop. `stop` runs however the action ends: picked up, taken by someone else, or dropped for something better. So a claim never leaks.
+
+```gml
+// o_coin > Create (add), and the same in o_potion > Create
+claimed = noone;
+```
+
+```gml
+// kit_goblin_profile, in inputs (add)
+free : gmsa_kit_input_read(function(_goblin, _thing) {
+    return (instance_exists(_thing.claimed) && _thing.claimed != _goblin) ? 0 : 1;
+}, 0, 1, true),
+```
+
+```gml
+// kit_goblin_profile, in both drink and loot (add)
+start : kit_claim,
+stop  : kit_release,
+```
+
+and `free : gmsa_kit_curve_at_least()` in both actions' `consider`, so a claimed item is off the table for everyone else:
+
+```gml
+// Kit_Goblin (add)
+function kit_claim(_goblin, _thing) {
+    _thing.claimed = _goblin;
+}
+
+function kit_release(_goblin, _thing) {
+    if (instance_exists(_thing) && _thing.claimed == _goblin) _thing.claimed = noone;
+}
+```
+
+Now every coin has at most one goblin on its way, and the rest look elsewhere or wander.
+
+---
+
+**Things that must finish.** A badly hurt goblin can also take a nap: three seconds, and nothing interrupts it, not even a potion appearing next to it. That's `interruptible : false`:
+
+```gml
+// kit_goblin_profile, in actions (add)
+nap : {
+    interruptible : false,
+    consider      : { hp : gmsa_kit_curve_low(0.25) },
+    weight        : 0.3,
+    start         : function(_goblin) { _goblin.nap_left = 180; },
+    step          : function(_goblin) {
+        _goblin.nap_left--;
+        if (_goblin.nap_left > 0) return false;
+        _goblin.hp = min(100, _goblin.hp + 15);
+        return true;
+    },
+},
+```
+
+An action that can't be interrupted ends by its own step, by a target that's gone, or by your code: `gmsa_kit_agent_done(agent)` when the goblin is hit, say. It must have a `step`, or it would never end, and Kit throws if it doesn't. Use it for an attack swing, a reload, a spell being cast: anything that looks wrong cut short.
+
+---
+
+**Learning, the short way.** Chapter 11's copycat needed the player's agent, a list of everything on offer built by hand, and `gmsa_observe`. With Kit, the profile names the features with `learn`:
+
+```gml
+// kit_goblin_profile (add, next to inputs)
+learn : ["hp", "distance"],
+```
+
+The player gets an agent that never thinks, it only records:
+
+```gml
+// o_player > Create, replace the agent line
+agent = gmsa_kit_agent_create(kit_goblin_profile(), id, { thinks : false });
+```
+
+and a click is one call. Kit offers everything the player's agent could pick, every coin and potion in range, and records the one clicked:
+
+```gml
+// o_player > Global Left Pressed, replace everything from "var _offered" to gmsa_learn_observe
+if (point_distance(x, y, _item.x, _item.y) <= 300) gmsa_kit_observe_pick(global.taste, agent, _item);
+```
+
+The range check matters: an item out of range isn't on offer, and Kit throws rather than record a choice the player never really had.
+
+A Kit agent is a real agent, so the copycat is still one line in a goblin's Creation Code: `gmsa_agent_set_model(agent, global.taste, 1)`.
+
+**Outcomes** from [chapter 13](#13-learning-what-works) need a ticket per decision, taken when the goblin acts on one. Kit keeps the tickets: give the agent a model that learns outcomes when you make it, and report from the step. Its third argument is the agent:
+
+```gml
+// o_kit_goblin > Create, replace the agent line
+agent = gmsa_kit_agent_create(kit_goblin_profile(), id, { scheduler : global.ai, interval : 100000, model : global.loot_sense });
+```
+
+```gml
+// kit_goblin_profile, loot's step
+step : function(_goblin, _coin, _agent) {
+    var _r = walk_to(_goblin, _coin);
+    if (_r == true) {
+        var _bitten = (_coin.source == global.cursed);
+        if (_bitten) _goblin.hp = max(0, _goblin.hp - 20);
+        gmsa_kit_outcome(_agent, _bitten ? -1 : 1);
+        instance_destroy(_coin);
+    }
+    return _r;
+},
+```
+
+The model can only learn what its inputs tell apart, so the coin kinds go in as inputs and features, as in chapter 13:
+
+```gml
+// kit_goblin_profile, in inputs (add)
+kind_0 : gmsa_kit_input_read(function(_goblin, _thing) { return kit_coin_kind(_thing, 0); }, 0, 1, true),
+kind_1 : gmsa_kit_input_read(function(_goblin, _thing) { return kit_coin_kind(_thing, 1); }, 0, 1, true),
+kind_2 : gmsa_kit_input_read(function(_goblin, _thing) { return kit_coin_kind(_thing, 2); }, 0, 1, true),
+```
+
+```gml
+// kit_goblin_profile, learn
+learn : ["hp", "distance", "kind_0", "kind_1", "kind_2"],
+```
+
+```gml
+// Kit_Goblin (add)
+function kit_coin_kind(_thing, _k) {
+    if (_thing == undefined || !instance_exists(_thing)) return 0;  // wandering has no target
+    return (_thing.object_index == o_coin && _thing.source == _k) ? 1 : 0;
+}
+```
+
+---
+
+**Plans, the short way.** Chapter 14's raid had a domain built call by call and a `switch` on the plan's current step in the Step event. With Kit, each step carries its own code, like an action:
+
+```gml
+// Kit_Goblin (add)
+function kit_raid_domain() {
+    return gmsa_kit_domain("kit raid", {
+        facts : {
+            has_key    : function(_goblin) { return _goblin.has_key; },
+            key_exists : function(_goblin) { return instance_exists(o_key); },
+        },
+        steps : {
+            go_to_key   : { requires : { key_exists : true }, step : function(_goblin) { return walk_to(_goblin, instance_find(o_key, 0)); } },
+            pick_up_key : {
+                requires : { key_exists : true },
+                effects  : { has_key : true, key_exists : false },
+                start    : function(_goblin) { _goblin.has_key = true; instance_destroy(o_key); },
+            },
+            go_to_chest : { step : function(_goblin) { return walk_to(_goblin, instance_find(o_chest, 0)); } },
+            unlock      : {
+                requires : { has_key : true },
+                effects  : { has_key : false },
+                start    : function(_goblin) { _goblin.has_key = false; instance_destroy(o_chest); },
+            },
+            smash       : {
+                start : function(_goblin) { _goblin.smash_time = 180; },
+                step  : function(_goblin) {
+                    _goblin.smash_time--;
+                    if (_goblin.smash_time > 0) return false;
+                    instance_destroy(o_chest);
+                    return true;
+                },
+            },
+        },
+        tasks : {
+            get_key : [
+                { name : "have_it", requires : { has_key : true }, subtasks : [] },
+                { name : "fetch", requires : { key_exists : true }, subtasks : ["go_to_key", "pick_up_key"] },
+            ],
+            raid_chest : [
+                { name : "unlock", subtasks : ["get_key", "go_to_chest", "unlock"] },
+                { name : "smash", subtasks : ["go_to_chest", "smash"] },
+            ],
+        },
+    });
+}
+```
+
+A step without a `step` function, like `pick_up_key`, is done as soon as its `start` has run. Methods are still tried in the order you write them, which is why `tasks` holds arrays. The field is `subtasks`, not `do`: `do` is a GML keyword and can't be a struct key.
+
+The raid is an action that runs a plan:
+
+```gml
+// kit_goblin_profile, in actions (add)
+raid : {
+    weight  : 0.3,
+    targets : gmsa_kit_targets_all(o_chest),
+    plan    : "raid_chest",
+},
+```
+
+and the goblin gets the domain:
+
+```gml
+// o_kit_goblin > Create, before the agent line (add)
+has_key = false;
+smash_time = 0;
+```
+
+```gml
+// o_kit_goblin > Create, the agent line: add the domain
+agent = gmsa_kit_agent_create(kit_goblin_profile(), id, { scheduler : global.ai, interval : 100000, model : global.loot_sense, domain : kit_raid_domain() });
+```
+
+That's all. When the goblin chooses `raid`, the plan is made on the scheduler, each step runs its own code, failures are repaired by the planner as in chapter 14, and when the plan finishes the goblin decides again. If a potion becomes urgent halfway, the running step's `stop` runs, the plan is dropped, and the goblin goes to drink. `gmsa_kit_agent_plan_step(agent)` says which step it's on, and `gmsa_kit_agent_planner(agent)` gives you the planner for the plan tree view:
+
+```gml
+// o_kit_goblin > Draw GUI
+gmsa_debug_draw_tree(gmsa_plan_lines(gmsa_kit_agent_planner(agent)), 10, 300);
+```
+
+---
+
+**Seeing it.** The debug list works on a Kit agent as on any other. One thing to add to the namer: a decision lists the targets it saw when the goblin last thought, and by now another goblin may have taken one of them. Check before you read it:
+
+```gml
+// o_kit_goblin > Draw GUI (add)
+gmsa_debug_draw(agent.decision, 10, 40, 8, function(_target) {
+    if (_target == undefined) return "-";
+    if (is_struct(_target)) return "point";
+    if (!instance_exists(_target)) return "gone";
+    return object_get_name(_target.object_index);
+});
+```
+
+Three things to remember:
+
+- **Let Kit drive.** Don't call `gmsa_agent_think`, `consume`, `set_current_option` or `clear_current` on a Kit agent, or its planner's make and step calls: Kit would lose track of what's running. To change its mind from outside, use `gmsa_kit_agent_decide`, `gmsa_kit_agent_done` and `gmsa_kit_agent_stop`. Everything else, reading, explaining, models, mixes freely.
+- **Callbacks get the owner.** Kit's inputs, targets, steps and facts are called with the goblin itself, not its agent. The agent comes third in a step, for `gmsa_kit_outcome`.
+- **`stop` is where you undo.** It runs once whenever an action ends, however it ends, so claims, animations and anything else you set up in `start` go back there.
+
+The [API Reference](ApiReference.md#kit) has every Kit function, field and rule.
+
+---
+
+## 23. Troubleshooting
 
 **The agent stands still.**
 Nothing could be chosen: every option was vetoed by a zero, on cooldown, or had no targets. Look at the debug list. If it shows `no selectable options`, add a fallback action like `wander` or an `idle` with a small weight.
@@ -1845,6 +2196,21 @@ The rating falls behind a player who keeps getting better. Make the pool with mo
 
 **The style match says 100% something, but the player plays nothing like it.**
 Shares are among the styles there are, so the least unlike one gets them all. The explain line says "like none of them" and the match's `fit` is low. Add a style for how that player plays, or don't act on a match that fits loosely.
+
+**The debug list crashes on a target that's gone.**
+The namer reads `object_index` from an instance destroyed since the agent last thought: a decision keeps the targets it saw until the next think. Check `instance_exists` first, see [chapter 22](#22-the-short-way-kit).
+
+**A Kit profile or domain throws about an unknown field.**
+That's Kit catching a typo, a field nothing would ever read. The message names it and lists the fields it knows.
+
+**A Kit action never ends.**
+An action without a `step` stays current until something better wins. A step ends its action by returning `true` or `gmsa_kit_step.FAILED`, returning `false` or nothing keeps it going. An action with `interruptible : false` only ends this way, or with `gmsa_kit_agent_done`.
+
+**`gmsa_kit_observe_pick` throws that nothing is on offer.**
+The clicked item isn't among the player's agent's targets, usually because it's out of range. Check the range before recording, as in [chapter 22](#22-the-short-way-kit).
+
+**A Kit method with `do` won't compile.**
+`do` is a GML keyword and can't be a struct key. Kit's methods list their steps in `subtasks`.
 
 **My game's random results changed after adding GMSmartAgent.**
 They shouldn't. GMSmartAgent uses its own random generator and never touches GameMaker's `random`. If your sequence changed, look elsewhere first.

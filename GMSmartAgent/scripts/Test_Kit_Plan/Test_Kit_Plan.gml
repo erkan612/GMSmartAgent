@@ -195,6 +195,9 @@ function test_kit_plan() {
             gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(plain, {}, { planner : { budget : 10 } }); }), "planner settings without a domain");
             gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(plain, {}, { thinks : false, domain : d }); }), "a domain for an agent that doesn't think");
             gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(p, {}, { domain : gmsa_plan_domain_create("kit test unbuilt") }); }), "a domain not built");
+			
+            var _player = gmsa_kit_agent_create(_ctx.p, {}, { thinks : false });
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_player), "", "a player's agent needs no domain for actions it never runs");
         });
     });
 }
