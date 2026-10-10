@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Kit_Plan",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Kit_Plan",
+  "parent":{
+    "name":"Kit",
+    "path":"folders/GMSmartAgent/Kit.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

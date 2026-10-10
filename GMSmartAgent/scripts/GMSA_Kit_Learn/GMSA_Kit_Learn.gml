@@ -32,10 +32,15 @@ function gmsa_kit_outcome(_agent, _reward, _note = undefined) { // how the curre
     return gmsa_learn_outcome(_model, _kit.ticket, _reward, _note);
 }
 
-function gmsa_kit_reward(_agent, _reward, _note = undefined) { // a reward for the agent's recent decisions, more for the nearer ones. Returns how many were credited
-    __gmsa_kit_state(_agent);
-    var _model = __gmsa_kit_outcome_model(_agent, "reward");
-    return gmsa_learn_reward(_model, _agent, _reward, _note);
+function gmsa_kit_reward(_agent, _reward, _note = undefined) { // a reward for the agent's recent decisions, more for the nearer ones, and for its plan's methods. Returns how many were credited
+    var _kit = __gmsa_kit_state(_agent);
+    var _model = __gmsa_kit_model_of(_agent);
+    var _learns = (_model != undefined && _model.learns == gmsa_learn_target.OUTCOMES);
+    if (!_learns && _kit.planner == undefined) __gmsa_kit_outcome_model(_agent, "reward");
+    var _n = 0;
+    if (_learns) _n += gmsa_learn_reward(_model, _agent, _reward, _note);
+    if (_kit.planner != undefined) _n += gmsa_plan_reward(_kit.planner, _reward);
+    return _n;
 }
 
 // Internal

@@ -66,6 +66,7 @@ function gmsa_kit_profile(_name, _def = undefined) { // a profile from one struc
         if (_h.step != undefined && !__gmsa_kit_is_function(_h.step)) throw "GMSA: " + _aw + " step must be a function";
         if (_h.stop != undefined && !__gmsa_kit_is_function(_h.stop)) throw "GMSA: " + _aw + " stop must be a function";
         if (_h.plan != undefined && (!is_string(_h.plan) || _h.plan == "")) throw "GMSA: " + _aw + " plan must be a task or goal name";
+        if (_h.plan != undefined && _h.step != undefined) throw "GMSA: " + _aw + " has both step and plan, its plan's steps do the work";
         _handlers[$ _an] = _h;
     }
 
@@ -248,12 +249,12 @@ function gmsa_kit_draw_curve(_curve, _x, _y, _w, _h) { // a curve's shape in a b
 // Agents
 enum gmsa_kit_step { RUNNING, DONE, FAILED }
 
-function gmsa_kit_agent_create(_profile, _owner = undefined, _params = undefined) { // a real agent whose actions Kit runs, gmsa_kit_agent_update once a step. params: { think_every (10), scheduler, priority, interval, thinks (true), model, influence (1) }
+function gmsa_kit_agent_create(_profile, _owner = undefined, _params = undefined) { // a real agent whose actions Kit runs, gmsa_kit_agent_update once a step. params: { think_every (10), scheduler, priority, interval, thinks (true), model, influence (1), domain, planner }
     if (!is_struct(_profile) || _profile[$ "built"] != true) throw "GMSA: a Kit agent needs a built profile, from gmsa_kit_profile or gmsa_profile_build";
     var _where = "Kit agent for '" + string(_profile.name) + "'";
     if (_params == undefined) _params = {};
     if (!is_struct(_params)) throw "GMSA: " + _where + " params must be a struct";
-    __gmsa_kit_check_keys(_params, ["think_every", "scheduler", "priority", "interval", "thinks", "model", "influence"], _where);
+    __gmsa_kit_check_keys(_params, ["think_every", "scheduler", "priority", "interval", "thinks", "model", "influence", "domain", "planner"], _where);
     var _thinks = __gmsa_param(_params, "thinks", true);
     if (!is_bool(_thinks)) throw "GMSA: " + _where + " thinks must be true or false";
 
@@ -286,8 +287,15 @@ function gmsa_kit_agent_create(_profile, _owner = undefined, _params = undefined
         instance  : false,
         serial    : 0,
         ticket    : undefined,
+        planner   : undefined,
+        phandlers : {},
+        pstep     : undefined,
+        ptarget   : undefined,
+        phandler  : undefined,
+        pinstance : false,
     };
     __gmsa_kit_learn_setup(_agent, _params, _where);
+    __gmsa_kit_plan_setup(_agent, _params, _where);
     if (_scheduler != undefined) gmsa_scheduler_add(_scheduler, _agent);
     return _agent;
 }
@@ -308,14 +316,16 @@ function gmsa_kit_agent_update(_agent) { // once a step: thinks when due, takes 
         __gmsa_kit_finish(_agent, _kit, gmsa_kit_step.FAILED);
         return;
     }
+    if (_kit.handler.plan != undefined) {
+        __gmsa_kit_plan_update(_agent, _kit);
+        return;
+    }
     var _step = _kit.handler.step;
     if (_step == undefined) return;
     var _serial = _kit.serial;
     var _r = _step(_agent.owner, _kit.target, _agent);
-    if (_kit.serial != _serial || _r == undefined) return;
-    if ((!is_numeric(_r) && !is_bool(_r)) || (_r != gmsa_kit_step.RUNNING && _r != gmsa_kit_step.DONE && _r != gmsa_kit_step.FAILED)) {
-        throw "GMSA: Kit action '" + _kit.action.name + "' step returned " + string(_r) + ": return true when done, false while running, or a gmsa_kit_step";
-    }
+    if (_kit.serial != _serial) return;
+    _r = __gmsa_kit_step_result(_r, "action '" + _kit.action.name + "'");
     if (_r != gmsa_kit_step.RUNNING) __gmsa_kit_finish(_agent, _kit, _r);
 }
 
@@ -352,7 +362,9 @@ function gmsa_kit_agent_stop(_agent) { // stops the current action and idles unt
 function gmsa_kit_agent_destroy(_agent) { // stops it and takes it out of its scheduler, in the owner's Destroy or Clean Up
     var _kit = __gmsa_kit_state(_agent);
     gmsa_kit_agent_stop(_agent);
-    if (_kit.scheduler != undefined) gmsa_scheduler_remove(_kit.scheduler, _agent);
+    if (_kit.scheduler == undefined) return;
+    gmsa_scheduler_remove(_kit.scheduler, _agent);
+    if (_kit.planner != undefined) gmsa_plan_unschedule(_kit.planner);
 }
 
 // Internal
@@ -478,18 +490,21 @@ function __gmsa_kit_take(_agent, _kit) {
     _kit.handler = (_handler != undefined) ? _handler : __gmsa_kit_no_handler();
     _kit.instance = __gmsa_kit_is_instance(_option.target);
     _kit.serial++;
+    var _serial = _kit.serial;
     if (_kit.handler.start != undefined) _kit.handler.start(_agent.owner, _kit.target, _agent);
+    if (_kit.serial == _serial && _kit.handler.plan != undefined) gmsa_plan_make(_kit.planner, _kit.handler.plan);
 }
 
 function __gmsa_kit_end(_agent, _kit) {
-    var _stop = _kit.handler.stop;
+    var _handler = _kit.handler;
     var _target = _kit.target;
     _kit.action = undefined;
     _kit.target = undefined;
     _kit.handler = undefined;
     _kit.instance = false;
     _kit.serial++;
-    if (_stop != undefined) _stop(_agent.owner, _target, _agent);
+    if (_handler.plan != undefined) __gmsa_kit_plan_halt(_agent, _kit);
+    if (_handler.stop != undefined) _handler.stop(_agent.owner, _target, _agent);
 }
 
 function __gmsa_kit_finish(_agent, _kit, _status) {
@@ -502,4 +517,13 @@ function __gmsa_kit_finish(_agent, _kit, _status) {
     gmsa_agent_think(_agent);
     _kit.timer = _kit.every - 1;
     __gmsa_kit_take(_agent, _kit);
+}
+
+
+function __gmsa_kit_step_result(_r, _what) {
+    if (_r == undefined) return gmsa_kit_step.RUNNING;
+    if ((!is_numeric(_r) && !is_bool(_r)) || (_r != gmsa_kit_step.RUNNING && _r != gmsa_kit_step.DONE && _r != gmsa_kit_step.FAILED)) {
+        throw "GMSA: Kit " + _what + " step returned " + string(_r) + ": return true when done, false while running, or a gmsa_kit_step";
+    }
+    return (_r == gmsa_kit_step.FAILED) ? gmsa_kit_step.FAILED : ((_r == gmsa_kit_step.RUNNING) ? gmsa_kit_step.RUNNING : gmsa_kit_step.DONE);
 }
