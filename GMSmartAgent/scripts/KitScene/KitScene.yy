@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"KitScene",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"KitScene",
+  "parent":{
+    "name":"kit_scene",
+    "path":"folders/demos/kit_scene.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

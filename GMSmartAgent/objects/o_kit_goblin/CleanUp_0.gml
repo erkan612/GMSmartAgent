@@ -1,0 +1,1 @@
+gmsa_kit_agent_destroy(agent);
