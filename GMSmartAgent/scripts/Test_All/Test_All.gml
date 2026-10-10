@@ -1,5 +1,5 @@
 function gmsa_tests_all(_verbose = false) {
-    //gmsa_test_clear();
+    gmsa_test_clear();
     //gmsa_tests_curves();
     //gmsa_tests_core();
     //gmsa_tests_think();

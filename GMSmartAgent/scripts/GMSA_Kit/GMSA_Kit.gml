@@ -419,8 +419,8 @@ function __gmsa_kit_input_for(_where, _key, _v) {
         if (_v.name != _key) throw "GMSA: " + _where + " has the input '" + _v.name + "' under the name '" + _key + "', they must match";
         return _v;
     }
-    if (__gmsa_kit_is_function(_v)) return gmsa_input_pull(_key, _v, 0, 1, false);
-    throw "GMSA: " + _where + " input '" + _key + "' must be a Kit input, a plain input or a function (agent, target)";
+    if (__gmsa_kit_is_function(_v)) return gmsa_input_pull(_key, method({ fn : _v }, function(_agent, _target) { return fn(_agent.owner, _target); }), 0, 1, false);
+    throw "GMSA: " + _where + " input '" + _key + "' must be a Kit input, a plain input or a function (owner, target) returning 0 to 1";
 }
 
 function __gmsa_kit_read(_thing, _variable, _who) {
