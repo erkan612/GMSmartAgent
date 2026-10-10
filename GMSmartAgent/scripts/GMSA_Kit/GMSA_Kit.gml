@@ -39,7 +39,7 @@ function gmsa_kit_profile(_name, _def = undefined) { // a profile from one struc
         var _ad = _actions[$ _an];
         var _aw = _where + " action '" + _an + "'";
         if (!is_struct(_ad)) throw "GMSA: " + _aw + " must be a struct, {} for one with nothing to set";
-        __gmsa_kit_check_keys(_ad, ["weight", "cooldown", "targets", "consider", "start", "step", "stop", "plan"], _aw);
+        __gmsa_kit_check_keys(_ad, ["weight", "cooldown", "targets", "consider", "start", "step", "stop", "plan", "interruptible"], _aw);
         var _params = {};
         if (_ad[$ "weight"] != undefined) _params.weight = _ad.weight;
         if (_ad[$ "cooldown"] != undefined) _params.cooldown = _ad.cooldown;
@@ -61,12 +61,14 @@ function gmsa_kit_profile(_name, _def = undefined) { // a profile from one struc
             throw "GMSA: " + _aw + " consider must be a struct of input : curve, or an array of [input, curve] pairs";
         }
 
-        var _h = { start : _ad[$ "start"], step : _ad[$ "step"], stop : _ad[$ "stop"], plan : _ad[$ "plan"] };
+        var _h = { start : _ad[$ "start"], step : _ad[$ "step"], stop : _ad[$ "stop"], plan : _ad[$ "plan"], interruptible : __gmsa_param(_ad, "interruptible", true) };
         if (_h.start != undefined && !__gmsa_kit_is_function(_h.start)) throw "GMSA: " + _aw + " start must be a function";
         if (_h.step != undefined && !__gmsa_kit_is_function(_h.step)) throw "GMSA: " + _aw + " step must be a function";
         if (_h.stop != undefined && !__gmsa_kit_is_function(_h.stop)) throw "GMSA: " + _aw + " stop must be a function";
         if (_h.plan != undefined && (!is_string(_h.plan) || _h.plan == "")) throw "GMSA: " + _aw + " plan must be a task or goal name";
         if (_h.plan != undefined && _h.step != undefined) throw "GMSA: " + _aw + " has both step and plan, its plan's steps do the work";
+        if (!is_bool(_h.interruptible)) throw "GMSA: " + _aw + " interruptible must be true or false";
+        if (!_h.interruptible && _h.step == undefined && _h.plan == undefined) throw "GMSA: " + _aw + " can't be interrupted, so it needs a step or a plan to end by itself";
         _handlers[$ _an] = _h;
     }
 
@@ -460,7 +462,7 @@ function __gmsa_kit_state(_agent) {
 }
 
 function __gmsa_kit_no_handler() {
-    static _none = { start : undefined, step : undefined, stop : undefined, plan : undefined };
+    static _none = { start : undefined, step : undefined, stop : undefined, plan : undefined, interruptible : true };
     return _none;
 }
 
@@ -473,6 +475,10 @@ function __gmsa_kit_take(_agent, _kit) {
     var _decision = gmsa_agent_consume(_agent);
     if (_decision == undefined) return;
     var _option = gmsa_decision_get_chosen(_decision);
+    if (_kit.action != undefined && !_kit.handler.interruptible) {
+        if (_option != undefined && _option.action == _kit.action && _option.target == _kit.target) gmsa_agent_set_current_option(_agent, _option);
+        return;
+    }
     if (_option == undefined) {
         if (_kit.action == undefined) return;
         __gmsa_kit_end(_agent, _kit);

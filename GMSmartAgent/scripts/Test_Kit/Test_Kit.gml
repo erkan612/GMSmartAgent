@@ -328,6 +328,35 @@ function test_kit() {
             gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(p, {}, { scheduler : 5 }); }), "not a scheduler");
             gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_update(gmsa_agent_create(p, {})); }), "a plain agent");
         });
+		
+        gmsa_test_case("an action that can't be interrupted finishes first", function() {
+            gmsa_kit_profile_forget("kit test swing");
+            var _p = gmsa_kit_profile("kit test swing", {
+                inputs  : { want : gmsa_kit_input_var("want") },
+                actions : {
+                    swing : {
+                        interruptible : false,
+                        consider : { want : gmsa_kit_curve_below() },
+                        start    : function(_o) { array_push(_o.log, "swing start"); },
+                        step     : function(_o) { return _o.landed; },
+                        stop     : function(_o) { array_push(_o.log, "swing stop"); },
+                    },
+                    block : { consider : { want : gmsa_kit_curve_at_least() }, start : function(_o) { array_push(_o.log, "block start"); } },
+                },
+            });
+            var _owner = { want : 0, landed : false, log : [] };
+            var _a = gmsa_kit_agent_create(_p, _owner);
+            gmsa_kit_agent_update(_a);
+            _owner.want = 1;
+            gmsa_kit_agent_decide(_a);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "swing", "block wins, but the swing goes on");
+            _owner.landed = true;
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(_owner.log, ["swing start", "swing stop", "block start"], "then it ends by itself, and block takes over at once");
+            gmsa_test_assert_throws(function() { gmsa_kit_profile("kit test bad swing 1", { actions : { a : { interruptible : false } } }); }, "nothing to end it");
+            gmsa_test_assert_throws(function() { gmsa_kit_profile("kit test bad swing 2", { actions : { a : { interruptible : "no", step : function() { return true; } } } }); }, "not true or false");
+        });
     });
 }
 
