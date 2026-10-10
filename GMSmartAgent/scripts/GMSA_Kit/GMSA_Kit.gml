@@ -245,6 +245,109 @@ function gmsa_kit_draw_curve(_curve, _x, _y, _w, _h) { // a curve's shape in a b
     }
 }
 
+// Agents
+enum gmsa_kit_step { RUNNING, DONE, FAILED }
+
+function gmsa_kit_agent_create(_profile, _owner = undefined, _params = undefined) { // a real agent whose actions Kit runs, gmsa_kit_agent_update once a step. params: { think_every (10), scheduler, priority, interval }
+    if (!is_struct(_profile) || _profile[$ "built"] != true) throw "GMSA: a Kit agent needs a built profile, from gmsa_kit_profile or gmsa_profile_build";
+    var _where = "Kit agent for '" + string(_profile.name) + "'";
+    if (_params == undefined) _params = {};
+    if (!is_struct(_params)) throw "GMSA: " + _where + " params must be a struct";
+    __gmsa_kit_check_keys(_params, ["think_every", "scheduler", "priority", "interval"], _where);
+
+    var _scheduler = _params[$ "scheduler"];
+    if (_scheduler != undefined) {
+        if (!is_struct(_scheduler) || !variable_struct_exists(_scheduler, "tiers")) throw "GMSA: " + _where + " scheduler must come from gmsa_scheduler_create";
+        if (variable_struct_exists(_params, "think_every")) throw "GMSA: " + _where + " has a scheduler, which paces its thinking: give interval instead of think_every";
+    } else if (variable_struct_exists(_params, "priority") || variable_struct_exists(_params, "interval")) {
+        throw "GMSA: " + _where + " has priority or interval, which belong to a scheduler: give a scheduler too, or use think_every";
+    }
+    var _every = __gmsa_param(_params, "think_every", 10);
+    if (!is_numeric(_every) || _every < 1 || frac(_every) != 0) throw "GMSA: " + _where + " think_every must be a whole number of 1 or more";
+    var _priority = __gmsa_param(_params, "priority", 0);
+    if (!is_numeric(_priority)) throw "GMSA: " + _where + " priority must be a number";
+    var _interval = __gmsa_param(_params, "interval", 0);
+    if (!is_numeric(_interval) || _interval < 0) throw "GMSA: " + _where + " interval must be 0 or more microseconds";
+
+    var _agent = gmsa_agent_create(_profile, _owner, { priority : _priority, interval : _interval });
+    var _kit = _profile[$ "kit"];
+    _agent.kit = {
+        handlers  : is_struct(_kit) ? _kit.handlers : {},
+        scheduler : _scheduler,
+        every     : _every,
+        timer     : 0,
+        action    : undefined,
+        target    : undefined,
+        handler   : undefined,
+        instance  : false,
+        serial    : 0,
+    };
+    if (_scheduler != undefined) gmsa_scheduler_add(_scheduler, _agent);
+    return _agent;
+}
+
+function gmsa_kit_agent_update(_agent) { // once a step: thinks when due, takes what it chose, runs the current action
+    var _kit = __gmsa_kit_state(_agent);
+    if (_kit.scheduler == undefined) {
+        if (_kit.timer <= 0) {
+            gmsa_agent_think(_agent);
+            _kit.timer = _kit.every;
+        }
+        _kit.timer--;
+    }
+    __gmsa_kit_take(_agent, _kit);
+    if (_kit.action == undefined) return;
+    if (_kit.instance && !instance_exists(_kit.target)) {
+        __gmsa_kit_finish(_agent, _kit, gmsa_kit_step.FAILED);
+        return;
+    }
+    var _step = _kit.handler.step;
+    if (_step == undefined) return;
+    var _serial = _kit.serial;
+    var _r = _step(_agent.owner, _kit.target, _agent);
+    if (_kit.serial != _serial || _r == undefined) return;
+    if ((!is_numeric(_r) && !is_bool(_r)) || (_r != gmsa_kit_step.RUNNING && _r != gmsa_kit_step.DONE && _r != gmsa_kit_step.FAILED)) {
+        throw "GMSA: Kit action '" + _kit.action.name + "' step returned " + string(_r) + ": return true when done, false while running, or a gmsa_kit_step";
+    }
+    if (_r != gmsa_kit_step.RUNNING) __gmsa_kit_finish(_agent, _kit, _r);
+}
+
+function gmsa_kit_agent_doing(_agent) { // the current action's name, "" while idle
+    var _kit = __gmsa_kit_state(_agent);
+    return (_kit.action == undefined) ? "" : _kit.action.name;
+}
+
+function gmsa_kit_agent_target(_agent) { // the current action's target, undefined while idle or for an action without targets
+    return __gmsa_kit_state(_agent).target;
+}
+
+function gmsa_kit_agent_done(_agent, _failed = false) { // ends the current action from outside, and the agent decides again at its next update
+    var _kit = __gmsa_kit_state(_agent);
+    if (_kit.action == undefined) return;
+    __gmsa_kit_end(_agent, _kit);
+    gmsa_agent_clear_current(_agent);
+    gmsa_kit_agent_decide(_agent);
+}
+
+function gmsa_kit_agent_decide(_agent) { // thinks at the next update, whatever the timer says. With a scheduler, at its next step
+    var _kit = __gmsa_kit_state(_agent);
+    if (_kit.scheduler == undefined) _kit.timer = 0;
+    else _agent.last_think = undefined;
+}
+
+function gmsa_kit_agent_stop(_agent) { // stops the current action and idles until the next think
+    var _kit = __gmsa_kit_state(_agent);
+    if (_kit.action == undefined) return;
+    __gmsa_kit_end(_agent, _kit);
+    gmsa_agent_clear_current(_agent);
+}
+
+function gmsa_kit_agent_destroy(_agent) { // stops it and takes it out of its scheduler, in the owner's Destroy or Clean Up
+    var _kit = __gmsa_kit_state(_agent);
+    gmsa_kit_agent_stop(_agent);
+    if (_kit.scheduler != undefined) gmsa_scheduler_remove(_kit.scheduler, _agent);
+}
+
 // Internal
 function __gmsa_kit_profiles() {
     static _store = {};
@@ -328,4 +431,67 @@ function __gmsa_kit_gather(_owner, _what, _radius, _count) {
         array_resize(_out, _count);
     }
     return _out;
+}
+
+
+function __gmsa_kit_state(_agent) {
+    var _kit = is_struct(_agent) ? _agent[$ "kit"] : undefined;
+    if (!is_struct(_kit)) throw "GMSA: this needs an agent from gmsa_kit_agent_create";
+    return _kit;
+}
+
+function __gmsa_kit_no_handler() {
+    static _none = { start : undefined, step : undefined, stop : undefined, plan : undefined };
+    return _none;
+}
+
+function __gmsa_kit_is_instance(_t) {
+    if (_t == undefined || is_struct(_t) || is_string(_t) || is_array(_t) || is_method(_t)) return false;
+    return instance_exists(_t);
+}
+
+function __gmsa_kit_take(_agent, _kit) {
+    var _decision = gmsa_agent_consume(_agent);
+    if (_decision == undefined) return;
+    var _option = gmsa_decision_get_chosen(_decision);
+    if (_option == undefined) {
+        if (_kit.action == undefined) return;
+        __gmsa_kit_end(_agent, _kit);
+        gmsa_agent_clear_current(_agent);
+        return;
+    }
+    var _same = (_option.action == _kit.action && _option.target == _kit.target);
+    if (!_same && _kit.action != undefined) __gmsa_kit_end(_agent, _kit);
+    gmsa_agent_set_current_option(_agent, _option);
+    if (_same) return;
+    var _handler = _kit.handlers[$ _option.action.name];
+    _kit.action = _option.action;
+    _kit.target = _option.target;
+    _kit.handler = (_handler != undefined) ? _handler : __gmsa_kit_no_handler();
+    _kit.instance = __gmsa_kit_is_instance(_option.target);
+    _kit.serial++;
+    if (_kit.handler.start != undefined) _kit.handler.start(_agent.owner, _kit.target, _agent);
+}
+
+function __gmsa_kit_end(_agent, _kit) {
+    var _stop = _kit.handler.stop;
+    var _target = _kit.target;
+    _kit.action = undefined;
+    _kit.target = undefined;
+    _kit.handler = undefined;
+    _kit.instance = false;
+    _kit.serial++;
+    if (_stop != undefined) _stop(_agent.owner, _target, _agent);
+}
+
+function __gmsa_kit_finish(_agent, _kit, _status) {
+    __gmsa_kit_end(_agent, _kit);
+    gmsa_agent_clear_current(_agent);
+    if (_kit.scheduler != undefined) {
+        _agent.last_think = undefined;
+        return;
+    }
+    gmsa_agent_think(_agent);
+    _kit.timer = _kit.every - 1;
+    __gmsa_kit_take(_agent, _kit);
 }

@@ -144,6 +144,190 @@ function test_kit() {
             gmsa_test_assert_equal(_p.kit.handlers.raid.plan, "raid_chest");
             gmsa_test_assert_true(_p.kit.handlers.wait.step == __test_kit_step, "a script function by name");
         });
+		
+
+        gmsa_test_case("an agent thinks at once, then every think_every updates", function() {
+            gmsa_kit_profile_forget("kit test pace");
+            var _p = gmsa_kit_profile("kit test pace", {
+                actions : { idle : { targets : gmsa_kit_targets_from(function(_owner) { _owner.thinks++; return [_owner]; }) } },
+            });
+            var _owner = { thinks : 0 };
+            var _a = gmsa_kit_agent_create(_p, _owner, { think_every : 3 });
+            repeat (7) gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(_owner.thinks, 3, "updates 1, 4 and 7");
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "idle");
+            gmsa_test_assert_true(gmsa_kit_agent_target(_a) == _owner, "its target");
+        });
+
+        gmsa_test_case("start, step and stop run in order, and done decides again at once", function() {
+            gmsa_kit_profile_forget("kit test cycle");
+            var _p = gmsa_kit_profile("kit test cycle", {
+                actions : {
+                    work : {
+                        start : function(_o) { array_push(_o.log, "start"); },
+                        step  : function(_o) { _o.steps++; array_push(_o.log, "step"); return _o.steps % 2 == 0; },
+                        stop  : function(_o) { array_push(_o.log, "stop"); },
+                    },
+                },
+            });
+            var _owner = { log : [], steps : 0 };
+            var _a = gmsa_kit_agent_create(_p, _owner);
+            gmsa_kit_agent_update(_a);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(_owner.log, ["start", "step", "step", "stop", "start"]);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "work");
+        });
+
+        gmsa_test_case("a better action takes over: the old one stops, the new one starts", function() {
+            gmsa_kit_profile_forget("kit test switch");
+            var _p = gmsa_kit_profile("kit test switch", {
+                inputs  : { want : gmsa_kit_input_var("want") },
+                actions : {
+                    a : { consider : { want : gmsa_kit_curve_below() }, start : function(_o) { array_push(_o.log, "a start"); }, stop : function(_o) { array_push(_o.log, "a stop"); } },
+                    b : { consider : { want : gmsa_kit_curve_at_least() }, start : function(_o) { array_push(_o.log, "b start"); }, stop : function(_o) { array_push(_o.log, "b stop"); } },
+                },
+            });
+            var _owner = { want : 0, log : [] };
+            var _a = gmsa_kit_agent_create(_p, _owner);
+            gmsa_kit_agent_update(_a);
+            _owner.want = 1;
+            gmsa_kit_agent_decide(_a);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(_owner.log, ["a start", "a stop", "b start"]);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "b");
+            gmsa_test_assert_equal(_a.current.action, gmsa_profile_action_index(_p, "b"), "the agent's current option, for commitment");
+        });
+
+        gmsa_test_case("the same action on the same target changes nothing", function() {
+            gmsa_kit_profile_forget("kit test same");
+            var _p = gmsa_kit_profile("kit test same", {
+                actions : { stay : { targets : gmsa_kit_targets_from(function(_owner) { return [_owner.spot]; }), start : function(_o) { array_push(_o.log, "start"); } } },
+            });
+            var _owner = { spot : {}, log : [] };
+            var _a = gmsa_kit_agent_create(_p, _owner);
+            repeat (3) {
+                gmsa_kit_agent_decide(_a);
+                gmsa_kit_agent_update(_a);
+            }
+            gmsa_test_assert_equal(_owner.log, ["start"]);
+        });
+
+        gmsa_test_case("nothing worth doing: the current action stops and the agent idles", function() {
+            gmsa_kit_profile_forget("kit test nothing");
+            var _p = gmsa_kit_profile("kit test nothing", {
+                inputs  : { want : gmsa_kit_input_var("want") },
+                actions : { a : { consider : { want : gmsa_kit_curve_at_least() }, stop : function(_o) { array_push(_o.log, "stop"); } } },
+            });
+            var _owner = { want : 1, log : [] };
+            var _a = gmsa_kit_agent_create(_p, _owner);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "a");
+            _owner.want = 0;
+            gmsa_kit_agent_decide(_a);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "", "idle");
+            gmsa_test_assert_equal(_owner.log, ["stop"]);
+            gmsa_test_assert_true(_a.current == undefined, "the agent's current option cleared");
+        });
+
+        gmsa_test_case("step results: false, RUNNING and nothing keep going, true, DONE and FAILED end it", function() {
+            gmsa_kit_profile_forget("kit test results");
+            var _p = gmsa_kit_profile("kit test results", {
+                actions : { work : { step : function(_o) { return _o.result; }, stop : function(_o) { array_push(_o.log, "stop"); } } },
+            });
+            var _owner = { result : false, log : [] };
+            var _a = gmsa_kit_agent_create(_p, _owner);
+            var _keep = [false, gmsa_kit_step.RUNNING, undefined];
+            for (var _i = 0; _i < 3; _i++) {
+                _owner.result = _keep[_i];
+                gmsa_kit_agent_update(_a);
+            }
+            gmsa_test_assert_equal(_owner.log, [], "still working");
+            var _end = [true, gmsa_kit_step.DONE, gmsa_kit_step.FAILED];
+            for (var _i = 0; _i < 3; _i++) {
+                _owner.result = _end[_i];
+                gmsa_kit_agent_update(_a);
+            }
+            gmsa_test_assert_equal(_owner.log, ["stop", "stop", "stop"], "each ended it, and it chose work again at once");
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "work");
+            _owner.result = "yes";
+            gmsa_test_assert_throws(method({ a : _a }, function() { gmsa_kit_agent_update(a); }), "a step result that means nothing");
+        });
+
+        gmsa_test_case("done, decide and stop from outside", function() {
+            gmsa_kit_profile_forget("kit test outside");
+            var _p = gmsa_kit_profile("kit test outside", {
+                actions : { work : { start : function(_o) { array_push(_o.log, "start"); }, stop : function(_o) { array_push(_o.log, "stop"); } } },
+            });
+            var _owner = { log : [] };
+            var _a = gmsa_kit_agent_create(_p, _owner);
+            gmsa_kit_agent_update(_a);
+            gmsa_kit_agent_done(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "", "done ends it");
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "work", "and it decides again at the next update");
+            gmsa_kit_agent_stop(_a);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "", "stop idles until the next think");
+            gmsa_kit_agent_decide(_a);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "work", "decide brings that think now");
+            gmsa_test_assert_equal(_owner.log, ["start", "stop", "start", "stop", "start"]);
+        });
+
+        gmsa_test_case("a target instance that's gone fails the action", function() {
+            gmsa_kit_profile_forget("kit test gone");
+            var _p = gmsa_kit_profile("kit test gone", {
+                actions : { grab : { targets : gmsa_kit_targets_from(function(_owner) { return _owner.items; }), stop : function(_o) { array_push(_o.log, "stop"); } } },
+            });
+            var _item = instance_create_depth(0, 0, 0, o_demo1_item);
+            var _owner = { items : [_item], log : [] };
+            var _a = gmsa_kit_agent_create(_p, _owner);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_true(gmsa_kit_agent_target(_a) == _item, "grabbing the item");
+            instance_destroy(_item);
+            _owner.items = [];
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(_owner.log, ["stop"], "it stopped");
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "", "and found nothing else to do");
+        });
+
+        gmsa_test_case("a scheduler thinks for it, and destroy takes it out", function() {
+            gmsa_kit_profile_forget("kit test scheduler");
+            var _p = gmsa_kit_profile("kit test scheduler", { actions : { work : {} } });
+            var _s = gmsa_scheduler_create(2000, { clock : function() { return 0; } });
+            var _a = gmsa_kit_agent_create(_p, {}, { scheduler : _s });
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "", "waits for the scheduler");
+            gmsa_scheduler_step(_s);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "work");
+            gmsa_kit_agent_destroy(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "");
+            gmsa_test_assert_equal(gmsa_scheduler_count(_s), 0, "out of the scheduler");
+        });
+
+        gmsa_test_case("a plain profile runs too, its actions without code", function() {
+            var _plain = gmsa_profile_create("kit test plain");
+            gmsa_profile_add_action(_plain, "rest");
+            _plain = gmsa_profile_build(_plain);
+            var _a = gmsa_kit_agent_create(_plain, {});
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "rest");
+        });
+
+        gmsa_test_case("agent mistakes are named at once", function() {
+            gmsa_kit_profile_forget("kit test agent mistakes");
+            var _p = gmsa_kit_profile("kit test agent mistakes", { actions : { a : {} } });
+            var _ctx = { p : _p };
+            gmsa_test_assert_throws(function() { gmsa_kit_agent_create(gmsa_profile_create("kit test unbuilt")); }, "a profile not built");
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(p, {}, { think_evry : 5 }); }), "unknown field");
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(p, {}, { think_every : 0 }); }), "think_every 0");
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(p, {}, { interval : 100 }); }), "interval without a scheduler");
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(p, {}, { scheduler : gmsa_scheduler_create(), think_every : 5 }); }), "think_every with a scheduler");
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_create(p, {}, { scheduler : 5 }); }), "not a scheduler");
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_update(gmsa_agent_create(p, {})); }), "a plain agent");
+        });
     });
 }
 
