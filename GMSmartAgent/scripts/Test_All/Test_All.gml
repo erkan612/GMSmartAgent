@@ -43,5 +43,6 @@ function gmsa_tests_all(_verbose = false) {
     //test_rating();
     //test_style();
     test_kit();
+    test_kit_learn();
     return gmsa_test_run(_verbose);
 }

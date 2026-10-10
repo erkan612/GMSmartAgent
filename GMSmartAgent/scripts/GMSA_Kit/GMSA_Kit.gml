@@ -248,14 +248,17 @@ function gmsa_kit_draw_curve(_curve, _x, _y, _w, _h) { // a curve's shape in a b
 // Agents
 enum gmsa_kit_step { RUNNING, DONE, FAILED }
 
-function gmsa_kit_agent_create(_profile, _owner = undefined, _params = undefined) { // a real agent whose actions Kit runs, gmsa_kit_agent_update once a step. params: { think_every (10), scheduler, priority, interval }
+function gmsa_kit_agent_create(_profile, _owner = undefined, _params = undefined) { // a real agent whose actions Kit runs, gmsa_kit_agent_update once a step. params: { think_every (10), scheduler, priority, interval, thinks (true), model, influence (1) }
     if (!is_struct(_profile) || _profile[$ "built"] != true) throw "GMSA: a Kit agent needs a built profile, from gmsa_kit_profile or gmsa_profile_build";
     var _where = "Kit agent for '" + string(_profile.name) + "'";
     if (_params == undefined) _params = {};
     if (!is_struct(_params)) throw "GMSA: " + _where + " params must be a struct";
-    __gmsa_kit_check_keys(_params, ["think_every", "scheduler", "priority", "interval"], _where);
+    __gmsa_kit_check_keys(_params, ["think_every", "scheduler", "priority", "interval", "thinks", "model", "influence"], _where);
+    var _thinks = __gmsa_param(_params, "thinks", true);
+    if (!is_bool(_thinks)) throw "GMSA: " + _where + " thinks must be true or false";
 
     var _scheduler = _params[$ "scheduler"];
+    if (!_thinks && (_scheduler != undefined || variable_struct_exists(_params, "think_every"))) throw "GMSA: " + _where + " doesn't think, so it takes no scheduler or think_every";
     if (_scheduler != undefined) {
         if (!is_struct(_scheduler) || !variable_struct_exists(_scheduler, "tiers")) throw "GMSA: " + _where + " scheduler must come from gmsa_scheduler_create";
         if (variable_struct_exists(_params, "think_every")) throw "GMSA: " + _where + " has a scheduler, which paces its thinking: give interval instead of think_every";
@@ -273,6 +276,7 @@ function gmsa_kit_agent_create(_profile, _owner = undefined, _params = undefined
     var _kit = _profile[$ "kit"];
     _agent.kit = {
         handlers  : is_struct(_kit) ? _kit.handlers : {},
+        thinks    : _thinks,
         scheduler : _scheduler,
         every     : _every,
         timer     : 0,
@@ -281,13 +285,16 @@ function gmsa_kit_agent_create(_profile, _owner = undefined, _params = undefined
         handler   : undefined,
         instance  : false,
         serial    : 0,
+        ticket    : undefined,
     };
+    __gmsa_kit_learn_setup(_agent, _params, _where);
     if (_scheduler != undefined) gmsa_scheduler_add(_scheduler, _agent);
     return _agent;
 }
 
 function gmsa_kit_agent_update(_agent) { // once a step: thinks when due, takes what it chose, runs the current action
     var _kit = __gmsa_kit_state(_agent);
+    if (!_kit.thinks) return;
     if (_kit.scheduler == undefined) {
         if (_kit.timer <= 0) {
             gmsa_agent_think(_agent);
@@ -464,6 +471,7 @@ function __gmsa_kit_take(_agent, _kit) {
     if (!_same && _kit.action != undefined) __gmsa_kit_end(_agent, _kit);
     gmsa_agent_set_current_option(_agent, _option);
     if (_same) return;
+    if (_agent[$ "__history"] != undefined) _kit.ticket = gmsa_learn_remember(_agent);
     var _handler = _kit.handlers[$ _option.action.name];
     _kit.action = _option.action;
     _kit.target = _option.target;
