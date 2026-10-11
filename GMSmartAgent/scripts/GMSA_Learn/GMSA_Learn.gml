@@ -223,17 +223,18 @@ function gmsa_learn_set_influence(_target, _influence) {
 
 function __gmsa_learn_adjust(_decision, _influence) {
     static _compare = function(_a, _b) {
-        if (_a.score != _b.score) return (_b.score > _a.score) ? 1 : -1;
+        var _diff = (_b.score - _a.score) * 1000000000000;
+        if (_diff != 0) return (_diff > 0) ? 1 : -1;
         return _a.order - _b.order;
     };
     var _out = gmsa_learn_predict(self, _decision);
     var _w = _influence * _out.confidence;
-    if (_w <= 0) return;
+    if (_w * 1000000000000 <= 0) return;
     var _options = _decision.options;
     var _n = array_length(_options);
     var _best = 0;
     for (var _i = 0; _i < _n; _i++) _best = max(_best, _out.p[_i]);
-    if (_best <= 0) return;
+    if (_best * 1000000000000 <= 0) return;
     for (var _i = 0; _i < _n; _i++) {
         _options[_i].score *= max(0.0001, lerp(1, _out.p[_i] / _best, _w));
     }

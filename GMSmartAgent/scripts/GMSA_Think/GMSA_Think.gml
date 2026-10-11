@@ -31,7 +31,7 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
             var _target = _targets[_t];
             var _option = __gmsa_option_take(_cache);
             var _score  = __gmsa_score_option(_agent, _action, _target, _option, false, (_base >= 0) ? _base + _t : -1);
-            if (_score <= 0) {
+            if (_score * 1000000000000 <= 0) {
                 _cache.pool_used--;
                 continue;
             }
@@ -50,7 +50,7 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
             var _hi = array_length(_options);
             while (_lo < _hi) {
                 var _mid = (_lo + _hi) >> 1;
-                if (_options[_mid].score >= _score) _lo = _mid + 1;
+                if ((_options[_mid].score - _score) * 1000000000000 >= 0) _lo = _mid + 1;
                 else _hi = _mid;
             }
             array_insert(_options, _lo, _option);
@@ -142,7 +142,7 @@ function gmsa_agent_evaluate(_agent, _now = get_timer()) {
             var _hi = array_length(_options);
             while (_lo < _hi) {
                 var _mid = (_lo + _hi) >> 1;
-                if (_options[_mid].score >= _score) _lo = _mid + 1;
+                if ((_options[_mid].score - _score) * 1000000000000 >= 0) _lo = _mid + 1;
                 else _hi = _mid;
             }
             array_insert(_options, _lo, _option);
@@ -244,9 +244,9 @@ function __gmsa_score_option(_agent, _action, _target, _option, _full, _slot) {
         var _y = gmsa_curve_eval(_con.curve, _value);
         _option.features[_c] = _y;
         _score *= _y;
-        if (_score <= 0 && !_full) return 0;
+        if (_score * 1000000000000 <= 0 && !_full) return 0;
     }
-    if (_score <= 0) return 0;
+    if (_score * 1000000000000 <= 0) return 0;
     if (_n > 1) {
         var _mod = 1 - 1 / _n;
         _score += (1 - _score) * _mod * _score;
@@ -311,7 +311,7 @@ function __gmsa_select_weighted(_options, _top_n, _rng) {
     var _r = gmsa_rng_next(_rng) * _sum;
     for (_i = 0; _i < _n; _i++) {
         _r -= _options[_i].score;
-        if (_r < 0) return _i;
+        if (_r * 1000000000000 < 0) return _i;
     }
     return _n - 1;
 }

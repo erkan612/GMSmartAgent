@@ -205,12 +205,12 @@ function gmsa_test_decision_problems(_decision) {
         var _tag = "option " + string(_i) + " (" + string(_o.action.name) + ") ";
         if (!is_numeric(_o.score) || is_nan(_o.score)) {
             array_push(_problems, _tag + "score is not a number");
-        } else if ((_observed || _evaluated) && _o.score < 0) {
+        } else if ((_observed || _evaluated) && _o.score * 1000000000000 < 0) {
             array_push(_problems, _tag + "score must be 0 or more, got " + string(_o.score));
-        } else if (!_observed && !_evaluated && _o.score <= 0) {
+        } else if (!_observed && !_evaluated && _o.score * 1000000000000 <= 0) {
             array_push(_problems, _tag + "score must be positive, got " + string(_o.score));
         }
-        if (!_observed && _i > 0 && _o.score > _options[_i - 1].score) array_push(_problems, _tag + "not ranked high to low");
+        if (!_observed && _i > 0 && (_o.score - _options[_i - 1].score) * 1000000000000 > 0) array_push(_problems, _tag + "not ranked high to low");
         if (array_length(_o.features) != array_length(_o.action.considerations)) array_push(_problems, _tag + "features length does not match considerations");
         for (var _f = 0; _f < array_length(_o.features); _f++) {
             if (_o.features[_f] < 0 || _o.features[_f] > 1) array_push(_problems, _tag + "feature " + string(_f) + " outside 0..1");

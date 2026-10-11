@@ -61,6 +61,26 @@ function gmsa_tests_think() {
             gmsa_test_assert_equal(array_length(_solo.options), 0, "no options");
             gmsa_test_assert_equal(_solo.chosen, -1, "nothing chosen");
         });
+		
+        gmsa_test_case("a tiny score is not a veto, only 0 is", function() {
+            var _p = gmsa_profile_create("tiny");
+            gmsa_profile_add_input(_p, gmsa_input_push("x"));
+            var _b = gmsa_profile_add_action(_p, "tinier");
+            gmsa_action_add_consideration(_b, "x", gmsa_curve_make(gmsa_curve.LINEAR, { m : 0.5, b : 0 }));
+            var _a = gmsa_profile_add_action(_p, "tiny");
+            gmsa_action_add_consideration(_a, "x", gmsa_curve_make(gmsa_curve.LINEAR, { m : 1, b : 0 }));
+            var _agent = gmsa_agent_create(gmsa_profile_build(_p));
+
+            gmsa_agent_set_input(_agent, "x", 0.000001);
+            var _d = gmsa_agent_think(_agent, 0, gmsa_rng_create(1));
+            gmsa_test_assert_equal(array_length(_d.options), 2, "both tiny scores are options");
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "tiny", "the higher one ranks first, however close");
+            gmsa_test_assert_equal(array_length(gmsa_test_decision_problems(_d)), 0, "a tiny score is a valid score");
+
+            gmsa_agent_set_input(_agent, "x", 0);
+            _d = gmsa_agent_think(_agent, 0, gmsa_rng_create(1));
+            gmsa_test_assert_equal(array_length(_d.options), 0, "an exact 0 still vetoes");
+        });
 
         gmsa_test_case("compensation", function() {
             var _p = gmsa_profile_create("t");
