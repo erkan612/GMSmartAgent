@@ -528,7 +528,7 @@ gmsa_scheduler_remove(global.ai, agent);
 
 The frame rate is protected, and the cost of more agents shows up as slower reactions. Time is always in **microseconds**: 1000000 is one second, so an interval of 100000 means at most 10 decisions a second.
 
-**Tiers: who thinks first.** When the budget can't serve everyone, `priority` decides the order. Higher tiers think first, and lower tiers get what's left. Promote what the player can see:
+**Tiers: who thinks first.** When the budget can't serve everyone, `priority` decides the order. Higher tiers think first and take most of the budget; each tier leaves a share, 20% of what's left by default, for the tiers below it, and whatever those don't need comes back up. Promote what the player can see:
 
 ```gml
 // o_goblin > Create (add)
@@ -554,7 +554,7 @@ In the bat demo, with 1500 simple agents on a 2 ms budget, tiers make this diffe
 
 Measured on VM, where every run from the IDE happens. On YYC the same 2 ms fits about three and a half times as many thinks, so every agent decides that much more often.
 
-The total work is identical. Tiers just put the fresh decisions where the player is looking. Keep the high tier small: if it alone needs more than the whole budget, lower tiers stop deciding entirely.
+The total work is identical. Tiers just put the fresh decisions where the player is looking. Keep the high tier small all the same: if it alone needs more than its 80%, the far agents still decide, but only as often as the remaining share allows. The share is a scheduler setting, `share` when you create it or `gmsa_scheduler_set_share` later, and 0 means strict priority, where lower tiers wait until higher ones are done.
 
 **Receiving decisions: polling or callbacks.** So far the goblin polls with `gmsa_agent_consume` in its Step event. The alternative is a callback the scheduler calls right after the agent decides:
 

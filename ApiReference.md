@@ -621,8 +621,9 @@ gmsa_scheduler_create([budget], [params]) -> scheduler
 | --- | --- | --- | --- |
 | `seed` | real | 1 | Seed of the scheduler's random generator |
 | `clock` | function | `get_timer` | Time source returning microseconds |
+| `share` | real | 0.2 | What each tier leaves for the tiers below it, of what's left in the step. 0 is strict priority |
 
-**Throws** when `budget` is negative or `clock` isn't callable.
+**Throws** when `budget` is negative, `clock` isn't callable, or `share` isn't 0 or more and below 1.
 
 ### gmsa_scheduler_add
 
@@ -694,6 +695,7 @@ gmsa_scheduler_step(scheduler) -> integer
 Runs due agents, and work turns, until the budget is spent, then fires queued `on_decide` callbacks. Call it once per step.
 
 - Tiers run highest priority first. Within a tier, agents take turns, and the next step continues where this one stopped.
+- **Each tier leaves a share for the tiers below it.** A tier with tiers below stops once it has used `1 - share` of what was left of the budget when its turn began, 80% by default. Whatever the lower tiers don't use goes back to the tiers that stopped, highest first. So lower tiers slow down when higher ones are busy, but never freeze while the budget allows. The guarantee shrinks with each level: with the default share, the second tier is sure of 20% of the budget, the third of 4%. With `share` 0, a higher tier can use the whole budget and lower tiers wait until it's done.
 - An agent is due when it has never thought, or when `interval` has passed since its last think.
 - The clock is checked before every think and work turn except the first, so **every step does at least one** when an agent is due or work is waiting, even with a budget of 0. A step can overshoot the budget by at most one think or one work turn's overrun.
 - Every think in a step uses the same time, read once at the start.
@@ -725,6 +727,14 @@ gmsa_scheduler_set_budget(scheduler, budget)
 ```
 
 Changes the budget in microseconds. **Throws** when negative.
+
+### gmsa_scheduler_set_share
+
+```gml
+gmsa_scheduler_set_share(scheduler, share)
+```
+
+Changes what each tier leaves for the tiers below it, see [gmsa_scheduler_step](#gmsa_scheduler_step). **Throws** unless `share` is 0 or more and below 1.
 
 ### gmsa_scheduler_set_seed
 

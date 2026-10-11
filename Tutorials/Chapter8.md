@@ -106,7 +106,7 @@ It's also a door to undoing the whole point of the scheduler. If every goblin th
 Knowing the order things happen in explains everything the scheduler does:
 
 1. **The clock is read once.** Every think in this step sees the same time, so cooldowns and intervals are consistent across agents.
-2. **Tiers run from the highest priority down.** Every agent has a **priority**, 0 by default. All the agents with the same priority form a tier.
+2. **Tiers run from the highest priority down.** Every agent has a **priority**, 0 by default. All the agents with the same priority form a tier. Each tier leaves a share of what's left of the budget for the tiers below it, and whatever they don't use comes back up.
 3. **Within a tier, agents take turns,** starting where the last step left off. If the budget ran out after the 40th goblin last step, this step starts with the 41st. Nobody gets skipped forever.
 4. **Before each think, except the first, the clock is checked.** Once the budget is spent, the step stops. The first think always happens, so a step always makes progress even with a tiny budget, and a step can go over the budget by at most one think.
 5. **Callbacks run last,** outside the timed part. More on those below.
@@ -178,7 +178,7 @@ Lowering the cost per think is often the better lever, and Chapter 5 already cov
 
 With a full budget, every agent waits its turn, and the turn order is fair. Fair isn't always what you want. A goblin right next to the player matters far more than one in the far corner: a slow reaction up close is something the player sees, while a slow reaction off screen is invisible.
 
-**Priority tiers** handle that. Higher tiers think first, every step, and lower tiers get what's left of the budget:
+**Priority tiers** handle that. Higher tiers think first, every step, and take most of the budget; lower tiers get the rest:
 
 ```gml
 // o_controller > Create (add)
@@ -197,13 +197,20 @@ if (priority_timer <= 0) {
 }
 ```
 
-Goblins within 400 pixels of the player move to tier 1 and think first; the rest share whatever budget tier 1 leaves. Fill the room and stand near a few goblins: they keep reacting quickly while the far ones slow down. Walk across the room and the fast ones follow you.
+Goblins within 400 pixels of the player move to tier 1 and think first; the rest share what tier 1 leaves them. Fill the room and stand near a few goblins: they keep reacting quickly while the far ones slow down. Walk across the room and the fast ones follow you.
 
 `gmsa_scheduler_set_priority` moves an agent between tiers and keeps its interval timing, so changing priority often doesn't make agents think more. You can update priorities whenever you like, but there's no need to do it every frame; twice a second is plenty for "who's near the player".
 
-One thing to watch: **a higher tier can starve the lower ones.** If tier 1 has enough agents to use the whole budget every step, tier 0 never gets a turn, and those goblins freeze mid-action until they're promoted. Two ways to keep that from happening:
+One thing to know: **a higher tier never takes the whole budget.** While tier 0 has goblins waiting, tier 1 stops at 80% of the step and leaves the rest to them, and whatever tier 0 doesn't need goes back to tier 1. So when the room is busy, the far goblins slow down, but they never freeze. The share is a setting:
 
-- **Keep the top tier small,** a few dozen agents at most, the ones that really matter.
+```gml
+global.ai = gmsa_scheduler_create(2000, { share : 0.2 });   // the default
+gmsa_scheduler_set_share(global.ai, 0.1);                    // or change it later
+```
+
+A bigger share keeps the far goblins livelier at the near ones' expense. A share of 0 is strict priority: tier 1 can use everything, and tier 0 waits until it's done, frozen mid-action if tier 1 never is. With more than two tiers, each leaves its share of what's left for the ones below, so the third tier down is only sure of about 4% of the budget. Two tiers, three at most, is the usual setup. Two habits still help:
+
+- **Keep the top tier small,** a few dozen agents at most, the ones that really matter. Priority means less when everyone has it.
 - **Rely on the interval.** An agent that thought recently isn't due again until its interval passes, so tier 1 agents with an interval of 0.1 seconds leave the rest of the budget to tier 0 most of the time.
 
 Priority isn't only about distance. A boss, a companion, an enemy currently in combat, or the one goblin the player is looking at are all good candidates for a higher tier.
@@ -256,7 +263,7 @@ With the same seed and the same inputs, agents make the same decisions, every ru
 ## Try this
 
 - **Find your limit.** With the overlay up, keep pressing G until the re-think figure passes 30 steps. Note the goblin count. Then halve `find_nearest`'s count from Chapter 5 and do it again.
-- **Starve a tier.** Create every goblin with an interval of 0, fill the room, and promote every goblin to tier 1 except one in the far corner. Watch the lone goblin freeze. Put the interval back.
+- **Crowd a tier.** Create every goblin with an interval of 0, fill the room, and promote every goblin to tier 1 except one in the far corner. Watch the lone goblin: it slows, but keeps going. Now set the share to 0 with `gmsa_scheduler_set_share(global.ai, 0)` and watch it freeze. Put the share and the interval back.
 - **Two budgets.** Make a second object, a rat that wanders and flees, give it its own small profile, and put rats in a second scheduler with a budget of 300. Fill the room with rats and check the goblins' re-think figure: it shouldn't move.
 - **Remove the Clean Up.** Delete the `gmsa_scheduler_remove` line, destroy a goblin, and see what happens on the scheduler's next turn for it. Put it back.
 
@@ -268,9 +275,9 @@ With the same seed and the same inputs, agents make the same decisions, every ru
 - The **scheduler** gives all agents one **budget** per step. Agents take turns; when the budget is spent, the rest wait for the next step. More agents means slower re-thinking, never a slower game.
 - Create it in a controller, step it once per step, add agents with an **interval**, and remove them in Clean Up. The acting code from Chapter 6 doesn't change.
 - An agent is **due** when its interval has passed. Direct thinks outside the scheduler are for instant reactions only.
-- Each step reads the clock once, runs tiers highest first, takes turns within a tier where the last step stopped, always makes at least one think, and runs callbacks after the timed part.
+- Each step reads the clock once, runs tiers highest first, each leaving a share for the tiers below, takes turns within a tier where the last step stopped, always makes at least one think, and runs callbacks after the timed part.
 - `stats` shows thinks, time and whether the budget filled up. The re-think figure, agents divided by thinks per step, is the reaction time to watch.
-- **Priority tiers** let important agents think first. Keep the top tier small, or it starves the rest.
+- **Priority tiers** let important agents think first. A tier leaves a share of the budget for the tiers below it, 20% by default, so lower tiers slow down but never freeze; keep the top tier small all the same.
 - `on_decide` reports each think; several schedulers keep kinds of agents from competing; and a seeded scheduler makes decisions repeatable.
 
 ## What's next

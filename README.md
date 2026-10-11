@@ -35,7 +35,7 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 - **Commitment** - A bonus for what the agent is already doing, so near-equal options don't flicker
 ### Scale
 - **Frame budget** - A time budget per step in microseconds, so frame rate stays stable no matter how many agents you add
-- **Priority tiers** - Important agents think first, background agents use what's left
+- **Priority tiers** - Important agents think first, background agents keep a share of the budget
 - **Shared work** - Planning, model training and your own long jobs can take turns with the agents inside the same budget
 - **Per-agent intervals** - Slow-witted enemies think less often, sharp ones more often
 - **Shared profiles** - One profile, thousands of agents, only per-agent state is duplicated
@@ -133,7 +133,7 @@ inputs (pull or push)
    -> decision handed back to you
 ```
  
-Each agent thinks inside a scheduler. The scheduler gives each step a time budget, walks priority tiers highest first, takes turns fairly within a tier, and stops when the budget is spent. Agents it didn't reach continue next step.
+Each agent thinks inside a scheduler. The scheduler gives each step a time budget, walks priority tiers highest first, each leaving a share for the tiers below, takes turns fairly within a tier, and stops when the budget is spent. Agents it didn't reach continue next step.
 
 When the chosen action is a goal that takes several steps, a planner breaks it down:
 

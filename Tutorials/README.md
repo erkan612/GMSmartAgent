@@ -58,7 +58,7 @@ The goblin finally moves. Why thinking and acting are separate jobs at different
 Why an agent stops, or worse, creeps away from a player across the room on a score of 0.000001, and why both are honest answers with the wrong look. Idle time as behavior to design, fallback actions that can never be vetoed, and why a fallback's weight is also the bar every other option has to clear. Wandering to a point, and why the point must be the same one every think. A goblin that waits for its moment by watching the player from a wary distance, guards that patrol a route and pick it up again after an interruption, idle actions that take turns, a ladder of fallbacks that never runs out, and seeing which options were vetoed and why.
 
 ### [Chapter 8: Many Agents, One Budget](Chapter8.md)
-What thinking really costs, measured, and why a crowd of agents makes a game stutter. The scheduler: one slice of time per frame for every agent's thinking, so more agents means slower re-thinking and never a slower game. Setting it up without touching the acting code, intervals, deciding again at once outside the budget and when not to, and how a step runs from the first tier to the last callback. An overlay that shows the budget filling and each goblin's reaction time, sizing the budget, priority tiers so the goblins near the player think first and how a tier can starve the rest, callbacks, separate schedulers for separate kinds of agents, and repeatable decisions from a seed.
+What thinking really costs, measured, and why a crowd of agents makes a game stutter. The scheduler: one slice of time per frame for every agent's thinking, so more agents means slower re-thinking and never a slower game. Setting it up without touching the acting code, intervals, deciding again at once outside the budget and when not to, and how a step runs from the first tier to the last callback. An overlay that shows the budget filling and each goblin's reaction time, sizing the budget, priority tiers so the goblins near the player think first and the share each tier leaves for the ones below, callbacks, separate schedulers for separate kinds of agents, and repeatable decisions from a seed.
 
 ### [Chapter 9: Seeing Why](Chapter9.md)
 Scores are invisible until you look, so this chapter looks. Inspecting one goblin in a crowd, every part of a debug line, and rebuilding a score by hand down to the commitment bonus that gives away the current choice. An inputs panel that separates a wrong input from a wrong curve, reading the margin between the top two options, catching dithering with a red ring, and changing a profile while the game runs. Then three real tuning problems, a potion ignored, a fear that kicks in too late and a goblin too fond of staring, each found by reading two lines and fixed with one number.
@@ -71,6 +71,8 @@ Utility AI breaks in its numbers, not its code, and nothing warns you. Tests tha
 # Advanced
 
 One question per chapter, each with its own context, in no particular order.
+
+*still in work*
 
 ---
 
