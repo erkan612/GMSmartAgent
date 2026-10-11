@@ -13,6 +13,12 @@ function __gmsa_tests_counted_agent(_profile, _name, _log, _params = {}) {
     return gmsa_agent_create(_profile, _owner, _params);
 }
 
+function __gmsa_tests_total(_agents) {
+    var _sum = 0;
+    for (var _i = 0; _i < array_length(_agents); _i++) _sum += _agents[_i].owner.count;
+    return _sum;
+}
+
 function gmsa_tests_scheduler() {
     gmsa_test_suite("Scheduler", function() {
 
@@ -123,6 +129,56 @@ function gmsa_tests_scheduler() {
             for (var _i = 0; _i < 5; _i++) gmsa_scheduler_step(_s);
             gmsa_test_assert_equal(_a.owner.count, 5, "high tier");
             gmsa_test_assert_equal(_b.owner.count, 0, "low tier starved");
+        });
+		
+        gmsa_test_case("each tier leaves a share for the tiers below", function() {
+            var _c = gmsa_test_clock(0, 100); // each read of the clock costs 100
+            var _s = gmsa_scheduler_create(2000, { clock : _c.fn }); // share 0.2 by default
+            var _p = __gmsa_tests_idle_profile();
+            var _high = [], _low = [];
+            repeat (30) array_push(_high, gmsa_scheduler_add(_s, __gmsa_tests_counted_agent(_p, "H", [], { priority : 1 })));
+            repeat (10) array_push(_low, gmsa_scheduler_add(_s, __gmsa_tests_counted_agent(_p, "L", [])));
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(__gmsa_tests_total(_high), 16, "the high tier stops at its 80%");
+            gmsa_test_assert_equal(__gmsa_tests_total(_low), 3, "the low tier thinks too");
+
+            gmsa_scheduler_set_share(_s, 0);
+            _c.now += 16667;
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(__gmsa_tests_total(_high), 16 + 20, "share 0: strict priority, the high tier takes it all");
+            gmsa_test_assert_equal(__gmsa_tests_total(_low), 3, "and the low tier waits");
+
+            gmsa_test_assert_throws(method({ s : _s }, function() { gmsa_scheduler_set_share(s, 1); }), "share 1");
+            gmsa_test_assert_throws(function() { gmsa_scheduler_create(2000, { share : -0.5 }); }, "negative share");
+        });
+
+        gmsa_test_case("what the lower tiers leave goes back up", function() {
+            var _c = gmsa_test_clock(0, 100);
+            var _s = gmsa_scheduler_create(2000, { clock : _c.fn });
+            var _p = __gmsa_tests_idle_profile();
+            var _high = [];
+            repeat (30) array_push(_high, gmsa_scheduler_add(_s, __gmsa_tests_counted_agent(_p, "H", [], { priority : 1 })));
+            var _low = gmsa_scheduler_add(_s, __gmsa_tests_counted_agent(_p, "L", [], { interval : 1000000000 }));
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_low.owner.count, 1, "the low agent thinks once");
+            gmsa_test_assert_equal(__gmsa_tests_total(_high), 18, "the high tier gets the rest back");
+            _c.now += 16667;
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_low.owner.count, 1, "nothing due below");
+            gmsa_test_assert_equal(__gmsa_tests_total(_high), 18 + 19, "so the high tier uses the whole budget");
+        });
+
+        gmsa_test_case("a tier that gets time back never thinks anyone twice", function() {
+            var _c = gmsa_test_clock(0, 100);
+            var _s = gmsa_scheduler_create(2000, { clock : _c.fn });
+            var _p = __gmsa_tests_idle_profile();
+            var _high = [];
+            repeat (17) array_push(_high, gmsa_scheduler_add(_s, __gmsa_tests_counted_agent(_p, "H", [], { priority : 1 })));
+            gmsa_scheduler_add(_s, __gmsa_tests_counted_agent(_p, "L", [], { interval : 1000000000 }));
+            gmsa_scheduler_step(_s);
+            for (var _i = 0; _i < 17; _i++) {
+                if (!gmsa_test_assert_equal(_high[_i].owner.count, 1, "high agent " + string(_i))) return;
+            }
         });
 
         gmsa_test_case("callbacks fire after the loop", function() {
