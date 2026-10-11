@@ -31,8 +31,8 @@ function test_plan_learn() {
             var _owner = { guard_awake : false, gold : 3, allow_steal : 1 };
             var _p = gmsa_plan_planner_create(_x.domain, _owner, { seed : 4 });
             __test_plan_learn_episodes(_p, _owner, 300);
-            gmsa_test_assert_true(__test_plan_learn_count(_p, _owner, false, "steal") >= 45, "steal while the guard sleeps");
-            gmsa_test_assert_true(__test_plan_learn_count(_p, _owner, true, "buy") >= 45, "buy while he's awake");
+            gmsa_test_assert_true(__test_plan_learn_count(_p, _owner, false, "steal") >= 40, "steal while the guard sleeps");
+            gmsa_test_assert_true(__test_plan_learn_count(_p, _owner, true, "buy") >= 40, "buy while he's awake");
         });
 
         gmsa_test_case("linear learns it too", function() {

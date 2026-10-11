@@ -531,7 +531,7 @@ function __gmsa_learn_lambdamart_split_node(_model, _job, _li) {
     if (_count < 2 * _min) return false;
 
     var _parent = __gmsa_learn_lambdamart_ratio(_G * _G, _H + _reg);
-    var _best = 0, _kind = -1, _index = 0, _bin = 0, _left_g = 0, _left_h = 0;
+    var _best = (_job.level == 0) ? -infinity : 0, _kind = -1, _index = 0, _bin = 0, _left_g = 0, _left_h = 0; // the root always splits when it can: an empty root changes no scores, so every tree after it would come out the same
     var _hb = _li * _job.stride;
 
     // inputs: bins 0..b go left
@@ -548,7 +548,7 @@ function __gmsa_learn_lambdamart_split_node(_model, _job, _li) {
             var _gain = __gmsa_learn_lambdamart_ratio(_gl * _gl, _hl + _reg)
                       + __gmsa_learn_lambdamart_ratio((_G - _gl) * (_G - _gl), _H - _hl + _reg)
                       - _parent;
-            if (_gain > _best) {
+            if ((_gain - _best) * 1000000000000 > 0) {
                 _best = _gain; _kind = 0; _index = _j; _bin = _b; _left_g = _gl; _left_h = _hl;
             }
         }
@@ -565,7 +565,7 @@ function __gmsa_learn_lambdamart_split_node(_model, _job, _li) {
         var _gain = __gmsa_learn_lambdamart_ratio(_gl * _gl, _hl + _reg)
                   + __gmsa_learn_lambdamart_ratio(_gr * _gr, _hr + _reg)
                   - _parent;
-        if (_gain > _best) {
+            if ((_gain - _best) * 1000000000000 > 0) {
             _best = _gain; _kind = 1; _index = _a; _left_g = _gl; _left_h = _hl;
         }
     }

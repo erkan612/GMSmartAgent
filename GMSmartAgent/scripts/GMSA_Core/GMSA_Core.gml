@@ -285,8 +285,18 @@ function gmsa_rng_create(_seed = 1) {
 
 function gmsa_rng_seed(_rng, _seed) {
     var _s = int64(floor(abs(_seed))) & $FFFFFFFF;
+    // murmur3's finalizer
+    _s ^= _s >> 16;
+    _s = __gmsa_mul32(_s, int64($85EBCA6B));
+    _s ^= _s >> 13;
+    _s = __gmsa_mul32(_s, int64($C2B2AE35));
+    _s ^= _s >> 16;
     if (_s == 0) _s = $9E3779B9; // xorshift gets stuck at 0
     _rng.state = _s;
+}
+
+function __gmsa_mul32(_a, _b) { // (a * b) mod 2^32, in 16-bit halves so int64 never overflows
+    return (_a * (_b & $FFFF) + (((_a * (_b >> 16)) & $FFFF) << 16)) & $FFFFFFFF;
 }
 
 function gmsa_rng_next(_rng) { // returns a value in [0, 1)
