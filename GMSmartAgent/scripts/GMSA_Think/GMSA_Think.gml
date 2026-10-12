@@ -15,7 +15,9 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
 
     for (var _a = 0; _a < _action_count; _a++) {
         var _action = _actions[_a];
-        if (_now < _agent.cooldowns[_a]) continue;
+        // cooling down, it can't be chosen again, but the option being done stays on offer: a cooldown never cuts its own action short
+        var _cooling = (_now < _agent.cooldowns[_a]);
+        if (_cooling && (_current == undefined || _current.action != _a)) continue;
 
         var _targets = __gmsa_no_target();
         var _base = -1;
@@ -29,6 +31,7 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
         var _target_count = array_length(_targets);
         for (var _t = 0; _t < _target_count; _t++) {
             var _target = _targets[_t];
+            if (_cooling && _current.target != _target) continue;
             var _option = __gmsa_option_take(_cache);
             var _score  = __gmsa_score_option(_agent, _action, _target, _option, false, (_base >= 0) ? _base + _t : -1);
             if (_score * 1000000000000 <= 0) {
@@ -74,7 +77,8 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
             _options[0].probability = 1;
         }
         var _picked = _options[_chosen].action;
-        if (_picked.cooldown > 0) _agent.cooldowns[_picked.index] = _now + _picked.cooldown;
+        var _going_on = (_current != undefined && _current.action == _picked.index && _current.target == _options[_chosen].target);
+        if (_picked.cooldown > 0 && !_going_on) _agent.cooldowns[_picked.index] = _now + _picked.cooldown; // a new choice starts it, carrying on doesn't
     }
 
     _decision.chooser = gmsa_chooser.AGENT;
@@ -111,10 +115,12 @@ function gmsa_agent_evaluate(_agent, _now = get_timer()) {
     var _action_count = array_length(_actions);
     var _input_count  = array_length(_profile.inputs);
     var _order        = 0;
+    var _current      = _agent.current;
 
     for (var _a = 0; _a < _action_count; _a++) {
         var _action = _actions[_a];
-        if (_now < _agent.cooldowns[_a]) continue;
+        var _cooling = (_now < _agent.cooldowns[_a]);
+        if (_cooling && (_current == undefined || _current.action != _a)) continue;
 
         var _targets = __gmsa_no_target();
         var _base = -1;
@@ -128,6 +134,7 @@ function gmsa_agent_evaluate(_agent, _now = get_timer()) {
         var _target_count = array_length(_targets);
         for (var _t = 0; _t < _target_count; _t++) {
             var _target = _targets[_t];
+            if (_cooling && _current.target != _target) continue;
             var _slot   = (_base >= 0) ? _base + _t : -1;
             var _option = __gmsa_option_take(_eval);
             var _score  = __gmsa_score_option(_agent, _action, _target, _option, true, _slot);

@@ -175,6 +175,41 @@ function gmsa_tests_think() {
             _d = gmsa_agent_think(_ag, 1000);
             gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "blast", "t=1000");
         });
+		
+        gmsa_test_case("a cooldown doesn't cut short the action the agent is doing", function() {
+            var _p = gmsa_profile_create("t");
+            gmsa_profile_add_input(_p, gmsa_input_push("hp"));
+            var _a = gmsa_profile_add_action(_p, "eat", { cooldown : 1000 });
+            gmsa_action_add_consideration(_a, "hp", gmsa_curve_make(gmsa_curve.LINEAR));
+            gmsa_profile_add_action(_p, "idle", { weight : 0.1 });
+            var _ag = gmsa_agent_create(gmsa_profile_build(_p));
+            gmsa_agent_set_input(_ag, "hp", 1);
+            var _d = gmsa_agent_think(_ag, 0);
+            gmsa_agent_set_current_option(_ag, gmsa_decision_get_chosen(_d));   // eating
+            _d = gmsa_agent_think(_ag, 500);
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "eat", "still eating at 500");
+            gmsa_test_assert_equal(_ag.cooldowns[0], 1000, "carrying on didn't restart the cooldown");
+            gmsa_agent_clear_current(_ag);                                        // finished
+            _d = gmsa_agent_think(_ag, 600);
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "idle", "finished: not again until 1000");
+            _d = gmsa_agent_think(_ag, 1000);
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "eat", "ready again");
+            gmsa_test_assert_equal(_ag.cooldowns[0], 2000, "a new choice starts the cooldown");
+        });
+
+        gmsa_test_case("cooling down, only the option being done stays on offer", function() {
+            var _p = gmsa_profile_create("t");
+            gmsa_profile_add_action(_p, "eat", { cooldown : 1000, targets : function(_agent) { return _agent.owner.food; } });
+            gmsa_profile_add_action(_p, "idle", { weight : 0.1 });
+            var _ag = gmsa_agent_create(gmsa_profile_build(_p), { food : ["apple", "bread"] });
+            var _d = gmsa_agent_think(_ag, 0);
+            gmsa_agent_set_current_option(_ag, gmsa_decision_get_chosen(_d));
+            var _eating = _ag.current.target;
+            _d = gmsa_agent_think(_ag, 500);
+            gmsa_test_assert_equal(array_length(_d.options), 2, "the food being eaten, and idle");
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).target, _eating, "the same food");
+            gmsa_test_assert_equal(array_length(gmsa_agent_evaluate(_ag, 500).options), 2, "evaluate offers the same");
+        });
 
         gmsa_test_case("commitment breaks ties", function() {
             var _ag = gmsa_agent_create(__gmsa_tests_simple_profile(["a", "b"], { commitment : 0.2 }));
