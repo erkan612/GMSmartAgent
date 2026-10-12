@@ -417,7 +417,7 @@ if (_out.sure >= 0.6) boss_says = "I know your " + moves[_out.best] + " is comin
 
 ```gml
 global.next_buy = gmsa_learn_tdnn_create({ remember : ["price"] });
-gmsa_learn_schedule(global.next_buy, global.ai);  // trains in the scheduler's spare budget
+gmsa_learn_schedule(global.next_buy, global.ai);  // trains inside the scheduler's budget
 ```
 
 Both learn from outcomes too, explain themselves, and save with the game. Demo 15 is a sparring partner that learns how you fight, Demo 16 a shop where the TDNN learns which potion you'll buy while the n-gram can only tell it'll be a potion.

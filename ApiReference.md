@@ -55,7 +55,7 @@ Response curve types, see [Curves](#curves).
 | `gmsa_curve.LINEAR` | Straight line |
 | `gmsa_curve.POWER` | Power curve: quadratic, root, U shape |
 | `gmsa_curve.LOGISTIC` | S-shaped curve |
-| `gmsa_curve.STEP` | Hard threshold |
+| `gmsa_curve.STEP` | Hard threshold. One that can only give 0 or 1 is a gate, which compensation doesn't count, see [Scoring Pipeline](#scoring-pipeline) |
 | `gmsa_curve.CUSTOM` | Your own function or animation curve |
 
 ### gmsa_source
@@ -362,12 +362,13 @@ Adds an action and returns it, so you can add considerations to it.
 | Param | Type | Default | Description |
 | --- | --- | --- | --- |
 | `weight` | real | 1 | Multiplier on the final score, 0 or more |
-| `cooldown` | real | 0 | Microseconds before the action can be picked again, counted from when it's chosen |
+| `cooldown` | real | 0 | Microseconds before the action can be chosen anew, counted from when it's chosen, see below |
 | `targets` | function | undefined | `function(agent)` returning an array of targets, see below |
 
 - **Without `targets`**, the action produces one option with no target.
 - **With `targets`**, it produces one option per target. Returning `undefined` skips the action for this think. Returning an empty array produces no options.
 - **An action with no considerations** scores its weight. Use this for a baseline like `idle`.
+- **A cooldown never cuts its own action short.** It starts when the action is chosen anew. While it runs, the action is off the table, except the option the agent is doing (its current action and target, see [gmsa_agent_set_current_option](#gmsa_agent_set_current_option)), which stays on offer so the agent can carry on. Carrying on doesn't restart the cooldown, and the cooldown doesn't stop it. Clear the current option when the action ends, see [gmsa_agent_clear_current](#gmsa_agent_clear_current).
 
 **Throws** if the profile is already built or `name` is empty.
 
@@ -436,12 +437,56 @@ gmsa_agent_create(profile, [owner], [params]) -> agent
 | Param | Type | Default | Description |
 | --- | --- | --- | --- |
 | `priority` | real | 0 | Scheduler tier, higher thinks first |
-| `interval` | real | 0 | Minimum microseconds between thinks |
+| `interval` | real | 0 | Minimum microseconds between thinks on a scheduler, 0 or more. `infinity` stops it thinking there until changed with [gmsa_agent_set_interval](#gmsa_agent_set_interval) |
 | `on_decide` | function | undefined | `function(agent)`, called by the scheduler after each think |
 
 The agent's cache and option pool are allocated here, so its first think doesn't allocate.
 
-**Throws** when the profile isn't built or `on_decide` isn't callable.
+**Throws** when the profile isn't built, `interval` isn't a number of 0 or more, or `on_decide` isn't callable.
+
+### gmsa_agent_set_interval
+
+```gml
+gmsa_agent_set_interval(agent, interval)
+```
+
+Changes the least microseconds between the agent's thinks on its scheduler, from now on. For example, slower thinking far from the player and faster close to it.
+
+- The last think still counts. A shorter interval can make the agent due at the scheduler's next step, and a longer one is waited out from the last think.
+- `infinity` stops the agent thinking on the scheduler until the interval changes again. It stays in the scheduler, and [gmsa_agent_wake](#gmsa_agent_wake) still makes it think once.
+- Outside a scheduler the interval isn't read: you decide when `gmsa_agent_think` runs.
+
+**Throws** when `interval` isn't a number of 0 or more.
+
+### gmsa_agent_wake
+
+```gml
+gmsa_agent_wake(agent)
+```
+
+Makes the agent due at its scheduler's next step, whatever its interval. For when the world changed and it should react: a new enemy, an alarm, the end of what it was doing.
+
+- It still thinks inside the budget, when its turn in its tier comes, and keeps its place in the turn order. If the budget runs out first, it stays due on the steps after.
+- Its next think clears the wake, whether the scheduler runs it or you call `gmsa_agent_think`.
+- Outside a scheduler, call `gmsa_agent_think` instead.
+
+### gmsa_agent_set_profile
+
+```gml
+gmsa_agent_set_profile(agent, profile)
+```
+
+Swaps the agent's profile for another built one: a simpler profile far from the player, or a new one when a creature changes form.
+
+- **Carried over by name,** for what both profiles have: push input values, action cooldowns, and the current action with its target. Push inputs the old profile doesn't have start from their defaults. When the new profile doesn't have the current action, the current option is cleared, which on a tracked agent ends the decision in its history.
+- **Kept as they are:** the time of the last think, priority, interval, scheduler, random generator, `on_decide`, and the agent's own model and influence. A model attached to a profile goes with that profile.
+- **Made again:** the input cache and option pool, for the new profile's size, and the struct `gmsa_agent_evaluate` fills. The decision is emptied and isn't fresh, so `gmsa_agent_consume` returns `undefined` until the next think. Options kept from the old decision belong to the old profile.
+- The next think comes at the usual time. Call [gmsa_agent_wake](#gmsa_agent_wake) for one at the scheduler's next step.
+- Swapping to the profile the agent already has does nothing.
+
+For a Kit agent, use [gmsa_kit_agent_set_profile](#gmsa_kit_agent_set_profile).
+
+**Throws** when the profile isn't built, the agent is a Kit agent, or the profile declares no features while the agent has its own model or is tracked.
 
 ### gmsa_agent_set_input
 
@@ -489,6 +534,8 @@ gmsa_agent_clear_current(agent)
 
 Clears the current option, for example when the agent finished or abandoned what it was doing. On a tracked agent, this ends the current decision in its history.
 
+Clear it whenever an action ends. Until then GMSmartAgent takes the agent to be still doing it: that option keeps the commitment bonus and stays on offer through its action's cooldown.
+
 ### gmsa_agent_consume
 
 ```gml
@@ -529,7 +576,7 @@ Runs one think immediately and returns the agent's decision. Schedulers call thi
 | `now` | real | `get_timer()` | Current time in microseconds, used for cooldowns and the decision time |
 | `rng` | rng | agent's generator | Generator for weighted selection |
 
-- Without `rng`, the agent's scheduler generator is used, or an internal default generator for agents outside a scheduler. GameMaker's own `random` is never touched.
+- Without `rng`, the agent's scheduler generator is used, or the default generator for agents outside a scheduler. Reseed that one through [gmsa_rng_default](#gmsa_rng_default) for a repeatable run. GameMaker's own `random` is never touched.
 - `on_decide` is **not** called here, only by schedulers.
 - The decision is marked fresh.
 - When the agent or its profile has a model attached, the surviving options are re-ranked before selection, see [How re-ranking works](#how-re-ranking-works).
@@ -543,7 +590,7 @@ gmsa_agent_evaluate(agent, [now]) -> decision
 Ranks the agent's current options without choosing one and without side effects. Use it to ask "what's on offer right now", usually for an observed agent like the player, then pass the result to `gmsa_learn_predict`.
 
 - Every option is scored in full, including vetoed ones, so nothing is hidden from you.
-- Cooldowns are respected, so an action on cooldown isn't on offer.
+- Cooldowns are respected as in a think: an action on cooldown isn't on offer, except the option the agent is doing.
 - No model re-ranks it: scores are the designer's.
 - Nothing is chosen (`chosen` is -1), the decision isn't fresh, and the agent's own decision, cooldowns and think time are untouched.
 - The result lives in its own reused struct, separate from the agent's decision, so evaluating never disturbs thinking. The next evaluate overwrites it.
@@ -554,7 +601,7 @@ Ranks the agent's current options without choosing one and without side effects.
 gmsa_decision_get_chosen(decision) -> option or undefined
 ```
 
-**Returns** the chosen option, or `undefined` when nothing was selectable (every option was vetoed, on cooldown, or had no targets) or the decision came from `gmsa_agent_evaluate`.
+**Returns** the chosen option, or `undefined` when nothing was selectable (every option was vetoed, its action was on cooldown, or there were no targets) or the decision came from `gmsa_agent_evaluate`. The option the agent is doing is never kept out by its own action's cooldown, see [gmsa_profile_add_action](#gmsa_profile_add_action).
 
 ### Decisions are reused
 
@@ -631,7 +678,7 @@ gmsa_scheduler_create([budget], [params]) -> scheduler
 gmsa_scheduler_add(scheduler, agent) -> agent
 ```
 
-Adds an agent. Its `priority` picks the tier, and it starts using the scheduler's random generator. The agent thinks on the next step.
+Adds an agent. Its `priority` picks the tier, and it starts using the scheduler's random generator. The agent is due as usual: at the next step if it has never thought or was woken, otherwise once `interval` has passed since its last think.
 
 - An agent can be in one scheduler at a time.
 - Priority is read when the agent is added. To change it later, use `gmsa_scheduler_set_priority`.
@@ -697,7 +744,7 @@ Runs due agents, and work turns, until the budget is spent, then fires queued `o
 
 - Tiers run highest priority first. Within a tier, agents take turns, and the next step continues where this one stopped.
 - **Each tier leaves a share for the tiers below it.** A tier with tiers below stops once it has used `1 - share` of what was left of the budget when its turn began, 80% by default. Whatever the lower tiers don't use goes back to the tiers that stopped, highest first. So lower tiers slow down when higher ones are busy, but never freeze while the budget allows. The guarantee shrinks with each level: with the default share, the second tier is sure of 20% of the budget, the third of 4%. With `share` 0, a higher tier can use the whole budget and lower tiers wait until it's done.
-- An agent is due when it has never thought, or when `interval` has passed since its last think.
+- An agent is due when it has never thought, when it was woken with [gmsa_agent_wake](#gmsa_agent_wake), or when `interval` has passed since its last think.
 - The clock is checked before every think and work turn except the first, so **every step does at least one** when an agent is due or work is waiting, even with a budget of 0. A step can overshoot the budget by at most one think or one work turn's overrun.
 - Every think in a step uses the same time, read once at the start.
 - `on_decide` callbacks run after the timed loop, so your code never eats into the budget, and a callback can safely remove agents.
@@ -782,6 +829,20 @@ gmsa_rng_next(rng) -> real
 ```
 
 **Returns** the next value in [0, 1).
+
+### gmsa_rng_default
+
+```gml
+gmsa_rng_default() -> rng
+```
+
+**Returns** the default generator: the one an agent outside a scheduler uses when `gmsa_agent_think` gets no `rng`, Kit agents without a scheduler included. It starts at seed 1 when the game starts and is shared by all of them. Reseed it for a run that repeats:
+
+```gml
+gmsa_rng_seed(gmsa_rng_default(), 42);
+```
+
+Agents on a scheduler use the scheduler's generator instead, see [gmsa_scheduler_set_seed](#gmsa_scheduler_set_seed).
 
 ---
 
@@ -941,16 +1002,16 @@ gmsa_learn_count_create([params]) -> model
 | `bins` | integer | 4 | Bins per input: 4 splits each input into quarters |
 | `inputs` | array | all situational | Names of the inputs that define a situation |
 | `smoothing` | real | 1 | Added to every count, so one observation never reads as certainty |
-| `half_life` | real | 50 | Observations after which an old choice counts half |
+| `half_life` | real | 50 | Times a situation is learned from after which its old evidence counts half |
 | `confidence_k` | real | 5 | Data in a situation needed for 50% confidence |
 | `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
 
 How it works:
 - Each situational input (one that doesn't depend on the target) is cut into bins, and the combination of bins is the **situation**. Per-target inputs are ignored. With no situational inputs, every moment is the same situation.
-- Per situation, it counts how often each action was chosen, with older choices fading by `half_life`.
+- Per situation, it counts how often each action was chosen. Each time it learns in a situation, from a choice or an outcome, that situation's older evidence fades by `half_life`. Other situations don't fade, so a rare situation keeps what it learned.
 - A prediction is each action's smoothed share of its situation. Options with the same action split that action's share.
 - **Confidence is per situation:** `n / (n + confidence_k)`, where `n` is the amount of data for this situation. A model with plenty of data overall but none for the current situation says it doesn't know.
-- The inputs it buckets on are fixed the first time it's used.
+- The inputs it buckets on are fixed the first time it's used, or by a save it loads. A model created with `inputs` only loads a save made with the same inputs in the same order.
 
 Explain reads like:
 
@@ -1042,6 +1103,7 @@ gmsa_learn_lambdamart_create([params]) -> model
 | `buffer` | integer | 500 | Most recent choices kept to train on |
 | `half_life` | real | 200 | Observations after which a stored choice counts half |
 | `confidence_k` | real | 40 | Observations needed for 50% confidence |
+| `clock` | function | `get_timer` | Time source in microseconds, read to keep training inside its budget. A fake clock, such as a [gmsa_test_clock](#gmsa_test_clock)'s `fn`, makes budgeted training stop at the same places every run |
 | `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
 
 How it works:
@@ -1077,13 +1139,14 @@ Wraps your own model so it works everywhere a built-in one does.
 | `train(budget)` | No | One step of batch training for `gmsa_learn_train`. Return true when finished, a missing return counts as finished |
 | `waiting()` | With `train`, to be scheduled | True when `train` has work to do, so [gmsa_learn_schedule](#gmsa_learn_schedule) skips the model while it's idle |
 
-Methods run with the model as `self`, so they can read `actions`, `inputs`, `situational`, `decay`, `samples` and their own `data`.
+Methods run with the model as `self`, so they can read `actions`, `inputs`, `situational`, `decay`, `samples`, `clock` and their own `data`.
 
 | Param | Type | Default | Description |
 | --- | --- | --- | --- |
 | `name` | string | `"custom"` | Stored in saves, a save only loads into a model with the same name |
 | `half_life` | real | 50 | Sets `decay` for your own use |
 | `confidence_k` | real | 20 | Used by `gmsa_learn_confidence` |
+| `clock` | function | `get_timer` | Time source in microseconds, for your `train` to keep to its budget. A fake clock, such as a [gmsa_test_clock](#gmsa_test_clock)'s `fn`, makes budgeted training stop at the same places every run |
 | `learns`, `temperature` | | `CHOICES`, 0.1 | What the model learns from, see [Learning From Outcomes](#learning-from-outcomes) |
 
 The **sample** a method receives, in the model's own id space:
@@ -1096,13 +1159,21 @@ sample = {
         { action : 1, inputs : [0.35, 0.10, 0.80] },
     ],
     chosen    : 0,                   // -1 when predicting
-    weight    : 1,                   // outcomes: the credit times the odds correction
+    weight    : 1,                   // outcomes: the credit times the odds correction, for the estimate
+    credit    : 1,                   // outcomes: the credit alone, for how much data there is
     reward    : undefined,           // outcomes: the reported reward
     note      : undefined,           // the note given with it, as text, see Notes on moments
+    agent     : agent,               // the agent whose decision it is
+    from      : decision,            // what it was built from: the decision, or the history entry for an outcome
 };
 ```
 
 `action` indexes `actions`, and each `inputs` entry indexes `inputs`. An input the decision's profile doesn't have reads 0.
+
+- **The sample is reused,** with its `options` and their `inputs`, for every call. Copy what you keep.
+- **`weight` and `credit`** are both 1 for a choice. For an outcome, `credit` is the share of the reward the decision gets (less for an older decision under `gmsa_learn_reward`), and `weight` multiplies it by the odds correction, see [Fair learning and exploration](#fair-learning-and-exploration). Weigh the estimate by `weight`, and count how much data you have by `credit`, or a rarely picked option inflates your confidence.
+- **`agent`** is for anything your model keeps per agent, such as each agent's own recent choices.
+- **`from`** is the decision the sample was built from, or for an outcome the agent's history entry, see [History entries and tickets](#history-entries-and-tickets). It's reused like the sample. The sequence learners read the agent's tracked history up to it.
 
 Predictions are cleaned before anyone uses them: negative or NaN values become 0, the values are scaled to sum to 1 (or made even if they're all 0), and confidence is clamped to 0..1. A broken custom model can't break scoring.
 
@@ -1152,15 +1223,15 @@ if (training) training = !gmsa_learn_train(global.style, 2000);
 gmsa_learn_schedule(model, scheduler, [priority]) -> model
 ```
 
-Makes a model's training scheduler work, like [gmsa_plan_schedule](#gmsa_plan_schedule) does for planners: `gmsa_learn_train` runs inside the scheduler's budget, taking turns with the agents, and continues where it stopped.
+Makes a model's training scheduler work, like [gmsa_plan_schedule](#gmsa_plan_schedule) does for planners: `gmsa_learn_train` runs inside the scheduler's budget, shared with the agents, and continues where it stopped.
 
 ```gml
 global.shop_taste = gmsa_learn_tdnn_create();
-gmsa_learn_schedule(global.shop_taste, global.scheduler);  // its replays train in the scheduler's spare time
+gmsa_learn_schedule(global.shop_taste, global.scheduler);  // its replays train inside the scheduler's budget
 ```
 
 - **Idle models take no turns.** A model says whether it has work with its `waiting` method: the TDNN while replays are queued, LambdaMART while a training is under way or choices came in since the last one began.
-- **LambdaMART retrains whenever new choices arrive,** from its whole buffer, using whatever budget the agents leave.
+- **LambdaMART retrains whenever new choices arrive,** from its whole buffer, in the time the scheduler gives it, see [gmsa_scheduler_add_work](#gmsa_scheduler_add_work).
 - Models that learn as they observe (Count, Linear, RankNet, the n-gram) can be scheduled too, they just never take a turn.
 - Frozen models take no turns.
 
@@ -1311,9 +1382,11 @@ gmsa_learn_load(model, json) -> bool
 
 Loads a save into a model you created. The model keeps its own settings (`half_life`, `confidence_k`, tier parameters), so tuning still applies to loaded models.
 
+The inputs a Count, n-gram, Naive Bayes or nearest neighbor model reads come with the save: what was learned is about those inputs. A model created without `inputs` takes the save's. One created with `inputs` only loads a save made with the same ones, since the same data would mean different situations.
+
 If loading fails partway, the model is left exactly as it was. Saves from before outcome learning load as choice saves.
 
-**Throws** when the save is malformed, from a newer version, from a different kind of model, or from a model learning from the other target. A Count save also throws when the model uses a different number of bins.
+**Throws** when the save is malformed, from a newer version, from a different kind of model, or from a model learning from the other target. A Count or n-gram save also throws when the model uses a different number of bins, and a Count, n-gram, Naive Bayes or nearest neighbor save when the model was created with other `inputs`.
 
 ### Model fields
 
@@ -1327,6 +1400,7 @@ If loading fails partway, the model is left exactly as it was. Saves from before
 | `situational` | Per input id, true when it doesn't depend on the target |
 | `samples` | Decayed amount of observed data |
 | `half_life`, `decay`, `confidence_k` | Settings |
+| `clock` | Time source for budgeted training, `get_timer` unless given |
 | `frozen` | True while frozen |
 | `data` | What the model learned, its own shape per tier |
 
@@ -1442,14 +1516,14 @@ Something good or bad just happened to a tracked agent, and you don't know which
 
 ### Fair learning and exploration
 
-- **Rarely chosen options count more when they are chosen:** each update is weighted by 1 over the probability the agent had of picking it, at most `GMSA_LEARN_ODDS_CLIP` (10). Without this, an option the agent seldom tries would be judged from too little data.
+- **Rarely chosen options count more when they are chosen:** each update is weighted by 1 over the probability the agent had of picking it, at most `GMSA_LEARN_ODDS_CLIP` (10). Without this, an option the agent seldom tries would be judged from too little data. The correction weighs the estimate only: for how much data a model has, and so for its confidence, every outcome counts once.
 - **Agents only learn about what they try.** With `TOP_N_WEIGHTED` selection, the variety among the top options is the exploration, and `top_n` is how adventurous the agent is. A `BEST` agent learns from what it does but never experiments.
 - **Options your scoring keeps out of the top N are never tried.** Learning stays under the designer, exploration included.
 - **Exploiting is partial by design.** The re-ranker never pushes an option below a share of your score, and weighted selection picks in proportion. So a learning agent keeps trying alternatives often. Raise `influence` or lower `top_n` for more exploitation.
 
 ### How sure a model gets
 
-Old evidence fades, so a model's amount of data levels off at about `half_life / ln 2` (about 72 at the default half-life of 50), however long it learns. Confidence, `n / (n + confidence_k)`, levels off with it:
+Old evidence fades, so a model's amount of data levels off at about `half_life / ln 2` (about 72 at the default half-life of 50), however long it learns. For Count this holds per situation: a situation fades only when it comes up, so each one levels off at about 72 of its own, however rarely it comes up. Confidence, `n / (n + confidence_k)`, levels off with it:
 
 | Model | Defaults | Highest confidence | The worse option keeps about |
 | --- | --- | --- | --- |
@@ -1697,7 +1771,7 @@ How it works:
 - **A context fades when it comes up again,** not with every choice, so a moment that comes up 1 time in 20 keeps its evidence. The cost: after a habit changes, a moment's old evidence fades only as that moment comes up again. In testing a changed habit was learned at 0.65 in the first 100 choices, then 0.87.
 - **Actions, not targets:** per-target inputs are ignored, and options with the same action share its probability.
 - **Confidence is per moment:** how much of the estimate comes from the contexts' own data, more specific contexts counting more.
-- The inputs it uses are fixed the first time it's used.
+- The inputs it uses are fixed the first time it's used, or by a save it loads. A model created with `inputs` only loads a save made with the same inputs in the same order.
 - Saves keep the contexts, not the histories.
 
 Explain names the context with the most weight in the estimate, and whether the full estimate agrees with it:
@@ -1750,6 +1824,7 @@ A time-delay neural network (Waibel et al. 1989): one network looks at a fixed w
 | `seed` | integer | 1 | Starting weights and replay picks, same seed and same choices give the same model |
 | `half_life` | real | 200 | Observations after which old evidence counts half, for confidence and familiarity |
 | `confidence_k` | real | 50 | Observations needed for 50% of the model-wide confidence |
+| `clock` | function | `get_timer` | Time source in microseconds, read to keep replays inside their budget. A fake clock, such as a [gmsa_test_clock](#gmsa_test_clock)'s `fn`, makes budgeted replays stop at the same places every run |
 | `learns`, `temperature` | | `CHOICES`, 0.1 | Learning from outcomes, see [How each model learns outcomes](#how-each-model-learns-outcomes) |
 
 How it works:
@@ -1887,7 +1962,7 @@ How it works:
 - **Tempered:** inputs that say the same thing (`hp` and `is_hurt`) would count twice and make it overconfident. With `temper` set to `"auto"` it checks how well softer versions (exponents 0.75, 0.5, 0.35 and 0.25) would have predicted each new choice, and uses one only when it predicted at least 5% better. In testing, three inputs that all said "hurt" brought the favourite's probability from 0.99 to 0.94, where it was right 0.95 of the time. Independent inputs stayed untouched.
 - **Old choices fade** by `half_life`, at no cost per choice.
 - **Confidence is per option:** `n / (n + confidence_k)`, where `n` is the data in that option's finest bins, averaged over its inputs.
-- The inputs it learns from are fixed the first time it's used.
+- The inputs it learns from are fixed the first time it's used, or by a save it loads. A model created with `inputs` only loads a save made with the same inputs, in any order.
 
 Explain names the action's base and the three inputs with the biggest say:
 
@@ -1936,7 +2011,7 @@ How it works:
 - **When the memory is full, the least important moment goes.** Importance is 1 plus how surprising the moment was (how unlikely the model thought the pick) or how big its reward was, times `importance`, fading by `half_life`. The same moment again merges into one, with a count.
 - **Confidence:** `n / (n + confidence_k)`, where `n` is the weight of the nearest moments, counting fully within `reach` and less beyond.
 - **Nothing to train:** it learns from the first choice.
-- The inputs it compares are fixed the first time it's used. Saves keep the moments with their notes, and the learned weights.
+- The inputs it compares are fixed the first time it's used, or by a save it loads. A model created with `inputs` only loads a save made with the same inputs, in any order. Saves keep the moments with their notes, and the learned weights.
 
 Explain points at a past moment: how long ago in the model's own count, the [note](#notes-on-moments) the game gave it, its strongest inputs and its pick, then how many similar moments agree:
 
@@ -2557,7 +2632,7 @@ Carries on making or repairing a plan for up to `budget` microseconds, the plann
 gmsa_plan_schedule(planner, scheduler, [priority]) -> planner
 ```
 
-The scheduler makes and repairs this planner's plans inside its budget, taking turns with the agents, see [gmsa_scheduler_add_work](#gmsa_scheduler_add_work). Your own calls (`gmsa_plan_make`, `gmsa_plan_step_done`, ...) still read facts and check the plan, but never search: when planning is needed they return `PLANNING` and the scheduler carries on. The planner's `slice`, when set, caps each of its turns.
+The scheduler makes and repairs this planner's plans inside its budget, shared with the agents, see [gmsa_scheduler_add_work](#gmsa_scheduler_add_work). Your own calls (`gmsa_plan_make`, `gmsa_plan_step_done`, ...) still read facts and check the plan, but never search: when planning is needed they return `PLANNING` and the scheduler carries on. The planner's `slice`, when set, caps each of its turns.
 
 **Throws** when the planner is already scheduled.
 
@@ -2724,7 +2799,7 @@ planner = gmsa_plan_planner_create(global.goblin_domain, id, { slice : 300 });  
 if (gmsa_plan_get_status(planner) == gmsa_plan_status.PLANNING) gmsa_plan_work(planner);
 ```
 
-**The scheduler.** Schedule the planner, and the scheduler you already step every frame makes its plans inside its budget, taking turns with the agents:
+**The scheduler.** Schedule the planner, and the scheduler you already step every frame makes its plans inside its budget, shared with the agents:
 
 ```gml
 gmsa_plan_schedule(planner, global.scheduler);
@@ -3457,6 +3532,7 @@ Finds the styles in `sessions`, an array of structs (a number per measure) or tr
 | `iterations` | integer | 100 | The most passes of one start |
 | `keep` | real | 1 | How close a found style must be to an old named one to take its name, in the sessions' spreads per measure |
 | `seed` | real | 1 | The fit's own randomness. The same sessions and seed give the same styles |
+| `clock` | function | `get_timer` | Time source in microseconds, read to keep `gmsa_style_fit_work` inside its budget. A fake clock, such as a [gmsa_test_clock](#gmsa_test_clock)'s `fn`, makes a fit in slices finish on the same calls every run |
 
 The job's fields: `done`, `found` (the number of styles found) and `bic`.
 
@@ -3464,7 +3540,7 @@ The job's fields: `done`, `found` (the number of styles found) and `bic`.
 
 **Found styles' weights** average 1, the same as a hand-written style's default: a style twice as common as the others has about 2.
 
-**Throws** when `sessions` is empty, a session lacks a measure, a tracker belongs to another set, `styles`, `max_styles`, `restarts`, `patience`, `sample` or `iterations` isn't a whole number of 1 or more, `keep` is negative, or `styles` is more than there are sessions.
+**Throws** when `sessions` is empty, a session lacks a measure, a tracker belongs to another set, `styles`, `max_styles`, `restarts`, `patience`, `sample` or `iterations` isn't a whole number of 1 or more, `keep` is negative, `clock` isn't callable, or `styles` is more than there are sessions.
 
 ### gmsa_style_fit_work
 
@@ -3486,7 +3562,7 @@ A finished fit does nothing on later steps, at the cost of one call each. Take i
 
 ### Editing styles
 
-A style is named by its name or its index in [gmsa_style_list](#gmsa_style_list).
+A style is named by its name or its index in `gmsa_style_list`.
 
 ```gml
 gmsa_style_list(set) -> array of { name, label, share, typical, spread, hand }
@@ -3618,7 +3694,7 @@ Every style, found and hand-written, with its name, weight, typical values and s
 ### Good to know
 
 - **Fit where the data is.** Finding styles needs many players' sessions in one place: a game's server, or playtest recordings. Then ship the styles. Matching runs in each player's game.
-- **Name the styles yourself.** A fit finds styles, not words for them. Read `typical` in [gmsa_style_list](#gmsa_style_list) and name them, refits keep the names.
+- **Name the styles yourself.** A fit finds styles, not words for them. Read `typical` in `gmsa_style_list` (see [Editing styles](#editing-styles)) and name them, refits keep the names.
 - **The shares are among the styles there are.** Check `fit` before trusting a share, and `confidence` before acting on one.
 - **A tick should be the same span in the sessions and in the trackers,** so counted measures mean the same: kills per minute in both.
 - **Leave out a measure that doesn't vary** across sessions. It can't tell styles apart, and a player who differs on it would match none of them.
@@ -3742,7 +3818,7 @@ An action:
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `weight` | real | 1 | Multiplies the action's score |
-| `cooldown` | real | 0 | Microseconds before it can be chosen again |
+| `cooldown` | real | 0 | Microseconds before it can be chosen anew. Carrying on doesn't restart it, see [gmsa_profile_add_action](#gmsa_profile_add_action) |
 | `targets` | function | | What it can be done to: a [Kit target](#kit-targets), or `function(agent)` returning an array. Without targets the action is done to nothing in particular |
 | `consider` | struct or array | | Input name to curve, `{ hp : gmsa_kit_curve_low() }`, or `[[input, curve], ...]` to set the order |
 | `start` | function | | `function(owner, target, agent)`, when the action begins |
@@ -3817,8 +3893,8 @@ Curves named by what you mean. Every input reaches a curve as 0 to 1, and each o
 | `gmsa_kit_curve_less([shape = 1])` | Less is better, the same shapes | POWER |
 | `gmsa_kit_curve_low([threshold = 0.4], [sharpness = 10])` | Urgent as the input drops, like health: 0.5 at `threshold` | LOGISTIC |
 | `gmsa_kit_curve_high([threshold = 0.6], [sharpness = 10])` | Urgent as the input rises, like danger | LOGISTIC |
-| `gmsa_kit_curve_at_least([threshold = 0.5])` | A gate: 1 from `threshold` up, 0 below, and a 0 vetoes the option | STEP |
-| `gmsa_kit_curve_below([threshold = 0.5])` | A gate: 1 below `threshold`, 0 from it up | STEP |
+| `gmsa_kit_curve_at_least([threshold = 0.5])` | A gate: 1 from `threshold` up, 0 below. Closed, it vetoes the option. Open, it leaves the score as it is | STEP |
+| `gmsa_kit_curve_below([threshold = 0.5])` | A gate: 1 below `threshold`, 0 from it up, the same way | STEP |
 | `gmsa_kit_curve_peak([center = 0.5], [width = 0.2])` | Best in the middle: 1 at `center`, about 0.37 at `width` away | CUSTOM |
 | `gmsa_kit_curve_band([from = 0.3], [to = 0.7], [ramp = 0])` | Good inside a range. `ramp` above 0 fades to 0 over that far outside | CUSTOM |
 | `gmsa_kit_curve_valley([center = 0.5], [width = 0.5])` | Worst in the middle: 0 at `center`, 1 at `width` away | POWER |
@@ -3843,10 +3919,10 @@ A real agent whose actions Kit runs. `profile` is a Kit profile or any built pro
 
 | Param | Type | Default | Description |
 | --- | --- | --- | --- |
-| `think_every` | int | 10 | Updates between thinks. Not with a scheduler |
+| `think_every` | int | 10 | Updates between thinks. Not with a scheduler. Change it with [gmsa_kit_agent_set_think_every](#gmsa_kit_agent_set_think_every) |
 | `scheduler` | struct | | Thinks on this scheduler's budget instead. Step the scheduler once a frame |
 | `priority` | real | 0 | The scheduler tier. Only with a scheduler |
-| `interval` | real | 0 | Microseconds between thinks on the scheduler. Only with a scheduler |
+| `interval` | real | 0 | Microseconds between thinks on the scheduler. Only with a scheduler. Change it with [gmsa_agent_set_interval](#gmsa_agent_set_interval) |
 | `thinks` | bool | true | false for an agent that never thinks or acts, the player's, for [gmsa_kit_observe_pick](#gmsa_kit_observe_pick) |
 | `model` | struct | | A model that re-ranks the agent's choices, see [Kit learning](#kit-learning) |
 | `influence` | real | 1 | How far the model moves the choice, 0 to 1. Only with a model |
@@ -3871,7 +3947,7 @@ Once a step, usually in the owner's Step event. In order:
    - Something else: the current action's `stop`, then the new one becomes the agent's current option (commitment and outcome tracking follow from it), then its `start`.
    - Nothing worth doing: the current action's `stop`, and the agent idles.
 3. **Runs the current action.** A target that was an instance when chosen and no longer exists ends the action as failed. Otherwise its `step` runs, or its plan, see [Plan actions](#plan-actions). An action without `step` or `plan` stays current until something better wins.
-4. **When the action ends** by its step or plan: its `stop`, and the agent decides again in the same update, so it never stands still for a think.
+4. **When the action ends** by its step or plan: its `stop`, and the agent decides again in the same update, so it never stands still for a think. With a scheduler, it's woken instead (see [gmsa_agent_wake](#gmsa_agent_wake)) and decides at the scheduler's next step.
 
 An agent made with `thinks : false` does nothing here.
 
@@ -3947,7 +4023,27 @@ Ends the current action from outside (the goblin was hit), and the agent decides
 gmsa_kit_agent_decide(agent)
 ```
 
-Thinks at the next update, whatever the timer says. With a scheduler, at its next step. For when the world changed: a new enemy, an alarm.
+Thinks at the next update, whatever the timer says. With a scheduler, it wakes the agent (see [gmsa_agent_wake](#gmsa_agent_wake)), which thinks at the scheduler's next step, inside the budget. For when the world changed: a new enemy, an alarm.
+
+#### gmsa_kit_agent_set_think_every
+
+```gml
+gmsa_kit_agent_set_think_every(agent, every)
+```
+
+Changes `think_every` from now on, for an agent without a scheduler. A shorter wait takes effect now, so the agent thinks within `every` updates. A longer one starts from the next think. With a scheduler, its interval paces it instead: use [gmsa_agent_set_interval](#gmsa_agent_set_interval).
+
+**Throws** when the agent doesn't think, has a scheduler, or `every` isn't a whole number of 1 or more.
+
+#### gmsa_kit_agent_set_profile
+
+```gml
+gmsa_kit_agent_set_profile(agent, profile)
+```
+
+Swaps the agent's profile, a Kit profile or any built one. The current action stops first, with its `stop`. Then the swap goes as in [gmsa_agent_set_profile](#gmsa_agent_set_profile): push values and cooldowns carry over by name, and the new profile's actions run from now on. The agent idles until its next think, or call [gmsa_kit_agent_decide](#gmsa_kit_agent_decide) for one sooner.
+
+**Throws** as `gmsa_agent_set_profile` does, and when an action of the new profile runs a plan and the agent has no domain, or its domain doesn't have that plan.
 
 #### gmsa_kit_agent_stop
 
@@ -4268,15 +4364,15 @@ Fields you can read. Fields starting with `__` are internal.
 | `name` | Action name |
 | `index` | Position in the profile, set at build |
 | `weight`, `cooldown`, `targets` | As given to `gmsa_profile_add_action` |
-| `considerations` | Array of `{ input, curve, input_index }` |
+| `considerations` | Array of `{ input, curve, input_index, gate }`. `gate` is set at build, see [Scoring Pipeline](#scoring-pipeline) |
 
 ### Agent
 
 | Field | Description |
 | --- | --- |
-| `profile` | The agent's profile |
+| `profile` | The agent's profile, changed with [gmsa_agent_set_profile](#gmsa_agent_set_profile) |
 | `owner` | Your instance or struct |
-| `priority`, `interval`, `on_decide` | As given to `gmsa_agent_create` |
+| `priority`, `interval`, `on_decide` | As given to `gmsa_agent_create`. Change `priority` with [gmsa_scheduler_set_priority](#gmsa_scheduler_set_priority) and `interval` with [gmsa_agent_set_interval](#gmsa_agent_set_interval) |
 | `push` | Raw push values, indexed like the profile's inputs |
 | `cooldowns` | Time each action is ready again, indexed like the profile's actions |
 | `current` | `{ action, target }` set by `gmsa_agent_set_current`, or undefined |
@@ -4365,17 +4461,18 @@ Callbacks can be anonymous functions, methods or script functions, including bui
 
 What happens in one think, in order:
 
-1. **Skip** actions still on cooldown.
+1. **Skip** actions still on cooldown, except the option the agent is doing (its current action and target), which stays on offer.
 2. **Gather targets** from each action's `targets` callback, or one targetless option.
 3. **Score each option.** For each consideration, the input is read (pulled once per think, per target when per-target), normalized to 0..1 and passed through its curve. The results are multiplied. A result of 0 vetoes the option immediately.
 4. **Compensate** for the number of considerations `n`, so actions with more considerations aren't punished for it:
    `score = score + (1 - score) * (1 - 1/n) * score`
+   `n` counts the considerations that aren't gates. A gate is a `STEP` curve whose output can only be 0 or 1: closed it vetoes, open it leaves the score as it is, so there is nothing to make up for. With `n` of 1 or less, the score is unchanged.
 5. **Weight**: multiply by the action's weight.
 6. **Commit**: if the option matches the agent's current action and target, multiply by `1 + commitment`.
 7. **Rank** high to low. Equal scores keep their creation order.
 8. **Re-rank**, only when a model is attached and there are at least two options: each score is multiplied by `lerp(1, p / best p, influence * confidence)`, never below 0.0001 of itself, and the options are ranked again. The score before this step stays in `option.designer`.
 9. **Select**: `BEST` takes the top option. `TOP_N_WEIGHTED` picks among the top `top_n` with probability proportional to score.
-10. **Cooldown** of the chosen action starts.
+10. **Cooldown** of the chosen action starts, unless the chosen option is the one the agent is already doing.
 11. **Write** the decision and mark it fresh.
 
 Worked example, the heal option from the README at 20 hp with a heart 10 px away:

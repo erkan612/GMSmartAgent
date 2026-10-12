@@ -1043,7 +1043,7 @@ The scheduler from [chapter 10](#10-many-agents-the-scheduler) already solved th
 gmsa_plan_schedule(planner, global.ai);
 ```
 
-Nothing else changes in your code. `gmsa_plan_make` still starts the plan, but now it only reads the facts: the scheduler does the planning inside its budget, taking turns with the goblins' thinking. Until the plan is ready, the status is `PLANNING` and `gmsa_plan_current` is undefined, so the movement block from chapter 14 runs with no goal and the goblin stands still for a frame or two. Reports like `gmsa_plan_step_done` work exactly as before. When one of them needs a big repair, that repair also happens inside the budget.
+Nothing else changes in your code. `gmsa_plan_make` still starts the plan, but now it only reads the facts: the scheduler does the planning inside its budget, sharing it with the goblins' thinking. Until the plan is ready, the status is `PLANNING` and `gmsa_plan_current` is undefined, so the movement block from chapter 14 runs with no goal and the goblin stands still for a frame or two. Reports like `gmsa_plan_step_done` work exactly as before. When one of them needs a big repair, that repair also happens inside the budget.
 
 The planner is now in the scheduler, so take it out when the goblin goes, next to the agent:
 
@@ -1431,7 +1431,7 @@ if (_chosen >= 0) gmsa_learn_observe(global.next_pick, gmsa_observe(agent, _offe
 
 `gmsa_observe` builds the decision again, which is cheap: one recorded choice can teach any number of models.
 
-The TDNN learns each pick at once, then goes back over a few earlier ones to learn from them again. That second part is the heavy one, so it waits for training time, and `gmsa_learn_schedule` gives it the scheduler's spare budget. Without it, the TDNN still learns, just more slowly.
+The TDNN learns each pick at once, then goes back over a few earlier ones to learn from them again. That second part is the heavy one, so it waits for training time, and `gmsa_learn_schedule` gives it time inside the scheduler's budget. Without it, the TDNN still learns, just more slowly.
 
 **The goblins avoid your coin.** Each step, ask the model which item you'll go for next, and keep it if it's sure enough:
 
