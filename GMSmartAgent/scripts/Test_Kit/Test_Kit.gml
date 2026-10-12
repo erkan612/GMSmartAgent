@@ -357,6 +357,22 @@ function test_kit() {
             gmsa_test_assert_throws(function() { gmsa_kit_profile("kit test bad swing 1", { actions : { a : { interruptible : false } } }); }, "nothing to end it");
             gmsa_test_assert_throws(function() { gmsa_kit_profile("kit test bad swing 2", { actions : { a : { interruptible : "no", step : function() { return true; } } } }); }, "not true or false");
         });
+		
+        gmsa_test_case("think_every can change", function() {
+            gmsa_kit_profile_forget("kit test every");
+            var _p = gmsa_kit_profile("kit test every", { actions : { idle : {} } });
+            var _ag = gmsa_kit_agent_create(_p, {}, { think_every : 10 });
+            gmsa_kit_agent_update(_ag);               // the first update thinks, then 9 to wait
+            gmsa_kit_agent_set_think_every(_ag, 3);
+            gmsa_test_assert_equal(_ag.kit.timer, 3, "a shorter wait takes effect now");
+            repeat (4) gmsa_kit_agent_update(_ag);    // 3 waits, then a think that sets 3 and counts one down
+            gmsa_test_assert_equal(_ag.kit.timer, 2, "thought again on the new pace");
+            var _ctx = { p : _p };
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_set_think_every(gmsa_kit_agent_create(p, {}, { scheduler : gmsa_scheduler_create() }), 3); }), "with a scheduler");
+            gmsa_test_assert_throws(method(_ctx, function() { gmsa_kit_agent_set_think_every(gmsa_kit_agent_create(p, {}, { thinks : false }), 3); }), "doesn't think");
+            gmsa_test_assert_throws(method({ a : _ag }, function() { gmsa_kit_agent_set_think_every(a, 0); }), "zero");
+            gmsa_test_assert_throws(method({ a : _ag }, function() { gmsa_kit_agent_set_think_every(a, 2.5); }), "not whole");
+        });
     });
 }
 

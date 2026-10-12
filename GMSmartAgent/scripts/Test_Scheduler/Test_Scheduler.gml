@@ -76,6 +76,27 @@ function gmsa_tests_scheduler() {
             gmsa_scheduler_step(_s);
             gmsa_test_assert_equal(_a.owner.count, 2, "t=1000 due");
         });
+		
+        gmsa_test_case("an agent's interval can change", function() {
+            var _c = gmsa_test_clock();
+            var _s = gmsa_scheduler_create(1000, { clock : _c.fn });
+            var _a = __gmsa_tests_counted_agent(__gmsa_tests_idle_profile(), "A", [], { interval : 1000 });
+            gmsa_scheduler_add(_s, _a);
+            gmsa_scheduler_step(_s);
+            _c.now += 200;
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 1, "not due at 200");
+            gmsa_agent_set_interval(_a, 100);
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 2, "a shorter interval: due at once");
+            gmsa_agent_set_interval(_a, infinity);
+            _c.now += 1000000;
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 2, "infinity: not again");
+            gmsa_test_assert_throws(method({ a : _a }, function() { gmsa_agent_set_interval(a, -1); }), "negative");
+            gmsa_test_assert_throws(method({ a : _a }, function() { gmsa_agent_set_interval(a, "1"); }), "not a number");
+            gmsa_test_assert_throws(function() { gmsa_agent_create(__gmsa_tests_idle_profile(), {}, { interval : -5 }); }, "checked at create too");
+        });
 
         gmsa_test_case("budget stops the loop", function() {
             var _c = gmsa_test_clock(0, 100);

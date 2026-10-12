@@ -354,6 +354,15 @@ function gmsa_kit_agent_decide(_agent) { // thinks at the next update, whatever 
     else _agent.last_think = undefined;
 }
 
+function gmsa_kit_agent_set_think_every(_agent, _every) { // updates between thinks from now on, for a Kit agent without a scheduler (with one, use gmsa_agent_set_interval). A shorter wait takes effect now, a longer one from the next think
+    var _kit = __gmsa_kit_state(_agent);
+    if (!_kit.thinks) throw "GMSA: this Kit agent doesn't think, so it has no think_every";
+    if (_kit.scheduler != undefined) throw "GMSA: this Kit agent has a scheduler, which paces its thinking: use gmsa_agent_set_interval";
+    if (!is_numeric(_every) || _every < 1 || frac(_every) != 0) throw "GMSA: think_every must be a whole number of 1 or more";
+    _kit.every = _every;
+    _kit.timer = min(_kit.timer, _every);
+}
+
 function gmsa_kit_agent_stop(_agent) { // stops the current action and idles until the next think
     var _kit = __gmsa_kit_state(_agent);
     if (_kit.action == undefined) return;

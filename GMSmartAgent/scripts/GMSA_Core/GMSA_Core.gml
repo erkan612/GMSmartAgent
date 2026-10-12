@@ -212,6 +212,8 @@ function gmsa_agent_create(_profile, _owner = undefined, _params = {}) {
     if (!is_struct(_profile) || !_profile.built) throw "GMSA: agent needs a built profile";
     var _on_decide = __gmsa_param(_params, "on_decide", undefined);
     if (_on_decide != undefined && !is_callable(_on_decide)) throw "GMSA: on_decide must be callable";
+    var _interval = __gmsa_param(_params, "interval", 0);
+    __gmsa_agent_check_interval(_interval);
 
     var _input_count = array_length(_profile.inputs);
     var _push = array_create(_input_count, 0);
@@ -221,7 +223,7 @@ function gmsa_agent_create(_profile, _owner = undefined, _params = {}) {
         profile    : _profile,
         owner      : _owner,
         priority   : __gmsa_param(_params, "priority", 0),
-        interval   : __gmsa_param(_params, "interval", 0),
+        interval   : _interval,
         on_decide  : _on_decide,
         push       : _push,
         cooldowns  : array_create(array_length(_profile.actions), 0),  // time each action is ready again
@@ -346,4 +348,13 @@ function gmsa_agent_set_current_option(_agent, _option) {
     var _same = (_cur != undefined && _cur.action == _idx && _cur.target == _option.target);
     gmsa_agent_set_current(_agent, _idx, _option.target);
     if (_agent.__track != undefined) _agent.__track(_option, _same);
+}
+
+function gmsa_agent_set_interval(_agent, _interval) { // the least microseconds between thinks from now on. The last think still counts, so a shorter interval can make the agent due at once; infinity stops it thinking until changed
+    __gmsa_agent_check_interval(_interval);
+    _agent.interval = _interval;
+}
+
+function __gmsa_agent_check_interval(_interval) {
+    if (!is_numeric(_interval) || is_nan(_interval) || _interval < 0) throw "GMSA: agent interval must be 0 or more microseconds";
 }
