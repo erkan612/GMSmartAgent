@@ -373,6 +373,26 @@ function test_kit() {
             gmsa_test_assert_throws(method({ a : _ag }, function() { gmsa_kit_agent_set_think_every(a, 0); }), "zero");
             gmsa_test_assert_throws(method({ a : _ag }, function() { gmsa_kit_agent_set_think_every(a, 2.5); }), "not whole");
         });
+		
+        gmsa_test_case("a Kit agent's profile can change, its action stops first", function() {
+            gmsa_kit_profile_forget("kit test near");
+            gmsa_kit_profile_forget("kit test far");
+            var _near = gmsa_kit_profile("kit test near", {
+                actions : { guard : { start : function(_o) { array_push(_o.log, "guard start"); }, stop : function(_o) { array_push(_o.log, "guard stop"); } } },
+            });
+            var _far = gmsa_kit_profile("kit test far", {
+                actions : { wander : { start : function(_o) { array_push(_o.log, "wander start"); } } },
+            });
+            var _owner = { log : [] };
+            var _a = gmsa_kit_agent_create(_near, _owner);
+            gmsa_kit_agent_update(_a);
+            gmsa_kit_agent_set_profile(_a, _far);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "", "idle after the swap");
+            gmsa_kit_agent_decide(_a);
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(_owner.log, ["guard start", "guard stop", "wander start"]);
+            gmsa_test_assert_throws(method({ a : _a, p : _near }, function() { gmsa_agent_set_profile(a, p); }), "the core call refuses a Kit agent");
+        });
     });
 }
 

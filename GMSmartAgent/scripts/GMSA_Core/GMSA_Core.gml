@@ -358,3 +358,59 @@ function gmsa_agent_set_interval(_agent, _interval) { // the least microseconds 
 function __gmsa_agent_check_interval(_interval) {
     if (!is_numeric(_interval) || is_nan(_interval) || _interval < 0) throw "GMSA: agent interval must be 0 or more microseconds";
 }
+
+function gmsa_agent_set_profile(_agent, _profile) { // swaps the agent's profile, for example a simpler one far from the player. What both profiles share by name carries over: push values, cooldowns and the current action. Last think, priority, interval, scheduler, generator and the agent's own model stay
+    if (_agent[$ "kit"] != undefined) throw "GMSA: this is a Kit agent, use gmsa_kit_agent_set_profile";
+    __gmsa_agent_check_profile_swap(_agent, _profile);
+    __gmsa_agent_swap_profile(_agent, _profile);
+}
+
+function __gmsa_agent_check_profile_swap(_agent, _profile) {
+    if (!is_struct(_profile) || _profile[$ "built"] != true) throw "GMSA: agent needs a built profile";
+    if (_profile.features == undefined) {
+        if (_agent.model != undefined) throw "GMSA: the agent has its own model, so profile '" + string(_profile.name) + "' needs features";
+        if (_agent.__track != undefined) throw "GMSA: the agent is tracked, so profile '" + string(_profile.name) + "' needs features";
+    }
+}
+
+function __gmsa_agent_swap_profile(_agent, _profile) {
+    var _old = _agent.profile;
+    if (_old == _profile) return;
+
+    // push values by name, the rest from their defaults
+    var _n = array_length(_profile.inputs);
+    var _push = array_create(_n, 0);
+    for (var _i = 0; _i < _n; _i++) {
+        var _input = _profile.inputs[_i];
+        _push[_i] = _input.default_value;
+        if (_input.source != gmsa_source.PUSH) continue;
+        var _j = gmsa_profile_input_index(_old, _input.name);
+        if (_j >= 0 && _old.inputs[_j].source == gmsa_source.PUSH) _push[_i] = _agent.push[_j];
+    }
+
+    // cooldowns by name
+    var _m = array_length(_profile.actions);
+    var _cool = array_create(_m, 0);
+    for (var _a = 0; _a < _m; _a++) {
+        var _b = gmsa_profile_action_index(_old, _profile.actions[_a].name);
+        if (_b >= 0) _cool[_a] = _agent.cooldowns[_b];
+    }
+
+    // the current action by name, or none
+    var _cur = _agent.current;
+    var _keep = (_cur != undefined) ? gmsa_profile_action_index(_profile, _old.actions[_cur.action].name) : -1;
+
+    _agent.profile = _profile;
+    _agent.push = _push;
+    _agent.cooldowns = _cool;
+    _agent.__cache = __gmsa_cache_create(_n, _m);
+    _agent.__eval = undefined;
+    var _d = _agent.decision;
+    array_resize(_d.options, 0);
+    _d.chosen = -1;
+    _d.fresh = false;
+    if (_cur != undefined) {
+        if (_keep >= 0) _cur.action = _keep;
+        else gmsa_agent_clear_current(_agent);
+    }
+}

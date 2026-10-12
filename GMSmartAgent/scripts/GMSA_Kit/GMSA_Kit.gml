@@ -363,6 +363,22 @@ function gmsa_kit_agent_set_think_every(_agent, _every) { // updates between thi
     _kit.timer = min(_kit.timer, _every);
 }
 
+function gmsa_kit_agent_set_profile(_agent, _profile) { // swaps a Kit agent's profile: the current action stops first, then what both profiles share carries over, as in gmsa_agent_set_profile
+    var _kit = __gmsa_kit_state(_agent);
+    __gmsa_agent_check_profile_swap(_agent, _profile);
+    var _handlers = is_struct(_profile[$ "kit"]) ? _profile.kit.handlers : {};
+    var _names = __gmsa_kit_sorted_names(_handlers);
+    for (var _i = 0; _i < array_length(_names); _i++) {
+        var _plan = _handlers[$ _names[_i]].plan;
+        if (_plan == undefined || !_kit.thinks) continue;
+        if (_kit.planner == undefined) throw "GMSA: action '" + _names[_i] + "' runs a plan, so the agent needs a domain";
+        if (!variable_struct_exists(_kit.planner.domain.lookup, _plan)) throw "GMSA: action '" + _names[_i] + "' runs '" + _plan + "', which domain '" + _kit.planner.domain.name + "' doesn't have";
+    }
+    gmsa_kit_agent_stop(_agent);
+    __gmsa_agent_swap_profile(_agent, _profile);
+    _kit.handlers = _handlers;
+}
+
 function gmsa_kit_agent_stop(_agent) { // stops the current action and idles until the next think
     var _kit = __gmsa_kit_state(_agent);
     if (_kit.action == undefined) return;

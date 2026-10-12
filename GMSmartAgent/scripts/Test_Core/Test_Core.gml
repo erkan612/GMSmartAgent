@@ -166,5 +166,46 @@ function gmsa_tests_core() {
             gmsa_test_assert_equal(gmsa_agent_consume(_ag), _ag.decision, "fresh");
             gmsa_test_assert_equal(gmsa_agent_consume(_ag), undefined, "consumed once");
         });
+		
+        gmsa_test_case("an agent's profile can change", function() {
+            var _near = gmsa_profile_create("near");
+            gmsa_profile_add_input(_near, gmsa_input_push("hp", 0, 100));
+            gmsa_profile_add_input(_near, gmsa_input_push("rage", 0, 1));
+            gmsa_profile_add_action(_near, "attack", { cooldown : 1000 });
+            gmsa_profile_add_action(_near, "taunt");
+            gmsa_profile_build(_near);
+            var _far = gmsa_profile_create("far");
+            gmsa_profile_add_input(_far, gmsa_input_push("hp", 0, 100));
+            gmsa_profile_add_action(_far, "wander");
+            gmsa_profile_add_action(_far, "attack");
+            gmsa_profile_build(_far);
+
+            var _ag = gmsa_agent_create(_near);
+            gmsa_agent_set_input(_ag, "hp", 40);
+            gmsa_agent_set_input(_ag, "rage", 1);
+            _ag.cooldowns[0] = 5000;                  // attack ready again at 5000
+            gmsa_agent_set_current(_ag, "attack");
+            gmsa_agent_set_profile(_ag, _far);
+            gmsa_test_assert_equal(_ag.push[0], 40, "hp carried over");
+            gmsa_test_assert_equal(_ag.cooldowns[1], 5000, "attack's cooldown carried over");
+            gmsa_test_assert_equal(_ag.current.action, 1, "attack goes on, as the far profile's attack");
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(gmsa_agent_think(_ag, 0)).action.name, "wander", "thinks with the new profile");
+
+            gmsa_agent_set_current(_ag, "wander");
+            gmsa_agent_set_profile(_ag, _near);
+            gmsa_test_assert_equal(_ag.current, undefined, "no wander in the near profile: cleared");
+            gmsa_test_assert_equal(_ag.push[1], 0, "rage from its default");
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(gmsa_agent_think(_ag, 0)).action.name, "taunt", "a bigger profile thinks too");
+
+            var _feat = gmsa_profile_create("featured");
+            gmsa_profile_add_input(_feat, gmsa_input_push("hp", 0, 100));
+            gmsa_profile_add_action(_feat, "attack");
+            gmsa_profile_set_features(_feat, ["hp"]);
+            gmsa_profile_build(_feat);
+            var _learner = gmsa_agent_create(_feat);
+            gmsa_agent_set_model(_learner, gmsa_learn_count_create(), 1);
+            gmsa_test_assert_throws(method({ a : _learner, p : _far }, function() { gmsa_agent_set_profile(a, p); }), "a model needs features");
+            gmsa_test_assert_throws(method({ a : _ag }, function() { gmsa_agent_set_profile(a, gmsa_profile_create("not built")); }), "not built");
+        });
     });
 }
