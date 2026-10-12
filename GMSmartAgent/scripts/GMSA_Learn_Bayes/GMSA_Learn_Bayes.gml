@@ -171,6 +171,7 @@ function __gmsa_learn_bayes_save() {
 
 function __gmsa_learn_bayes_load(_data) {
     if (!is_struct(_data[$ "acts"]) || !is_struct(_data[$ "cells"]) || !is_array(_data[$ "loss"])) throw "GMSA: bayes save is malformed";
+    if (_data.has_keys) __gmsa_learn_check_saved_inputs("bayes", bayes.names, _data.keys, false);
     // every input must be cut the same way as when it was saved
     var _names = variable_struct_get_names(_data.cells);
     for (var _i = 0; _i < array_length(_names); _i++) {

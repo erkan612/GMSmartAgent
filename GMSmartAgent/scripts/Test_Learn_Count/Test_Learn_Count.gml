@@ -139,6 +139,25 @@ function gmsa_tests_learn_count() {
                 gmsa_learn_load(gmsa_learn_count_create({ bins : 3 }), json);
             }), "different bins");
         });
+		
+        gmsa_test_case("a save made with other inputs doesn't load into a model created with its own", function() {
+            var _ag = gmsa_agent_create(__gmsa_tests_count_profile(["drink", "loot"]));
+            var _makers = [
+                function(_p) { return gmsa_learn_count_create(_p); },
+                function(_p) { return gmsa_learn_ngram_create(_p); },
+                function(_p) { return gmsa_learn_bayes_create(_p); },
+                function(_p) { return gmsa_learn_neighbor_create(_p); },
+            ];
+            var _names = ["count", "ngram", "bayes", "neighbor"];
+            for (var _i = 0; _i < array_length(_makers); _i++) {
+                var _old = _makers[_i]({ inputs : ["hp"] });
+                __gmsa_tests_count_choose(_old, _ag, 20, 0, ["drink", "loot"], "drink", 3);
+                var _ctx = { json : gmsa_learn_save(_old), make : _makers[_i] };
+                gmsa_test_assert_throws(method(_ctx, function() { gmsa_learn_load(make({ inputs : ["hp", "danger"] }), json); }), _names[_i] + ": other inputs");
+                gmsa_test_assert_equal(gmsa_learn_load(_makers[_i]({ inputs : ["hp"] }), _ctx.json), true, _names[_i] + ": the same inputs");
+                gmsa_test_assert_equal(gmsa_learn_load(_makers[_i]({}), _ctx.json), true, _names[_i] + ": a model without inputs takes the save's");
+            }
+        });
 
         gmsa_test_case("explicit inputs ignore the rest", function() {
             var _only_hp = gmsa_learn_count_create({ inputs : ["hp"] });

@@ -120,6 +120,7 @@ function __gmsa_learn_count_save() {
 
 function __gmsa_learn_count_load(_data) {
     if (_data.bins != count.bins) throw "GMSA: count save uses " + string(_data.bins) + " bins, the model uses " + string(count.bins);
+    if (_data.has_keys) __gmsa_learn_check_saved_inputs("count", count.names, _data.keys, true);
     data.keys    = _data.has_keys ? _data.keys : count.names;
     data.clock   = _data.clock;
     data.buckets = _data.buckets;

@@ -243,6 +243,12 @@ function __gmsa_learn_neighbor_save() {
 function __gmsa_learn_neighbor_load(_data) {
     if (!is_array(_data[$ "mem"]) || !is_array(_data[$ "lw"]) || !is_array(_data[$ "sk"]) || !is_array(_data[$ "ok"])) throw "GMSA: neighbor save is malformed";
     if (_data.has_keys && array_length(_data.lw) != array_length(_data.sk)) throw "GMSA: neighbor save is malformed";
+    if (_data.has_keys) {
+        var _saved = [];
+        array_copy(_saved, 0, _data.sk, 0, array_length(_data.sk));
+        array_copy(_saved, array_length(_saved), _data.ok, 0, array_length(_data.ok));
+        __gmsa_learn_check_saved_inputs("neighbor", neighbor.names, _saved, false);
+    }
     data = { sk : _data.has_keys ? _data.sk : undefined, ok : _data.has_keys ? _data.ok : undefined, lw : _data.lw,
              clock : _data.clock, mem : _data.mem };
 }

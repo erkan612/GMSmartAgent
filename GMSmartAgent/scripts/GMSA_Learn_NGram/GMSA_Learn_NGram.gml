@@ -188,6 +188,7 @@ function __gmsa_learn_ngram_save() {
 
 function __gmsa_learn_ngram_load(_data) {
     if (_data.bins != ngram.bins) throw "GMSA: n-gram save uses " + string(_data.bins) + " bins, the model uses " + string(ngram.bins);
+    if (_data.has_keys) __gmsa_learn_check_saved_inputs("n-gram", ngram.names, _data.keys, true);
     data.keys = _data.has_keys ? _data.keys : ngram.names;
     data.clock = _data.clock;
     data.contexts = _data.contexts;

@@ -511,3 +511,18 @@ function __gmsa_learn_forget_oldest(_entries, _keep) {
 function __gmsa_learn_note(_note) {
     return (_note == undefined) ? undefined : string(_note);
 }
+
+function __gmsa_learn_check_saved_inputs(_tier, _mine, _saved, _ordered) { // a model created with its own inputs won't load a save made with others, they'd mean different situations
+    if (_mine == undefined) return; // the model didn't say which inputs it wants: it takes the save's
+    var _same = (array_length(_mine) == array_length(_saved));
+    for (var _i = 0; _i < array_length(_mine) && _same; _i++) {
+        _same = _ordered ? (_mine[_i] == _saved[_i]) : array_contains(_saved, _mine[_i]);
+    }
+    if (!_same) throw "GMSA: " + _tier + " save uses the inputs " + __gmsa_learn_names_text(_saved) + ", the model uses " + __gmsa_learn_names_text(_mine);
+}
+
+function __gmsa_learn_names_text(_names) {
+    var _t = "";
+    for (var _i = 0; _i < array_length(_names); _i++) _t += ((_i > 0) ? ", " : "") + string(_names[_i]);
+    return (_t == "") ? "none" : _t;
+}
