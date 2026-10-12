@@ -234,6 +234,8 @@ function gmsa_agent_create(_profile, _owner = undefined, _params = {}) {
         current    : undefined,
         last_think : undefined,
         __wake     : false,      // due at the next scheduler step, set by gmsa_agent_wake, cleared by a think
+        __acts     : false,      // true once the game reports what the agent does: cooldowns then start when an option becomes current
+        __busy     : false,      // set by gmsa_agent_set_busy: not due on a scheduler until cleared
         rng        : undefined,  // set by the scheduler, falls back to the default generator
         model      : undefined,  // reserved for Learn
         influence  : 0,          // used with the agent's own model
@@ -261,14 +263,25 @@ function gmsa_agent_set_input(_agent, _input, _value) {
     _agent.push[_idx] = _value;
 }
 
-function gmsa_agent_set_current(_agent, _action, _target = undefined) {
+function gmsa_agent_set_current(_agent, _action, _target = undefined, _now = undefined) {
     var _profile = _agent.profile;
     var _idx = __gmsa_resolve_index(_profile.action_index, _action, array_length(_profile.actions), "action");
-    if (_agent.current == undefined) _agent.current = { action : _idx, target : _target };
+    var _cur = _agent.current;
+    var _new = (_cur == undefined || _cur.action != _idx || _cur.target != _target);
+    if (_cur == undefined) _agent.current = { action : _idx, target : _target };
     else {
-        _agent.current.action = _idx;
-        _agent.current.target = _target;
+        _cur.action = _idx;
+        _cur.target = _target;
     }
+    _agent.__acts = true;
+    if (_new) __gmsa_agent_start_cooldown(_agent, _idx, _now); // acting on a choice starts its cooldown; carrying on doesn't
+}
+
+function __gmsa_agent_start_cooldown(_agent, _idx, _now) { // counted from the think that made the choice, unless told otherwise
+    var _cooldown = _agent.profile.actions[_idx].cooldown;
+    if (_cooldown <= 0) return;
+    if (_now == undefined) _now = (_agent.last_think != undefined) ? _agent.last_think : get_timer();
+    _agent.cooldowns[_idx] = _now + _cooldown;
 }
 
 function gmsa_agent_clear_current(_agent) {
@@ -343,7 +356,7 @@ function __gmsa_resolve_index(_map, _key, _count, _kind) {
     throw "GMSA: invalid " + _kind + " " + string(_key);
 }
 
-function gmsa_agent_set_current_option(_agent, _option) {
+function gmsa_agent_set_current_option(_agent, _option, _now = undefined) {
     if (_option == undefined) {
         gmsa_agent_clear_current(_agent);
         return;
@@ -355,7 +368,7 @@ function gmsa_agent_set_current_option(_agent, _option) {
     }
     var _cur = _agent.current;
     var _same = (_cur != undefined && _cur.action == _idx && _cur.target == _option.target);
-    gmsa_agent_set_current(_agent, _idx, _option.target);
+    gmsa_agent_set_current(_agent, _idx, _option.target, _now);
     if (_agent.__track != undefined) _agent.__track(_option, _same);
 }
 
@@ -426,4 +439,8 @@ function __gmsa_agent_swap_profile(_agent, _profile) {
 
 function gmsa_agent_wake(_agent) { // due at the scheduler's next step whatever its interval; it thinks inside the budget when its turn in its tier comes. Outside a scheduler, call gmsa_agent_think yourself
     _agent.__wake = true;
+}
+
+function gmsa_agent_set_busy(_agent, _busy = true) { // a busy agent isn't due on a scheduler, for actions nothing may interrupt. A wake waits until it's free; gmsa_agent_think still runs when called
+    _agent.__busy = _busy;
 }

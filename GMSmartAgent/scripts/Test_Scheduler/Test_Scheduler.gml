@@ -113,6 +113,23 @@ function gmsa_tests_scheduler() {
             gmsa_scheduler_step(_s);
             gmsa_test_assert_equal(_a.owner.count, 2, "the think used the wake up");
         });
+		
+        gmsa_test_case("a busy agent doesn't think until it's free", function() {
+            var _s = gmsa_scheduler_create(1000000);
+            var _a = __gmsa_tests_counted_agent(__gmsa_tests_idle_profile(), "A", []);
+            gmsa_scheduler_add(_s, _a);
+            gmsa_agent_set_busy(_a, true);
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 0, "busy: not due");
+            gmsa_agent_wake(_a);
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 0, "a wake waits");
+            gmsa_agent_set_busy(_a, false);
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 1, "free: thinks at the next step");
+            gmsa_agent_set_busy(_a, true);
+            gmsa_test_assert_true(gmsa_agent_think(_a, 0).fresh, "a direct think still runs");
+        });
 
         gmsa_test_case("woken agents still respect the budget", function() {
             var _c = gmsa_test_clock(0, 100);

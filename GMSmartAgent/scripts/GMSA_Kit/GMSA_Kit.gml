@@ -306,7 +306,7 @@ function gmsa_kit_agent_update(_agent) { // once a step: thinks when due, takes 
     var _kit = __gmsa_kit_state(_agent);
     if (!_kit.thinks) return;
     if (_kit.scheduler == undefined) {
-        if (_kit.timer <= 0) {
+        if (_kit.timer <= 0 && !_agent.__busy) {
             gmsa_agent_think(_agent);
             _kit.timer = _kit.every;
         }
@@ -519,6 +519,7 @@ function __gmsa_kit_take(_agent, _kit) {
     _kit.action = _option.action;
     _kit.target = _option.target;
     _kit.handler = (_handler != undefined) ? _handler : __gmsa_kit_no_handler();
+    gmsa_agent_set_busy(_agent, !_kit.handler.interruptible); // an action nothing may interrupt doesn't think until it ends
     _kit.instance = __gmsa_kit_is_instance(_option.target);
     _kit.serial++;
     var _serial = _kit.serial;
@@ -534,6 +535,7 @@ function __gmsa_kit_end(_agent, _kit) {
     _kit.handler = undefined;
     _kit.instance = false;
     _kit.serial++;
+    gmsa_agent_set_busy(_agent, false);
     if (_handler.plan != undefined) __gmsa_kit_plan_halt(_agent, _kit);
     if (_handler.stop != undefined) _handler.stop(_agent.owner, _target, _agent);
 }

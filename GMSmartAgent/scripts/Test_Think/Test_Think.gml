@@ -220,7 +220,26 @@ function gmsa_tests_think() {
             gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "idle", "finished: not again until 1000");
             _d = gmsa_agent_think(_ag, 1000);
             gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "eat", "ready again");
-            gmsa_test_assert_equal(_ag.cooldowns[0], 2000, "a new choice starts the cooldown");
+            gmsa_agent_set_current_option(_ag, gmsa_decision_get_chosen(_d));
+            gmsa_test_assert_equal(_ag.cooldowns[0], 2000, "acting on a new choice starts the cooldown");
+        });
+		
+        gmsa_test_case("a choice nobody acts on doesn't start its cooldown", function() {
+            var _p = gmsa_profile_create("t");
+            gmsa_profile_add_input(_p, gmsa_input_push("hp"));
+            var _a = gmsa_profile_add_action(_p, "eat", { cooldown : 1000 });
+            gmsa_action_add_consideration(_a, "hp", gmsa_curve_make(gmsa_curve.LINEAR));
+            gmsa_profile_add_action(_p, "idle", { weight : 0.1 });
+            var _ag = gmsa_agent_create(gmsa_profile_build(_p));
+            gmsa_agent_set_input(_ag, "hp", 1);
+            gmsa_agent_set_current(_ag, "idle"); // the game reports what the agent does
+            var _d = gmsa_agent_think(_ag, 0);
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "eat", "chosen");
+            gmsa_test_assert_equal(_ag.cooldowns[0], 0, "not acted on: no cooldown");
+            _d = gmsa_agent_think(_ag, 500);
+            gmsa_test_assert_equal(gmsa_decision_get_chosen(_d).action.name, "eat", "still on offer");
+            gmsa_agent_set_current_option(_ag, gmsa_decision_get_chosen(_d));
+            gmsa_test_assert_equal(_ag.cooldowns[0], 1500, "acting on it starts the cooldown, from the think that chose it");
         });
 
         gmsa_test_case("cooling down, only the option being done stays on offer", function() {

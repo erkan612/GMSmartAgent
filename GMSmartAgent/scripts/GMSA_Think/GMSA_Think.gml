@@ -78,7 +78,7 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
         }
         var _picked = _options[_chosen].action;
         var _going_on = (_current != undefined && _current.action == _picked.index && _current.target == _options[_chosen].target);
-        if (_picked.cooldown > 0 && !_going_on) _agent.cooldowns[_picked.index] = _now + _picked.cooldown; // a new choice starts it, carrying on doesn't
+        if (_picked.cooldown > 0 && !_going_on && !_agent.__acts) _agent.cooldowns[_picked.index] = _now + _picked.cooldown;
     }
 
     _decision.chooser = gmsa_chooser.AGENT;

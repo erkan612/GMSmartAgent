@@ -358,6 +358,32 @@ function test_kit() {
             gmsa_test_assert_throws(function() { gmsa_kit_profile("kit test bad swing 2", { actions : { a : { interruptible : "no", step : function() { return true; } } } }); }, "not true or false");
         });
 		
+        gmsa_test_case("an action that can't be interrupted doesn't think, so nothing else is spent", function() {
+            gmsa_kit_profile_forget("kit test busy nap");
+            var _p = gmsa_kit_profile("kit test busy nap", {
+                inputs  : { tired : gmsa_kit_input_var("tired") },
+                actions : {
+                    nap : {
+                        interruptible : false,
+                        consider : { tired : gmsa_kit_curve_more() },
+                        start    : function(_o) { _o.left = 30; },
+                        step     : function(_o) { _o.left--; return _o.left <= 0; },
+                    },
+                    taunt : { weight : 0.5, cooldown : 5000000 },
+                },
+            });
+            var _owner = { tired : 1, left : 0 };
+            var _a = gmsa_kit_agent_create(_p, _owner, { think_every : 1 });
+            gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "nap", "napping");
+            _owner.tired = 0.1; // the taunt would win now
+            var _last = _a.last_think;
+            repeat (10) gmsa_kit_agent_update(_a);
+            gmsa_test_assert_equal(gmsa_kit_agent_doing(_a), "nap", "still napping");
+            gmsa_test_assert_equal(_a.last_think, _last, "no thinks while napping");
+            gmsa_test_assert_equal(_a.cooldowns[gmsa_profile_action_index(_a.profile, "taunt")], 0, "the taunt was never spent");
+        });
+		
         gmsa_test_case("think_every can change", function() {
             gmsa_kit_profile_forget("kit test every");
             var _p = gmsa_kit_profile("kit test every", { actions : { idle : {} } });

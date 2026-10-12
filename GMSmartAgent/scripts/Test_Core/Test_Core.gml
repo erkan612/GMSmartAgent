@@ -197,6 +197,7 @@ function gmsa_tests_core() {
             var _ag = gmsa_agent_create(_near);
             gmsa_agent_set_input(_ag, "hp", 40);
             gmsa_agent_set_input(_ag, "rage", 1);
+            gmsa_agent_set_current(_ag, "attack");
             _ag.cooldowns[0] = 5000;                  // attack ready again at 5000
             gmsa_agent_set_current(_ag, "attack");
             gmsa_agent_set_profile(_ag, _far);

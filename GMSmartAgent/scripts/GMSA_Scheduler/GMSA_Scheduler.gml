@@ -186,7 +186,7 @@ function __gmsa_scheduler_run_agents(_scheduler, _tier, _cap, _final) { // the t
     while (_k < _n) {
         if (_tier.cursor >= _n) _tier.cursor = 0;
         var _agent = _agents[_tier.cursor];
-        var _due = _agent.__wake || (_agent.last_think == undefined) || (_now - _agent.last_think >= _agent.interval);
+        var _due = !_agent.__busy && (_agent.__wake || (_agent.last_think == undefined) || (_now - _agent.last_think >= _agent.interval));
         if (!_due) {
             _tier.cursor++;
             _k++;
