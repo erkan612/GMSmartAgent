@@ -85,8 +85,15 @@ function __gmsa_learn_ngram_observe(_sample) {
     var _N = (__K + 1) * (__R + 1);
     for (var _i = 0; _i < _N; _i++) {
         var _ctx = __gmsa_learn_ngram_get(self, __lkey[_i]);
+        if (_outcomes && _ctx[$ "o"] == undefined) { // how many outcomes each action had, each counted once; a context from an older save starts from its weighted counts
+            _ctx.o = [];
+            array_copy(_ctx.o, 0, _ctx.c, 0, array_length(_ctx.c));
+        }
         for (var _j = 0; _j < array_length(_ctx.c); _j++) _ctx.c[_j] *= decay;
         for (var _j = 0; _j < array_length(_ctx.r); _j++) _ctx.r[_j] *= decay;
+        if (_outcomes) {
+            for (var _j = 0; _j < array_length(_ctx.o); _j++) _ctx.o[_j] *= decay;
+        }
         _ctx.n *= decay;
         while (array_length(_ctx.c) <= _a) array_push(_ctx.c, 0);
         _ctx.c[_a] += _sample.weight;
@@ -94,6 +101,8 @@ function __gmsa_learn_ngram_observe(_sample) {
         if (_outcomes) {
             while (array_length(_ctx.r) <= _a) array_push(_ctx.r, 0);
             _ctx.r[_a] += _sample.weight * _sample.reward;
+            while (array_length(_ctx.o) <= _a) array_push(_ctx.o, 0);
+            _ctx.o[_a] += _sample.credit;
         }
         _ctx.last = data.clock;
     }
@@ -169,7 +178,9 @@ function __gmsa_learn_ngram_explain(_sample, _index) {
     var _c = (_a < array_length(_ctx.c)) ? _ctx.c[_a] : 0;
     if (_outcomes) {
         if (_c <= 0) return [_where + ": " + actions[_a] + " not tried here yet"];
-        return [_where + ": " + actions[_a] + " averages " + __gmsa_learn_signed(_ctx.r[_a] / _c) + " from " + string_format(_c, 1, 1) + " outcomes"];
+        var _o = _ctx[$ "o"]; // an older save without it shows the weighted count
+        var _n = (_o != undefined && _a < array_length(_o)) ? _o[_a] : _c;
+        return [_where + ": " + actions[_a] + " averages " + __gmsa_learn_signed(_ctx.r[_a] / _c) + " from " + string_format(_n, 1, 1) + " outcomes"];
     }
     // does the whole prediction favour what this context favours?
     var _P = __lp[_N - 1];

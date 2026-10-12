@@ -195,22 +195,28 @@ function test_learn_outcome() {
             }
         });
 		
-        gmsa_test_case("Count explains how many outcomes it learned from, not their weight", function() {
-            var _m = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
-            var _agent = __test_outcome_agent();
-            gmsa_learn_track(_agent);
-            gmsa_agent_set_input(_agent, "x1", 0.3);
-            gmsa_agent_set_input(_agent, "x2", 0.7);
-            var _o = gmsa_decision_get_chosen(gmsa_agent_think(_agent, 0, gmsa_rng_create(4)));
-            gmsa_agent_set_current_option(_agent, _o);
-            var _ticket = gmsa_learn_remember(_agent);
-            _ticket.probability = 0.05;   // rarely picked: each outcome weighs 10 for the estimate
-            repeat (3) gmsa_learn_outcome(_m, _ticket, 1);
-            var _e = gmsa_agent_evaluate(_agent, 0);
-            var _i = 0;
-            while (_e.options[_i].action != _o.action) _i++;
-            var _line = gmsa_learn_explain(_m, _e, _i)[0];
-            gmsa_test_assert_true(string_pos("from 3.0 outcomes", _line) > 0, _line);
+        gmsa_test_case("explain says how many outcomes, not their weight", function() {
+            var _makers = [
+                function() { return gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES }); },
+                function() { return gmsa_learn_ngram_create({ learns : gmsa_learn_target.OUTCOMES }); },
+            ];
+            for (var _k = 0; _k < array_length(_makers); _k++) {
+                var _m = _makers[_k]();
+                var _agent = __test_outcome_agent();
+                gmsa_learn_track(_agent);
+                gmsa_agent_set_input(_agent, "x1", 0.3);
+                gmsa_agent_set_input(_agent, "x2", 0.7);
+                var _o = gmsa_decision_get_chosen(gmsa_agent_think(_agent, 0, gmsa_rng_create(4)));
+                gmsa_agent_set_current_option(_agent, _o);
+                var _ticket = gmsa_learn_remember(_agent);
+                _ticket.probability = 0.05;   // rarely picked: each outcome weighs 10 for the estimate
+                repeat (3) gmsa_learn_outcome(_m, _ticket, 1);
+                var _e = gmsa_agent_evaluate(_agent, 0);
+                var _i = 0;
+                while (_e.options[_i].action != _o.action) _i++;
+                var _line = gmsa_learn_explain(_m, _e, _i)[0];
+                gmsa_test_assert_true(string_pos("from 3.0 outcomes", _line) > 0, _m.tier_name + ": " + _line);
+            }
         });
     });
 }
