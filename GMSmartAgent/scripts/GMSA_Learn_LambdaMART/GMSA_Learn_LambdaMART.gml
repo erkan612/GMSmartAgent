@@ -23,6 +23,7 @@ function gmsa_learn_lambdamart_create(_params = {}) {
         confidence_k : __gmsa_param(_params, "confidence_k", 40),
         learns       : __gmsa_param(_params, "learns", gmsa_learn_target.CHOICES),
         temperature  : __gmsa_param(_params, "temperature", 0.1),
+        clock        : __gmsa_param(_params, "clock", get_timer),
     });
     _model.lambdamart = {
         trees : _trees, depth : _depth, learn_rate : _rate, reg : _reg,
@@ -154,7 +155,7 @@ function __gmsa_learn_lambdamart_load(_data) {
 }
 
 function __gmsa_learn_lambdamart_train(_budget) {
-    var _limit = (_budget == undefined) ? infinity : get_timer() + _budget;
+    var _limit = (_budget == undefined) ? infinity : clock() + _budget;
     if (__job == undefined) {
         __job = __gmsa_learn_lambdamart_job(self);
         if (__job == undefined) return true; // nothing to learn from
@@ -264,7 +265,7 @@ function __gmsa_learn_lambdamart_work(_model, _job, _limit) {
                 while (_job.cursor < _job.list_count) {
                     __gmsa_learn_lambdamart_rows(_model, _job, _job.cursor);
                     _job.cursor += 1;
-                    if (get_timer() >= _limit) return false;
+                    if (_model.clock() >= _limit) return false;
                 }
                 _job.phase = __gmsa_lambdamart_phase.CUTS;
                 _job.cursor = 0;
@@ -274,7 +275,7 @@ function __gmsa_learn_lambdamart_work(_model, _job, _limit) {
                 while (_job.cursor < _job.inputs) {
                     __gmsa_learn_lambdamart_cuts(_model, _job, _job.cursor);
                     _job.cursor += 1;
-                    if (get_timer() >= _limit) return false;
+                    if (_model.clock() >= _limit) return false;
                 }
                 _job.phase = __gmsa_lambdamart_phase.BINS;
                 _job.cursor = 0;
@@ -284,7 +285,7 @@ function __gmsa_learn_lambdamart_work(_model, _job, _limit) {
                 while (_job.cursor < _job.rows) {
                     __gmsa_learn_lambdamart_bin_row(_job, _job.cursor);
                     _job.cursor += 1;
-                    if (get_timer() >= _limit) return false;
+                    if (_model.clock() >= _limit) return false;
                 }
                 _job.phase = __gmsa_lambdamart_phase.LAMBDAS;
                 _job.cursor = 0;
@@ -294,7 +295,7 @@ function __gmsa_learn_lambdamart_work(_model, _job, _limit) {
                 while (_job.cursor < _job.list_count) {
                     __gmsa_learn_lambdamart_lambdas(_job, _job.cursor);
                     _job.cursor += 1;
-                    if (get_timer() >= _limit) return false;
+                    if (_model.clock() >= _limit) return false;
                 }
                 __gmsa_learn_lambdamart_level_begin(_job, 0);
                 break;
@@ -303,7 +304,7 @@ function __gmsa_learn_lambdamart_work(_model, _job, _limit) {
                 while (_job.cursor < power(2, _job.level)) {
                     __gmsa_learn_lambdamart_clear_node(_job, _job.cursor);
                     _job.cursor += 1;
-                    if (get_timer() >= _limit) return false;
+                    if (_model.clock() >= _limit) return false;
                 }
                 _job.phase = __gmsa_lambdamart_phase.HIST;
                 _job.cursor = 0;
@@ -313,7 +314,7 @@ function __gmsa_learn_lambdamart_work(_model, _job, _limit) {
                 while (_job.cursor < _job.rows) {
                     __gmsa_learn_lambdamart_hist_row(_model, _job, _job.cursor);
                     _job.cursor += 1;
-                    if (get_timer() >= _limit) return false;
+                    if (_model.clock() >= _limit) return false;
                 }
                 _job.phase = __gmsa_lambdamart_phase.SPLIT;
                 _job.cursor = 0;
@@ -323,7 +324,7 @@ function __gmsa_learn_lambdamart_work(_model, _job, _limit) {
                 while (_job.cursor < power(2, _job.level)) {
                     if (__gmsa_learn_lambdamart_split_node(_model, _job, _job.cursor)) _job.any = true;
                     _job.cursor += 1;
-                    if (get_timer() >= _limit) return false;
+                    if (_model.clock() >= _limit) return false;
                 }
                 if (_job.any && _job.level + 1 < _lm.depth) {
                     __gmsa_learn_lambdamart_level_begin(_job, _job.level + 1);
@@ -339,7 +340,7 @@ function __gmsa_learn_lambdamart_work(_model, _job, _limit) {
                     var _nd = __gmsa_learn_lambdamart_route(_job, _job.cursor);
                     _job.score[_job.cursor] += _job.value[_base + _nd];
                     _job.cursor += 1;
-                    if (get_timer() >= _limit) return false;
+                    if (_model.clock() >= _limit) return false;
                 }
                 _job.tree += 1;
                 _job.cursor = 0;

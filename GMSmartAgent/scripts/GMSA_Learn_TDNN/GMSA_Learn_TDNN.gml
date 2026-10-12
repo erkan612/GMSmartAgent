@@ -32,6 +32,7 @@ function gmsa_learn_tdnn_create(_params = {}) {
         confidence_k : __gmsa_param(_params, "confidence_k", 50),
         learns       : __gmsa_param(_params, "learns", gmsa_learn_target.CHOICES),
         temperature  : __gmsa_param(_params, "temperature", 0.1),
+        clock        : __gmsa_param(_params, "clock", get_timer),
     });
     var _layers = [];
     for (var _i = 0; _i < array_length(_hidden); _i++) array_push(_layers, _hidden[_i]);
@@ -250,12 +251,12 @@ function __gmsa_learn_tdnn_load(_data) {
 function __gmsa_learn_tdnn_replay(_budget) {
     var _n = array_length(__queue);
     if (_n == 0) return true;
-    var _limit = (_budget == undefined) ? infinity : get_timer() + _budget;
+    var _limit = (_budget == undefined) ? infinity : clock() + _budget;
     var _done = 0;
     while (_done < _n) {
         __gmsa_learn_tdnn_update(self, __mem[__queue[_done]]);
         _done += 1;
-        if (get_timer() >= _limit) break;
+        if (clock() >= _limit) break;
     }
     array_delete(__queue, 0, _done);
     return (array_length(__queue) == 0);

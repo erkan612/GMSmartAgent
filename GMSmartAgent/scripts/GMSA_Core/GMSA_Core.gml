@@ -320,6 +320,10 @@ function __gmsa_default_rng() {
     return _rng;
 }
 
+function gmsa_rng_default() {
+    return __gmsa_default_rng();
+}
+
 // Helpers
 function __gmsa_param(_params, _name, _default) {
     if (is_struct(_params) && variable_struct_exists(_params, _name)) return _params[$ _name];

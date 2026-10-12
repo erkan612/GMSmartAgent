@@ -115,6 +115,17 @@ function test_style() {
             gmsa_test_assert_true(_job.done && _steps > 1, "steps " + string(_steps));
             gmsa_test_assert_equal(_job.found, 3);
         });
+		
+        gmsa_test_case("a fit timed by a counting clock takes the same slices every time", function() {
+            var _calls = [0, 0];
+            for (var _r = 0; _r < 2; _r++) {
+                var _c = gmsa_test_clock(0, 100);
+                var _job = gmsa_style_fit(__test_style_set(), __test_style_sessions(gmsa_rng_create(14), 150, 3), { max_styles : 5, restarts : 3, clock : _c.fn });
+                while (!gmsa_style_fit_work(_job, 300) && _calls[_r] < 100000) _calls[_r] += 1;
+            }
+            gmsa_test_assert_true(_calls[0] > 1, "several slices: " + string(_calls[0]));
+            gmsa_test_assert_equal(_calls[0], _calls[1], "the same slices");
+        });
 
         gmsa_test_case("fitting again keeps the names, a new style comes unnamed", function() {
             var _set = __test_style_fitted();

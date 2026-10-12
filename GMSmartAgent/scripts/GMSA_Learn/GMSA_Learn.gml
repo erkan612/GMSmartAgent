@@ -13,6 +13,8 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
     if (_learns != gmsa_learn_target.CHOICES && _learns != gmsa_learn_target.OUTCOMES) throw "GMSA: learn learns must be a gmsa_learn_target";
     var _temperature = __gmsa_param(_params, "temperature", 0.1);
     if (!__gmsa_net_above_zero(_temperature)) throw "GMSA: learn temperature must be above 0";
+    var _clock = __gmsa_param(_params, "clock", get_timer);
+    if (!is_callable(_clock)) throw "GMSA: learn clock must be callable";
     var _model = {
         tier          : _tier,
         tier_name     : _tier_name,
@@ -28,6 +30,7 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
         decay         : power(0.5, 1 / _half),
         confidence_k  : _k,
         frozen        : false,
+        clock         : _clock,        // times budgeted training, get_timer unless a repeatable run gives its own
         data          : {},
         observe       : undefined,     // function(sample)
         predict       : undefined,     // function(sample, out), fills out.p and out.confidence

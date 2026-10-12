@@ -79,6 +79,8 @@ function gmsa_style_fit(_set, _sessions, _params = {}) {
     var _sample = __gmsa_param(_params, "sample", 200);
     if (!__gmsa_style_whole(_sample, 1)) throw "GMSA: style fit sample must be a whole number of 1 or more";
     var _seed = __gmsa_param(_params, "seed", 1);
+    var _clock = __gmsa_param(_params, "clock", get_timer);
+    if (!is_callable(_clock)) throw "GMSA: style fit clock must be callable";
     var _n = array_length(_sessions);
     var _d = array_length(_set.measures);
     var _kmin = (_fixed != undefined) ? _fixed : 1;
@@ -106,7 +108,7 @@ function gmsa_style_fit(_set, _sessions, _params = {}) {
     var _job = {
         __gmsa_style_job : true, set : _set, n : _n, d : _d, x : _x, centre : _centre, scale : _scale,
         kmin : _kmin, kmax : _kmax, restarts : _restarts, iterations : _iterations, keep : _keep, patience : _patience, worse : 0, sample : _sample, cx : _x, cn : _n, polish : false,
-        rng : gmsa_rng_create(_seed), done : false,
+        rng : gmsa_rng_create(_seed), clock : _clock, done : false,
         k : _kmin, r : 0, phase : 0, cursor : 0, iter : 0, prev : -infinity,
         seeds : [], dmin : array_create(_n, infinity), newest : 0, total : 0, pick : 0,
         w : [], mu : [], va : [], lp : [], norm : [], iv : [],
@@ -127,9 +129,9 @@ function gmsa_style_fit(_set, _sessions, _params = {}) {
 function gmsa_style_fit_work(_job, _budget = undefined) {
     if (!is_struct(_job) || !variable_struct_exists(_job, "__gmsa_style_job")) throw "GMSA: expected a job from gmsa_style_fit";
     if (_job.done) return true;
-    var _deadline = (_budget == undefined) ? infinity : get_timer() + _budget;
+    var _deadline = (_budget == undefined) ? infinity : _job.clock() + _budget;
     var _first = true;
-    while (!_job.done && (_first || get_timer() < _deadline)) {
+    while (!_job.done && (_first || _job.clock() < _deadline)) {
         _first = false;
         __gmsa_style_fit_chunk(_job);
     }

@@ -63,6 +63,16 @@ function test_learn_schedule() {
             var _custom = gmsa_learn_custom({ observe : function(_x) {}, predict : function(_x, _o) {}, train : function(_b) { return true; } });
             gmsa_test_assert_throws(method({ c : _custom, s : _s }, function() { gmsa_learn_schedule(c, s); }), "train without waiting");
         });
+		
+        gmsa_test_case("budgeted training timed by a counting clock does the same work every time", function() {
+            var _c = gmsa_test_clock(0, 100);
+            var _m = gmsa_learn_tdnn_create({ clock : _c.fn });
+            var _ag = __test_ngram_shopper();
+            for (var _i = 0; _i < 20; _i++) __test_sched_buy(_m, _ag, _i mod 3);
+            var _before = array_length(_m.__queue);
+            gmsa_learn_train(_m, 1000);
+            gmsa_test_assert_equal(_before - array_length(_m.__queue), 10, "1000 us at 100 per reading: ten replays");
+        });
     });
 }
 

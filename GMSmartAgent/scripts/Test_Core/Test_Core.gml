@@ -52,6 +52,20 @@ function gmsa_tests_core() {
             for (var _i = 0; _i < 100; _i++) gmsa_rng_next(_r);
             gmsa_test_assert_equal(random(1), _expected);
         });
+		
+        gmsa_test_case("the default generator can be reseeded", function() {
+            var _ag = gmsa_agent_create(__gmsa_tests_simple_profile(["a", "b", "c"], { select : gmsa_select.TOP_N_WEIGHTED }));
+            gmsa_agent_set_input(_ag, "a", 0.5);
+            gmsa_agent_set_input(_ag, "b", 0.5);
+            gmsa_agent_set_input(_ag, "c", 0.5);
+            var _runs = ["", ""];
+            for (var _r = 0; _r < 2; _r++) {
+                gmsa_rng_seed(gmsa_rng_default(), 42);
+                repeat (20) _runs[_r] += gmsa_decision_get_chosen(gmsa_agent_think(_ag, 0)).action.name;
+            }
+            gmsa_test_assert_equal(_runs[0], _runs[1], "the same choices after the same seed");
+            gmsa_rng_seed(gmsa_rng_default(), 1); // back to how the game starts
+        });
 
         gmsa_test_case("input normalize", function() {
             var _in = gmsa_input_push("hp", 0, 100);
