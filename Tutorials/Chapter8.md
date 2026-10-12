@@ -84,7 +84,7 @@ That last one isn't optional. A scheduler keeps every agent it's given. Without 
 
 ## Interval: how often at most
 
-The `interval` is the shortest time, in microseconds, between two thinks of the same agent. `100000` is a tenth of a second, so this goblin thinks at most ten times a second. An agent is **due** when it has never thought, or when its interval has passed since its last think. The scheduler only ever gives turns to due agents.
+The `interval` is the shortest time, in microseconds, between two thinks of the same agent. `100000` is a tenth of a second, so this goblin thinks at most ten times a second. An agent is **due** when it has never thought, when its interval has passed since its last think, or when it was woken (below). The scheduler only ever gives turns to due agents.
 
 The interval and the budget work together:
 
@@ -97,7 +97,15 @@ An interval of 0 means "as often as the budget allows", which is fine for a hand
 
 The new `finish()` calls `gmsa_agent_think` directly. That think happens right there, outside the scheduler, and doesn't count against the budget. It's the right call for a goblin that's just picked up a coin: waiting for its next turn would leave it standing still for a moment, and players notice idle characters.
 
-It's also a door to undoing the whole point of the scheduler. If every goblin thinks outside the budget whenever anything happens, the budget stops meaning anything. Keep direct thinks for moments that really need an instant reaction, like finishing an action or being hit, and let everything else wait its turn.
+It's also a door to undoing the whole point of the scheduler. If every goblin thinks outside the budget whenever anything happens, the budget stops meaning anything.
+
+When a reaction can wait a step, there's a middle way:
+
+```gml
+gmsa_agent_wake(agent);   // due at the next step, whatever its interval
+```
+
+The goblin thinks at the scheduler's next step, in its turn, inside the budget. If the budget runs out first, it stays due on the steps after. Keep direct thinks for moments that really need an instant reaction, like finishing an action or being hit, wake goblins for things that can wait a frame, like an alarm across the room, and let everything else wait its turn.
 
 ---
 
@@ -274,7 +282,7 @@ With the same seed and the same inputs, agents make the same decisions, every ru
 - A think costs roughly 8 microseconds per option on the VM and 2 on YYC. Fine for one agent; a crowd adds up, and clumps of agents thinking together cause spikes.
 - The **scheduler** gives all agents one **budget** per step. Agents take turns; when the budget is spent, the rest wait for the next step. More agents means slower re-thinking, never a slower game.
 - Create it in a controller, step it once per step, add agents with an **interval**, and remove them in Clean Up. The acting code from Chapter 6 doesn't change.
-- An agent is **due** when its interval has passed. Direct thinks outside the scheduler are for instant reactions only.
+- An agent is **due** when its interval has passed, or when it's woken with `gmsa_agent_wake`. Direct thinks outside the scheduler are for instant reactions only.
 - Each step reads the clock once, runs tiers highest first, each leaving a share for the tiers below, takes turns within a tier where the last step stopped, always makes at least one think, and runs callbacks after the timed part.
 - `stats` shows thinks, time and whether the budget filled up. The re-think figure, agents divided by thinks per step, is the reaction time to watch.
 - **Priority tiers** let important agents think first. A tier leaves a share of the budget for the tiers below it, 20% by default, so lower tiers slow down but never freeze; keep the top tier small all the same.

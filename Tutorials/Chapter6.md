@@ -274,9 +274,9 @@ One more tool belongs with acting. Some actions shouldn't be repeated straight a
 var _taunt = gmsa_profile_add_action(_p, "taunt", { cooldown : 3000000 });  // 3 seconds
 ```
 
-While an action is cooling down, it produces no options at all, as if it had no targets. When the cooldown ends, it's scored normally again. Cooldowns are counted from the moment the action is chosen, so a taunt that's chosen, played and finished can't be chosen again for three seconds from when it started.
+While an action is cooling down, it can't be chosen anew: it produces no options, as if it had no targets. When the cooldown ends, it's scored normally again. Cooldowns are counted from the moment the action is chosen, so a taunt that's chosen, played and finished can't be chosen again for three seconds from when it started.
 
-That has a consequence worth knowing before it surprises you: an action on cooldown can't be chosen **to continue it** either. If the taunt takes a second to play and the goblin thinks halfway through, the taunt isn't among the options any more, something else wins, and the taunt is cut short. So cooldowns suit actions that happen at once, like a shout or a single attack, or actions during which the agent doesn't think, as in the stunned example above: skip the think timer until it's done.
+The one exception is what the goblin is doing right now. If the taunt takes a second to play and the goblin thinks halfway through, the taunt is still its current option, so it stays on offer, with its commitment, and the goblin carries on. Carrying on doesn't restart the cooldown. That's one more reason `finish()` clears the current option: once the taunt is over, it really is off the table until its three seconds are up.
 
 ---
 

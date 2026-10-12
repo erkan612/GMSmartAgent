@@ -229,7 +229,7 @@ gmsa_profile_add_action(_p, "idle", { weight : 0.02 });
 
 These sit below wander in the ladder, so they're for a character that doesn't wander, or for when wandering is switched off. When nothing else is going on, the goblin scratches. Scratching goes on cooldown, so next time it looks around instead, then yawns, and while all three cool down it simply idles until the first one is ready again. The weights only decide the order they're tried in; the cooldowns make them take turns.
 
-Remember Chapter 6's catch: an action on cooldown can't be chosen to continue it either. So make each idle action short, play its animation, and call `finish()` when the animation ends, and skip thinking while it plays, the way the stunned goblin did. Then each little idle plays out in full, and the next think picks the next one.
+Remember from Chapter 6 that a cooldown never cuts its own action short: while the goblin scratches, scratching stays on offer. So give each idle action an end: play its animation, and call `finish()` when the animation ends. Then each little idle plays out in full, its cooldown keeps it from coming straight back, and the next think picks the next one.
 
 ---
 
