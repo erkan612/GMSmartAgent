@@ -184,9 +184,13 @@ function gmsa_profile_build(_profile) {
         _action.index  = _a;
         _action.locked = true;
         var _cons = _action.considerations;
+        var _counted = 0;
         for (var _c = 0; _c < array_length(_cons); _c++) {
             _cons[_c].input_index = _input_index[$ _cons[_c].input];
+            _cons[_c].gate = __gmsa_curve_is_gate(_cons[_c].curve);
+            if (!_cons[_c].gate) _counted++;
         }
+        _action.__counted = _counted; // the considerations compensation counts: gates don't
     }
     _profile.input_index  = _input_index;
     _profile.action_index = _action_index;

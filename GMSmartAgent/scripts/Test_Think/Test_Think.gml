@@ -97,6 +97,32 @@ function gmsa_tests_think() {
             // raw 0.25, mod 0.5, 0.25 + 0.75 * 0.5 * 0.25
             gmsa_test_assert_near(_d.options[0].score, 0.34375, GMSA_TEST_EPS);
         });
+		
+        gmsa_test_case("an open gate doesn't lift a score, a closed one vetoes, a soft step counts", function() {
+            var _p = gmsa_profile_create("t");
+            gmsa_profile_add_input(_p, gmsa_input_push("x"));
+            gmsa_profile_add_input(_p, gmsa_input_push("ok"));
+            var _plain = gmsa_profile_add_action(_p, "plain");
+            gmsa_action_add_consideration(_plain, "x", gmsa_curve_make(gmsa_curve.LINEAR));
+            var _gated = gmsa_profile_add_action(_p, "gated");
+            gmsa_action_add_consideration(_gated, "x", gmsa_curve_make(gmsa_curve.LINEAR));
+            gmsa_action_add_consideration(_gated, "ok", gmsa_curve_make(gmsa_curve.STEP));
+            var _soft = gmsa_profile_add_action(_p, "soft");
+            gmsa_action_add_consideration(_soft, "x", gmsa_curve_make(gmsa_curve.LINEAR));
+            gmsa_action_add_consideration(_soft, "ok", gmsa_curve_make(gmsa_curve.STEP, { m : 0.5, b : 0.5 }));
+            var _ag = gmsa_agent_create(gmsa_profile_build(_p));
+            gmsa_agent_set_input(_ag, "x", 0.6);
+            gmsa_agent_set_input(_ag, "ok", 1);
+            var _s = {};
+            var _d = gmsa_agent_evaluate(_ag, 0);
+            for (var _i = 0; _i < array_length(_d.options); _i++) _s[$ _d.options[_i].action.name] = _d.options[_i].score;
+            gmsa_test_assert_near(_s.gated, _s.plain, GMSA_TEST_EPS, "an open gate leaves the score as it was");
+            gmsa_test_assert_near(_s.soft, 0.72, GMSA_TEST_EPS, "a soft step counts: 0.6 + 0.4 * 0.5 * 0.6");
+            gmsa_agent_set_input(_ag, "ok", 0);
+            _d = gmsa_agent_evaluate(_ag, 0);
+            for (var _i = 0; _i < array_length(_d.options); _i++) _s[$ _d.options[_i].action.name] = _d.options[_i].score;
+            gmsa_test_assert_equal(_s.gated, 0, "a closed gate still vetoes");
+        });
 
         gmsa_test_case("weight multiplies", function() {
             var _p = gmsa_profile_create("t");

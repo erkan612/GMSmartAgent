@@ -65,6 +65,13 @@ function gmsa_curve_eval(_curve, _x) {
     return _curve.invert ? (1 - _y) : _y;
 }
 
+function __gmsa_curve_is_gate(_curve) { // a STEP that can only give 0 or 1 never shrinks a score, it only vetoes: a gate, which compensation doesn't count
+    if (_curve.type != gmsa_curve.STEP) return false;
+    var _low  = clamp(_curve.b, 0, 1);
+    var _high = clamp(_curve.m + _curve.b, 0, 1);
+    return (_low == 0 || _low == 1) && (_high == 0 || _high == 1);
+}
+
 //function __gmsa_param(_params, _name, _default) {
 //    if (is_struct(_params) && variable_struct_exists(_params, _name)) return _params[$ _name];
 //    return _default;

@@ -255,8 +255,9 @@ function __gmsa_score_option(_agent, _action, _target, _option, _full, _slot) {
         if (_score * 1000000000000 <= 0 && !_full) return 0;
     }
     if (_score * 1000000000000 <= 0) return 0;
-    if (_n > 1) {
-        var _mod = 1 - 1 / _n;
+    var _counted = _action.__counted;
+    if (_counted > 1) {
+        var _mod = 1 - 1 / _counted;
         _score += (1 - _score) * _mod * _score;
     }
     return _score * _action.weight;
