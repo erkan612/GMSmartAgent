@@ -44,6 +44,10 @@ function __gmsa_learn_count_observe(_sample) {
         __gmsa_learn_count_fade(self, _bucket); // a situation fades when it comes up again, so a rare one keeps what it learned
     }
     var _a = _sample.options[_sample.chosen].action;
+    if (learns == gmsa_learn_target.OUTCOMES && _bucket[$ "outcomes"] == undefined) { // how many outcomes each action had, each counted once; a bucket from an older save starts from its weighted counts, taken before this outcome is added
+        _bucket.outcomes = [];
+        array_copy(_bucket.outcomes, 0, _bucket.counts, 0, array_length(_bucket.counts));
+    }
     while (array_length(_bucket.counts) <= _a) array_push(_bucket.counts, 0);
     _bucket.counts[_a] += _sample.weight;
     _bucket.total += _sample.credit; // data counts once, the odds correction is for the estimate only
@@ -51,6 +55,8 @@ function __gmsa_learn_count_observe(_sample) {
         if (_bucket[$ "rewards"] == undefined) _bucket.rewards = [];
         while (array_length(_bucket.rewards) <= _a) array_push(_bucket.rewards, 0);
         _bucket.rewards[_a] += _sample.weight * _sample.reward;
+        while (array_length(_bucket.outcomes) <= _a) array_push(_bucket.outcomes, 0);
+        _bucket.outcomes[_a] += _sample.credit;
     }
 }
 
@@ -95,8 +101,10 @@ function __gmsa_learn_count_explain(_sample, _index) {
     if (learns == gmsa_learn_target.OUTCOMES) {
         var _w = (_a < array_length(_bucket.counts)) ? _bucket.counts[_a] : 0;
         if (_w <= 0) return [_where + ": " + actions[_a] + " not tried yet"];
+        var _outcomes = _bucket[$ "outcomes"]; // an older save without it shows the weighted count
+        var _n = (_outcomes != undefined && _a < array_length(_outcomes)) ? _outcomes[_a] : _w;
         return [_where + ": " + actions[_a] + " averages " + __gmsa_learn_signed(__gmsa_learn_count_value(self, _bucket, _a))
-            + " from " + string_format(_w, 1, 1) + " outcomes"];
+            + " from " + string_format(_n, 1, 1) + " outcomes"];
     }
 
     var _seen = {};
@@ -169,6 +177,10 @@ function __gmsa_learn_count_fade(_model, _bucket) { // one step of fading, each 
     var _rewards = _bucket[$ "rewards"];
     if (_rewards != undefined) {
         for (var _i = 0; _i < array_length(_rewards); _i++) _bucket.rewards[_i] *= _f;
+    }
+    var _outcomes = _bucket[$ "outcomes"];
+    if (_outcomes != undefined) {
+        for (var _i = 0; _i < array_length(_outcomes); _i++) _bucket.outcomes[_i] *= _f;
     }
     _bucket.total *= _f;
     _bucket.last = _model.data.clock;
