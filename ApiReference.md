@@ -368,7 +368,8 @@ Adds an action and returns it, so you can add considerations to it.
 - **Without `targets`**, the action produces one option with no target.
 - **With `targets`**, it produces one option per target. Returning `undefined` skips the action for this think. Returning an empty array produces no options.
 - **An action with no considerations** scores its weight. Use this for a baseline like `idle`.
-- **A cooldown never cuts its own action short.** It starts when the action is chosen anew. While it runs, the action is off the table, except the option the agent is doing (its current action and target, see [gmsa_agent_set_current_option](#gmsa_agent_set_current_option)), which stays on offer so the agent can carry on. Carrying on doesn't restart the cooldown, and the cooldown doesn't stop it. Clear the current option when the action ends, see [gmsa_agent_clear_current](#gmsa_agent_clear_current).
+- **A cooldown starts when the agent acts on the action.** Once your game reports what the agent is doing, with [gmsa_agent_set_current](#gmsa_agent_set_current) or [gmsa_agent_set_current_option](#gmsa_agent_set_current_option), a cooldown starts when an option of the action becomes current, counted from the think that chose it. A choice nothing acts on, one your code ignored or one a state your game forced pushed aside, starts nothing. An agent whose game never reports what it does starts the cooldown when the action is chosen.
+- **A cooldown never cuts its own action short.** While it runs, the action is off the table, except the option the agent is doing (its current action and target, see [gmsa_agent_set_current_option](#gmsa_agent_set_current_option)), which stays on offer so the agent can carry on. Carrying on doesn't restart the cooldown, and the cooldown doesn't stop it. Clear the current option when the action ends, see [gmsa_agent_clear_current](#gmsa_agent_clear_current).
 
 **Throws** if the profile is already built or `name` is empty.
 
@@ -470,6 +471,18 @@ Makes the agent due at its scheduler's next step, whatever its interval. For whe
 - Its next think clears the wake, whether the scheduler runs it or you call `gmsa_agent_think`.
 - Outside a scheduler, call `gmsa_agent_think` instead.
 
+### gmsa_agent_set_busy
+
+```gml
+gmsa_agent_set_busy(agent, [busy])
+```
+
+Marks the agent busy (`true`, the default) or free again. A busy agent isn't due on its scheduler, so during an action nothing may interrupt, such as a wind-up, a cast or a cutscene, it doesn't think, and no budget goes on decisions that would be ignored.
+
+- A wake on a busy agent waits: it thinks at the first step after it's free.
+- `gmsa_agent_think` still runs when you call it yourself.
+- Kit sets it while an action with `interruptible : false` runs.
+
 ### gmsa_agent_set_profile
 
 ```gml
@@ -501,20 +514,22 @@ Sets a push input's raw value. `input` is a name or an index.
 ### gmsa_agent_set_current
 
 ```gml
-gmsa_agent_set_current(agent, action, [target])
+gmsa_agent_set_current(agent, action, [target], [now])
 ```
 
 Tells GMSmartAgent what the agent is currently doing, so the matching option gets the profile's commitment bonus. `action` is a name or an index. Call it when the agent starts acting on a decision.
+
+Making a different action or target current also starts that action's cooldown, counted from `now`: by default the agent's last think, when the choice was made, or the current time if it has never thought. Setting the option it's already doing changes nothing, see [gmsa_profile_add_action](#gmsa_profile_add_action).
 
 **Throws** when the action is unknown.
 
 ### gmsa_agent_set_current_option
 
 ```gml
-gmsa_agent_set_current_option(agent, option)
+gmsa_agent_set_current_option(agent, option, [now])
 ```
 
-Same as `gmsa_agent_set_current`, but takes an option straight from a decision. This is the usual way to call it:
+Same as `gmsa_agent_set_current`, cooldown included, but takes an option straight from a decision. This is the usual way to call it:
 
 ```gml
 gmsa_agent_set_current_option(agent, gmsa_decision_get_chosen(decision));
@@ -744,7 +759,7 @@ Runs due agents, and work turns, until the budget is spent, then fires queued `o
 
 - Tiers run highest priority first. Within a tier, agents take turns, and the next step continues where this one stopped.
 - **Each tier leaves a share for the tiers below it.** A tier with tiers below stops once it has used `1 - share` of what was left of the budget when its turn began, 80% by default. Whatever the lower tiers don't use goes back to the tiers that stopped, highest first. So lower tiers slow down when higher ones are busy, but never freeze while the budget allows. The guarantee shrinks with each level: with the default share, the second tier is sure of 20% of the budget, the third of 4%. With `share` 0, a higher tier can use the whole budget and lower tiers wait until it's done.
-- An agent is due when it has never thought, when it was woken with [gmsa_agent_wake](#gmsa_agent_wake), or when `interval` has passed since its last think.
+- An agent is due when it isn't busy ([gmsa_agent_set_busy](#gmsa_agent_set_busy)) and it has never thought, was woken with [gmsa_agent_wake](#gmsa_agent_wake), or `interval` has passed since its last think.
 - The clock is checked before every think and work turn except the first, so **every step does at least one** when an agent is due or work is waiting, even with a budget of 0. A step can overshoot the budget by at most one think or one work turn's overrun.
 - Every think in a step uses the same time, read once at the start.
 - `on_decide` callbacks run after the timed loop, so your code never eats into the budget, and a callback can safely remove agents.
@@ -1415,7 +1430,7 @@ Everything above learns from **choices**: the player picks, a model learns their
 
 **Use it for consequences you can't know while writing the profile:** a generated or shuffled world, rules the player changes, systems that interact in ways nobody predicted, or a specific player's play. If you know the rule ("wolves are dangerous"), write it as a consideration. That's instant, exact and free.
 
-**Inputs decide what a model can understand.** If the cause of a bad outcome is one of the decision's inputs, such as the distance to a wolf, the model learns the rule and recovers the moment the cause goes away. If the cause isn't an input, it can only learn "this option is bad" and unlearns it slowly. Give your models the causes.
+**Inputs decide what a model can understand.** If the cause of a bad outcome is one of the decision's inputs, such as the distance to a wolf, the model can learn the rule. Count, with the cause among its situation's inputs, learns each case on its own and is right again the moment the cause goes away. Linear learns one weighted sum for every case, so a cause that changes which action is best costs it some relearning each time it changes. If the cause isn't an input at all, a model can only learn "this option is bad", and unlearns it slowly. Give your models the causes.
 
 ### The workflow
 
@@ -1516,7 +1531,7 @@ Something good or bad just happened to a tracked agent, and you don't know which
 
 ### Fair learning and exploration
 
-- **Rarely chosen options count more when they are chosen:** each update is weighted by 1 over the probability the agent had of picking it, at most `GMSA_LEARN_ODDS_CLIP` (10). Without this, an option the agent seldom tries would be judged from too little data. The correction weighs the estimate only: for how much data a model has, and so for its confidence, every outcome counts once.
+- **Rarely chosen options count more when they are chosen:** each update is weighted by 1 over the probability the agent had of picking it, at most `GMSA_LEARN_ODDS_CLIP` (10). Each outcome of an option the agent seldom tries moves the estimate further, so it isn't judged from too little. In Count and the n-gram, whose estimate is an average per action, this mostly speeds how quickly that average leaves its starting point of 0. The correction weighs the estimate only: for how much data a model has, its confidence and the number of outcomes its explain line reports, every outcome counts once.
 - **Agents only learn about what they try.** With `TOP_N_WEIGHTED` selection, the variety among the top options is the exploration, and `top_n` is how adventurous the agent is. A `BEST` agent learns from what it does but never experiments.
 - **Options your scoring keeps out of the top N are never tried.** Learning stays under the designer, exploration included.
 - **Exploiting is partial by design.** The re-ranker never pushes an option below a share of your score, and weighted selection picks in proportion. So a learning agent keeps trying alternatives often. Raise `influence` or lower `top_n` for more exploitation.
@@ -3825,7 +3840,7 @@ An action:
 | `step` | function | | `function(owner, target, agent)`, every update while it runs. Returns how it's going, see [gmsa_kit_step](#step-results) |
 | `stop` | function | | `function(owner, target, agent)`, when it ends, however it ends |
 | `plan` | string | | Runs this task, goal or step of the agent's domain instead of a `step`, see [Plan actions](#plan-actions) |
-| `interruptible` | bool | true | false: once started, nothing better replaces it, see [Actions that can't be interrupted](#actions-that-cant-be-interrupted) |
+| `interruptible` | bool | true | false: once started, nothing better replaces it and the agent doesn't think until it ends, see [Actions that can't be interrupted](#actions-that-cant-be-interrupted) |
 
 ```gml
 var _p = gmsa_kit_profile("guard", {
@@ -3988,6 +4003,8 @@ A handler can call [gmsa_kit_agent_done](#gmsa_kit_agent_done) or [gmsa_kit_agen
 ### Actions that can't be interrupted
 
 An action with `interruptible : false`, once started, isn't replaced by a better option, and not by "nothing worth doing" either. It ends by its own `step` or plan, a target that's gone, or [gmsa_kit_agent_done](#gmsa_kit_agent_done), [gmsa_kit_agent_stop](#gmsa_kit_agent_stop) or [gmsa_kit_agent_destroy](#gmsa_kit_agent_destroy). For an attack swing, a reload, anything that must finish once begun. It needs a `step` or a `plan`, or it would never end.
+
+While it runs, the agent is busy ([gmsa_agent_set_busy](#gmsa_agent_set_busy)): it doesn't think, so nothing else is chosen, no other action's cooldown starts, and no budget is spent. [gmsa_kit_agent_decide](#gmsa_kit_agent_decide) waits until it ends; the agent decides again the moment it does.
 
 ### Around the cycle
 
@@ -4472,7 +4489,7 @@ What happens in one think, in order:
 7. **Rank** high to low. Equal scores keep their creation order.
 8. **Re-rank**, only when a model is attached and there are at least two options: each score is multiplied by `lerp(1, p / best p, influence * confidence)`, never below 0.0001 of itself, and the options are ranked again. The score before this step stays in `option.designer`.
 9. **Select**: `BEST` takes the top option. `TOP_N_WEIGHTED` picks among the top `top_n` with probability proportional to score.
-10. **Cooldown** of the chosen action starts, unless the chosen option is the one the agent is already doing.
+10. **Cooldown** of the chosen action starts, unless the chosen option is the one the agent is already doing. For an agent whose game reports what it does, the cooldown starts instead when the choice becomes current, see [gmsa_profile_add_action](#gmsa_profile_add_action).
 11. **Write** the decision and mark it fresh.
 
 Worked example, the heal option from the README at 20 hp with a heart 10 px away:
