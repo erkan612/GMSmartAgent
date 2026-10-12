@@ -82,6 +82,7 @@ function gmsa_agent_think(_agent, _now = get_timer(), _rng = undefined) {
     _decision.chosen  = _chosen;
     _decision.fresh   = true;
     _agent.last_think = _now;
+    _agent.__wake = false;
     return _decision;
 }
 

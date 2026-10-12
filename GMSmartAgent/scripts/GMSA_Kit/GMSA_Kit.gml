@@ -351,7 +351,7 @@ function gmsa_kit_agent_done(_agent, _failed = false) { // ends the current acti
 function gmsa_kit_agent_decide(_agent) { // thinks at the next update, whatever the timer says. With a scheduler, at its next step
     var _kit = __gmsa_kit_state(_agent);
     if (_kit.scheduler == undefined) _kit.timer = 0;
-    else _agent.last_think = undefined;
+    else gmsa_agent_wake(_agent);
 }
 
 function gmsa_kit_agent_set_think_every(_agent, _every) { // updates between thinks from now on, for a Kit agent without a scheduler (with one, use gmsa_agent_set_interval). A shorter wait takes effect now, a longer one from the next think
@@ -542,7 +542,7 @@ function __gmsa_kit_finish(_agent, _kit, _status) {
     __gmsa_kit_end(_agent, _kit);
     gmsa_agent_clear_current(_agent);
     if (_kit.scheduler != undefined) {
-        _agent.last_think = undefined;
+        gmsa_agent_wake(_agent);
         return;
     }
     gmsa_agent_think(_agent);

@@ -97,6 +97,40 @@ function gmsa_tests_scheduler() {
             gmsa_test_assert_throws(method({ a : _a }, function() { gmsa_agent_set_interval(a, "1"); }), "not a number");
             gmsa_test_assert_throws(function() { gmsa_agent_create(__gmsa_tests_idle_profile(), {}, { interval : -5 }); }, "checked at create too");
         });
+		
+        gmsa_test_case("a woken agent thinks at the next step, once", function() {
+            var _c = gmsa_test_clock();
+            var _s = gmsa_scheduler_create(1000, { clock : _c.fn });
+            var _a = __gmsa_tests_counted_agent(__gmsa_tests_idle_profile(), "A", [], { interval : 1000000 });
+            gmsa_scheduler_add(_s, _a);
+            gmsa_scheduler_step(_s);
+            _c.now += 100;
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 1, "not due on its own");
+            gmsa_agent_wake(_a);
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 2, "woken: thought at the next step");
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_a.owner.count, 2, "the think used the wake up");
+        });
+
+        gmsa_test_case("woken agents still respect the budget", function() {
+            var _c = gmsa_test_clock(0, 100);
+            var _s = gmsa_scheduler_create(0, { clock : _c.fn });   // a budget of 0: one think per step
+            var _p = __gmsa_tests_idle_profile();
+            var _agents = [];
+            repeat (10) {
+                var _a = __gmsa_tests_counted_agent(_p, "x", [], { interval : 1000000000 });
+                gmsa_agent_think(_a, 0);                            // thought once, so not due on its own
+                gmsa_scheduler_add(_s, _a);
+                array_push(_agents, _a);
+            }
+            for (var _i = 0; _i < 10; _i++) gmsa_agent_wake(_agents[_i]);
+            repeat (5) gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(__gmsa_tests_total(_agents), 5, "one per step");
+            repeat (6) gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(__gmsa_tests_total(_agents), 10, "each woken agent once, none twice");
+        });
 
         gmsa_test_case("budget stops the loop", function() {
             var _c = gmsa_test_clock(0, 100);

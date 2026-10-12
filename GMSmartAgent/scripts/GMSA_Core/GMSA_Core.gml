@@ -229,6 +229,7 @@ function gmsa_agent_create(_profile, _owner = undefined, _params = {}) {
         cooldowns  : array_create(array_length(_profile.actions), 0),  // time each action is ready again
         current    : undefined,
         last_think : undefined,
+        __wake     : false,      // due at the next scheduler step, set by gmsa_agent_wake, cleared by a think
         rng        : undefined,  // set by the scheduler, falls back to the default generator
         model      : undefined,  // reserved for Learn
         influence  : 0,          // used with the agent's own model
@@ -413,4 +414,8 @@ function __gmsa_agent_swap_profile(_agent, _profile) {
         if (_keep >= 0) _cur.action = _keep;
         else gmsa_agent_clear_current(_agent);
     }
+}
+
+function gmsa_agent_wake(_agent) { // due at the scheduler's next step whatever its interval; it thinks inside the budget when its turn in its tier comes. Outside a scheduler, call gmsa_agent_think yourself
+    _agent.__wake = true;
 }
