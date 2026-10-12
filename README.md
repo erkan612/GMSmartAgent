@@ -36,7 +36,7 @@ GMSmartAgent **only decides**. It never moves anything, never queries your room,
 ### Scale
 - **Frame budget** - A time budget per step in microseconds, so frame rate stays stable no matter how many agents you add
 - **Priority tiers** - Important agents think first, background agents keep a share of the budget
-- **Shared work** - Planning, model training and your own long jobs can take turns with the agents inside the same budget
+- **Shared work** - Planning, model training and your own long jobs share the agents' budget, with a guaranteed share that never starves the agents
 - **Per-agent intervals** - Slow-witted enemies think less often, sharp ones more often
 - **Shared profiles** - One profile, thousands of agents, only per-agent state is duplicated
 ### Observation

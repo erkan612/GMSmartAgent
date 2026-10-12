@@ -39,7 +39,7 @@ function __gmsa_learn_model_create(_tier, _tier_name, _params) {
         waiting       : undefined,     // function(), true when train has work, so gmsa_learn_schedule skips idle models
         __work        : undefined,     // the scheduler work from gmsa_learn_schedule
         __bindings    : [],
-        __sample      : { situation : [], options : [], chosen : -1, weight : 1, reward : undefined, agent : undefined, from : undefined },
+        __sample      : { situation : [], options : [], chosen : -1, weight : 1, credit : 1, reward : undefined, agent : undefined, from : undefined },
         __pool        : [],
         __out         : { p : [], confidence : 0, best : -1, sure : 0 },
         __predictions : [],            // cached predictions for gmsa_learn_input, one per observed agent
@@ -467,6 +467,7 @@ function __gmsa_learn_sample(_model, _decision, _chosen) {
     _sample.agent = _decision.agent;
     _sample.from = _decision;
     _sample.weight = 1;
+    _sample.credit = 1;
     _sample.reward = undefined;
     _sample.note = undefined;
     return _sample;

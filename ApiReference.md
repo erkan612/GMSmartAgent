@@ -670,11 +670,12 @@ Adds work that shares the scheduler's budget with the agents. `work` is any stru
 | --- | --- | --- | --- |
 | `priority` | real | 0 | Tier, shared with agents of the same priority |
 
-- Within a tier, agents and work take turns: each think is followed by one work turn while there's work to do, then whatever budget the agents leave goes to work, a turn at a time.
+- **Within a tier, the agents go first and the work gets a share,** the same share a tier leaves the tiers below it (`share`, 20% by default): the agents stop at 80% of what was left when the tier's turn began, the work gets the rest, and whatever the work doesn't use goes back to the agents. A tier with no due agents gives its whole turn to its work, and a job alone in a scheduler gets the whole budget.
+- **With `share` 0,** work in a busy tier waits until its agents are done, as lower tiers wait for higher ones.
 - Work items take turns among themselves, the next step continues where this one stopped.
 - When a pass finds no work item with anything to do, the tier skips work for the rest of the step. Idle work costs one call per item per step.
 - A tier without work runs exactly as before, so schedulers without work pay nothing for this.
-- Respect the budget you're given, the scheduler can't stop a call that runs long.
+- Respect the budget you're given, the scheduler can't stop a call that runs long. A turn is given everything left of its tier's share, so a job that uses all of it is normal: the share is what keeps the agents safe from it.
 
 **Throws** when `work` has no callable `work` method, is already in a scheduler, or `priority` isn't a number.
 

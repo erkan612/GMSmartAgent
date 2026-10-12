@@ -41,12 +41,12 @@ function __gmsa_learn_count_observe(_sample) {
         _bucket = { counts : [], rewards : [], total : 0, last : data.clock };
         data.buckets[$ _key] = _bucket;
     } else {
-        __gmsa_learn_count_age(self, _bucket);
+        __gmsa_learn_count_fade(self, _bucket); // a situation fades when it comes up again, so a rare one keeps what it learned
     }
     var _a = _sample.options[_sample.chosen].action;
     while (array_length(_bucket.counts) <= _a) array_push(_bucket.counts, 0);
     _bucket.counts[_a] += _sample.weight;
-    _bucket.total += _sample.weight;
+    _bucket.total += _sample.credit; // data counts once, the odds correction is for the estimate only
     if (learns == gmsa_learn_target.OUTCOMES) {
         if (_bucket[$ "rewards"] == undefined) _bucket.rewards = [];
         while (array_length(_bucket.rewards) <= _a) array_push(_bucket.rewards, 0);
@@ -58,7 +58,7 @@ function __gmsa_learn_count_predict(_sample, _out) {
     static _per = [];
     var _key = __gmsa_learn_count_key(self, _sample);
     var _bucket = data.buckets[$ _key];
-    if (_bucket != undefined) __gmsa_learn_count_age(self, _bucket);
+    //if (_bucket != undefined) __gmsa_learn_count_age(self, _bucket);
     if (learns == gmsa_learn_target.OUTCOMES) {
         __gmsa_learn_count_predict_outcome(self, _sample, _out, _bucket);
         return;
@@ -80,7 +80,7 @@ function __gmsa_learn_count_predict(_sample, _out) {
 function __gmsa_learn_count_explain(_sample, _index) {
     var _key = __gmsa_learn_count_key(self, _sample);
     var _bucket = data.buckets[$ _key];
-    if (_bucket != undefined) __gmsa_learn_count_age(self, _bucket);
+    //if (_bucket != undefined) __gmsa_learn_count_age(self, _bucket);
 
     var _where = "";
     var _nb = count.bins;
@@ -162,10 +162,8 @@ function __gmsa_learn_count_key(_model, _sample) {
     return (_key == "") ? "any" : _key; // no situational inputs: one bucket for every situation (an empty name isn't allowed)
 }
 
-function __gmsa_learn_count_age(_model, _bucket) {
-    var _age = _model.data.clock - _bucket.last;
-    if (_age <= 0) return;
-    var _f = power(_model.decay, _age);
+function __gmsa_learn_count_fade(_model, _bucket) { // one step of fading, each time the situation comes up
+    var _f = _model.decay;
     for (var _i = 0; _i < array_length(_bucket.counts); _i++) _bucket.counts[_i] *= _f;
     var _rewards = _bucket[$ "rewards"];
     if (_rewards != undefined) {

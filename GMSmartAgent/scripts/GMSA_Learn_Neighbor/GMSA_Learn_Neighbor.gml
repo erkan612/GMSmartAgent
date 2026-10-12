@@ -72,6 +72,7 @@ function __gmsa_learn_neighbor_observe(_sample) {
     var _outcomes = (learns == gmsa_learn_target.OUTCOMES);
     var _c = _sample.chosen;
     var _w = _sample.weight;
+    var _credit = _sample.credit;
     __gmsa_learn_neighbor_vote(self, _sample);  // also finds the nearest moments, used below
     var _imp = 1 + _nb.importance * (_outcomes ? abs(_sample.reward) : (1 - __p[_c]));
     var _ns = array_length(__x);
@@ -132,7 +133,9 @@ function __gmsa_learn_neighbor_observe(_sample) {
             var _m = _mem[_outcomes ? __oi[_c * _nb.k + _t] : __ni[_t]];
             if (!__gmsa_learn_neighbor_same(self, _m, _c)) continue;
             var _f = power(decay, data.clock - _m.t);
+            var _data = (_m[$ "d"] != undefined) ? _m.d : _m.n; // saves from before data was counted apart
             _m.n = _m.n * _f + _w;
+            _m.d = _data * _f + _credit;
             _m.imp = max(_m.imp * _f, _imp);
             _m.key = ln(_m.imp) + data.clock * _g;
             if (_outcomes) _m.r += _w * (_sample.reward - _m.r) / _m.n;
@@ -149,7 +152,7 @@ function __gmsa_learn_neighbor_observe(_sample) {
     array_copy(_x, 0, __x, 0, _ns);
     array_copy(_a, 0, __a, 0, _n);
     array_copy(_z, 0, __z, 0, _n * _no);
-    array_push(_mem, { x : _x, a : _a, z : _z, c : _c, n : _w, t : data.clock, imp : _imp, key : ln(_imp) + data.clock * _g,
+    array_push(_mem, { x : _x, a : _a, z : _z, c : _c, n : _w, d : _credit, t : data.clock, imp : _imp, key : ln(_imp) + data.clock * _g,
                        r : _outcomes ? _sample.reward : 0, note : _note });
 
     // full: the least important goes, importance fading with age (importance 0: the oldest goes)
@@ -460,11 +463,12 @@ function __gmsa_learn_neighbor_vote(_model, _sample) {
             for (var _t = 0; _t < _model.__oc[_o]; _t++) {
                 var _d2 = _model.__od[_o * _nb.k + _t];
                 var _m = _mem[_model.__oi[_o * _nb.k + _t]];
-                var _base = _m.n * power(_model.decay, _clock - _m.t);
+                var _age = power(_model.decay, _clock - _m.t);
+                var _base = _m.n * _age;
                 var _kw = _base / (_d2 + _eps2);
                 _val += _kw * _m.r;
                 _sum += _kw;
-                _ne += _base * exp(-_d2 / _reach2);
+                _ne += ((_m[$ "d"] != undefined) ? _m.d : _m.n) * _age * exp(-_d2 / _reach2);
             }
             _model.__s[_o] = (_sum * 1000000000000 > 0) ? _val / _sum : 0;
             _model.__ne[_o] = _ne;
@@ -499,9 +503,10 @@ function __gmsa_learn_neighbor_vote(_model, _sample) {
     for (var _t = 0; _t < _model.__nn; _t++) {
         var _d2 = _model.__nd[_t];
         var _m = _mem[_model.__ni[_t]];
-        var _base = _m.n * power(_model.decay, _clock - _m.t);
+        var _age = power(_model.decay, _clock - _m.t);
+        var _base = _m.n * _age;
         var _kw = _base / (_d2 + _eps2);
-        _neff += _base * exp(-_d2 / _reach2);
+        _neff += ((_m[$ "d"] != undefined) ? _m.d : _m.n) * _age * exp(-_d2 / _reach2);
         var _ma = _m.a;
         var _mz = _m.z;
         var _mc = _m.c;

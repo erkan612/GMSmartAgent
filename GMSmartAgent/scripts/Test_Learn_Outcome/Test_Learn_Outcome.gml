@@ -130,7 +130,7 @@ function test_learn_outcome() {
         });
 		
         gmsa_test_case("Count learns what works", function() {
-            var _m = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
+            var _m = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES, bins : 2 }); // the payoff splits x1 at 0.5
             var _r = __test_outcome_run(_m, 300, 0);
             var _a = _r.agent;
             gmsa_test_assert_true(__test_outcome_p(_m, _a, 0.75, 0.5, "a1") > __test_outcome_p(_m, _a, 0.75, 0.5, "a0"), "a1 when x1 is high");
@@ -177,6 +177,22 @@ function test_learn_outcome() {
 
             gmsa_test_assert_near(__test_rn_p(_m, _agent, 0.2, 0.8, "drink"), _before, 0.000001, "same predictions");
             gmsa_test_assert_near(_m.samples, _samples, 0.000001, "same amount of data");
+        });
+		
+        gmsa_test_case("a rarely picked option's outcome counts once toward confidence", function() {
+            var _makers = [
+                function() { return gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES }); },
+                function() { return gmsa_learn_ngram_create({ learns : gmsa_learn_target.OUTCOMES }); },
+                function() { return gmsa_learn_neighbor_create({ learns : gmsa_learn_target.OUTCOMES }); },
+                function() { return gmsa_learn_bayes_create({ learns : gmsa_learn_target.OUTCOMES }); },
+                function() { return gmsa_learn_linear_create({ learns : gmsa_learn_target.OUTCOMES }); },
+            ];
+            var _names = ["count", "ngram", "neighbor", "bayes", "linear"];
+            for (var _i = 0; _i < array_length(_makers); _i++) {
+                var _c = __test_outcome_odds_confidence(_makers[_i]);
+                gmsa_test_assert_true(_c[1] > 0, _names[_i] + ": learned something");
+                gmsa_test_assert_near(_c[0], _c[1], 0.000001, _names[_i] + ": " + string(_c[0]) + " against " + string(_c[1]));
+            }
         });
     });
 }
@@ -228,4 +244,23 @@ function __test_outcome_run(_model, _episodes, _train_every) {
         if (_e >= _episodes - 100) _late += _pay / 100;
     }
     return { agent : _agent, early : _early, late : _late };
+}
+
+function __test_outcome_odds_confidence(_make) { // confidence after one outcome, once from a rarely picked option, once from a sure one
+    var _out = [0, 0];
+    var _odds = [0.05, 1];
+    for (var _i = 0; _i < 2; _i++) {
+        var _m = _make();
+        var _agent = __test_outcome_agent();
+        gmsa_learn_track(_agent);
+        gmsa_agent_set_input(_agent, "x1", 0.3);
+        gmsa_agent_set_input(_agent, "x2", 0.7);
+        var _d = gmsa_agent_think(_agent, 0, gmsa_rng_create(4));
+        gmsa_agent_set_current_option(_agent, gmsa_decision_get_chosen(_d));
+        var _ticket = gmsa_learn_remember(_agent);
+        _ticket.probability = _odds[_i];
+        gmsa_learn_outcome(_m, _ticket, 1);
+        _out[_i] = gmsa_learn_predict(_m, gmsa_agent_evaluate(_agent, 0)).confidence;
+    }
+    return _out;
 }

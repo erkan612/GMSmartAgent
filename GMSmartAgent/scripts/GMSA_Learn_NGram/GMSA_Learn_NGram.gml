@@ -90,7 +90,7 @@ function __gmsa_learn_ngram_observe(_sample) {
         _ctx.n *= decay;
         while (array_length(_ctx.c) <= _a) array_push(_ctx.c, 0);
         _ctx.c[_a] += _sample.weight;
-        _ctx.n += _sample.weight;
+        _ctx.n += _sample.credit; // data counts once, the odds correction is for the estimate only
         if (_outcomes) {
             while (array_length(_ctx.r) <= _a) array_push(_ctx.r, 0);
             _ctx.r[_a] += _sample.weight * _sample.reward;

@@ -17,15 +17,40 @@ function test_scheduler_work() {
             gmsa_test_assert_equal(_w.done, 50, "all done over several steps");
         });
 
-        gmsa_test_case("agents and work take turns", function() {
-            var _s = gmsa_scheduler_create(1000, { clock : __test_plan_clock(100) });
+        gmsa_test_case("a job that uses its whole budget leaves its tier's agents most of the step", function() {
+            var _clock = __test_plan_clock(100);
+            var _s = gmsa_scheduler_create(1000, { clock : _clock });
             var _p = __test_work_profile();
             repeat (20) gmsa_scheduler_add(_s, gmsa_agent_create(_p, {}));
-            gmsa_scheduler_add_work(_s, __test_work_item(1000));
+            gmsa_scheduler_add_work(_s, __test_greedy_work(_clock));
+            repeat (3) {
+                gmsa_scheduler_step(_s);
+                gmsa_test_assert_true(_s.stats.thinks >= 7, "agents thought: " + string(_s.stats.thinks));
+                gmsa_test_assert_true(_s.stats.works >= 1, "the job still got a turn");
+            }
+        });
+
+        gmsa_test_case("a tier's work gets what its agents leave", function() {
+            var _clock = __test_plan_clock(100);
+            var _s = gmsa_scheduler_create(1000, { clock : _clock });
+            var _p = __test_work_profile();
+            repeat (2) gmsa_scheduler_add(_s, gmsa_agent_create(_p, {}));
+            var _w = __test_greedy_work(_clock);
+            gmsa_scheduler_add_work(_s, _w);
             gmsa_scheduler_step(_s);
-            gmsa_test_assert_true(_s.stats.thinks > 0, "agents thought");
-            gmsa_test_assert_true(_s.stats.works > 0, "work worked");
-            gmsa_test_assert_true(abs(_s.stats.thinks - _s.stats.works) <= 1, "one each");
+            gmsa_test_assert_equal(_s.stats.thinks, 2, "both agents");
+            gmsa_test_assert_true(_w.given >= 600, "the job got the rest: " + string(_w.given));
+        });
+
+        gmsa_test_case("with share 0, work waits for a busy tier", function() {
+            var _clock = __test_plan_clock(100);
+            var _s = gmsa_scheduler_create(1000, { clock : _clock, share : 0 });
+            var _p = __test_work_profile();
+            repeat (20) gmsa_scheduler_add(_s, gmsa_agent_create(_p, {}));
+            gmsa_scheduler_add_work(_s, __test_greedy_work(_clock));
+            gmsa_scheduler_step(_s);
+            gmsa_test_assert_equal(_s.stats.works, 0, "no turn for the work");
+            gmsa_test_assert_true(_s.stats.thinks >= 9, "the agents had it all: " + string(_s.stats.thinks));
         });
 
         gmsa_test_case("idle work costs one check a step", function() {
@@ -74,4 +99,17 @@ function __test_work_profile() {
     var _p = gmsa_profile_create("work test");
     gmsa_profile_add_action(_p, "idle");
     return gmsa_profile_build(_p);
+}
+
+function __test_greedy_work(_clock) { // a job that uses every microsecond it's given, like model training
+    return {
+        clock : _clock, turns : 0, given : 0,
+        work : function(_budget) {
+            turns++;
+            given += _budget;
+            var _t0 = clock();
+            while (clock() - _t0 < _budget) {}
+            return true;
+        },
+    };
 }

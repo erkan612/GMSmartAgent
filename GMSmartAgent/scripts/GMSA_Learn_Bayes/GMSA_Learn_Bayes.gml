@@ -83,6 +83,7 @@ function __gmsa_learn_bayes_observe(_sample) {
     data.boost /= decay;
     if (data.boost > 1000000000000000000000000000000) __gmsa_learn_bayes_rescale(self);  // 1e30
     var _wb = _w * data.boost;
+    var _nb = _sample.credit * data.boost; // data counts once, the odds correction is for the estimate only
     // choices: every option on offer counts as offered, the chosen one as chosen. Outcomes: the chosen one and its reward
     for (var _i = 0; _i < _n; _i++) {
         if (_outcomes && _i != _c) continue;
@@ -91,6 +92,7 @@ function __gmsa_learn_bayes_observe(_sample) {
         var _act = __gmsa_learn_bayes_act(self, _o.action);
         _act.o += _wb;
         _act.c += _gain;
+        _act.n += _nb;
         for (var _j = 0; _j < array_length(_keys); _j++) {
             var _cell = __gmsa_learn_bayes_cell(self, _o.action, _j);
             var _v = __gmsa_learn_bayes_value(self, _o, _j);
@@ -100,6 +102,7 @@ function __gmsa_learn_bayes_observe(_sample) {
                 var _at = _off + min(_lv[_r] - 1, floor(clamp(_v, 0, 1) * _lv[_r]));
                 _cell.O[_at] += _wb;
                 _cell.C[_at] += _gain;
+                _cell.N[_at] += _nb;
                 _off += _lv[_r];
             }
         }
@@ -232,8 +235,10 @@ function __gmsa_learn_bayes_act(_model, _a) {
     var _name = _model.actions[_a];
     var _t = _d.acts[$ _name];
     if (_t == undefined) {
-        _t = { o : 0, c : 0 };
+        _t = { o : 0, c : 0, n : 0 };
         _d.acts[$ _name] = _t;
+    } else if (_t[$ "n"] == undefined) {
+        _t.n = _t.o; // a save from before data was counted apart
     }
     return _t;
 }
@@ -251,8 +256,11 @@ function __gmsa_learn_bayes_cell(_model, _a, _j) {
         var _levels = __gmsa_learn_bayes_levels(_model, _d.keys[_j]);
         var _size = 0;
         for (var _r = 0; _r < array_length(_levels); _r++) _size += _levels[_r];
-        _cell = { levels : _levels, O : array_create(_size, 0), C : array_create(_size, 0) };
+        _cell = { levels : _levels, O : array_create(_size, 0), C : array_create(_size, 0), N : array_create(_size, 0) };
         _d.cells[$ _key] = _cell;
+    } else if (_cell[$ "N"] == undefined) {
+        _cell.N = array_create(array_length(_cell.O), 0); // a save from before data was counted apart
+        array_copy(_cell.N, 0, _cell.O, 0, array_length(_cell.O));
     }
     _row[@ _j] = _cell;
     return _cell;
@@ -266,6 +274,7 @@ function __gmsa_learn_bayes_rescale(_model) {
         var _t = _d.acts[$ _names[_i]];
         _t.o /= _b;
         _t.c /= _b;
+        if (_t[$ "n"] != undefined) _t.n /= _b;
     }
     _names = variable_struct_get_names(_d.cells);
     for (var _i = 0; _i < array_length(_names); _i++) {
@@ -273,6 +282,9 @@ function __gmsa_learn_bayes_rescale(_model) {
         for (var _k = 0; _k < array_length(_cell.O); _k++) {
             _cell.O[_k] /= _b;
             _cell.C[_k] /= _b;
+        }
+        if (_cell[$ "N"] != undefined) {
+            for (var _k = 0; _k < array_length(_cell.N); _k++) _cell.N[_k] /= _b;
         }
     }
     _d.boost = 1;
@@ -296,7 +308,7 @@ function __gmsa_learn_bayes_chain(_model, _option, _j, _base, _words = false) {
         var _C = _cell.C[_off + _b];
         if (!_outcomes) _rate = (_C + _m * _rate) / (_O + _m);
         else if (_O * 1000000000000 > 0) _rate = (_C + _m * _rate) / (_O + _m);
-        _ev = _O / _boost;
+        _ev = _cell.N[_off + _b] / _boost;
         if (_O >= _boost || _shown < 0) _shown = _i;
         _off += _lv[_i];
     }
@@ -332,7 +344,7 @@ function __gmsa_learn_bayes_evidence(_model, _sample) {
         }
         _model.__b[_i] = _base;
         _model.__sum[_i] = _sum;
-        _model.__ev[_i] = (_k > 0) ? _ev / _k : _act.o / _boost;
+        _model.__ev[_i] = (_k > 0) ? _ev / _k : _act.n / _boost;
     }
 }
 

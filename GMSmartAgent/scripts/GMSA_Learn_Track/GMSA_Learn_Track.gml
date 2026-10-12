@@ -128,7 +128,8 @@ function __gmsa_learn_outcome_one(_model, _entry, _reward, _credit, _note = unde
     // options the agent rarely picks count more when they are picked, so they aren't misjudged from little data
     var _p = _entry.probability;
     var _odds = (_p * GMSA_LEARN_ODDS_CLIP > 1) ? 1 / _p : GMSA_LEARN_ODDS_CLIP;
-    _sample.weight = _credit * _odds;
+    _sample.weight = _credit * _odds; // for the estimate: rarely picked options count more
+    _sample.credit = _credit;         // for the amount of data: every outcome counts once
     _sample.reward = _reward;
     _sample.note = __gmsa_learn_note(_note);
     _model.samples = _model.samples * _model.decay + _credit;

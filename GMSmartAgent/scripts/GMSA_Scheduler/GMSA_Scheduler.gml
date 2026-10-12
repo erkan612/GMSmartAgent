@@ -140,7 +140,37 @@ function __gmsa_scheduler_check_share(_share) {
     if (!is_numeric(_share) || _share < 0 || _share >= 1) throw "GMSA: scheduler share must be 0 or more and below 1";
 }
 
-function __gmsa_scheduler_run_tier(_scheduler, _tier, _cap) { // one tier's turn: agents, with its work taking turns, until it runs out of due agents and work, reaches its cap, or the budget ends
+function __gmsa_scheduler_run_tier(_scheduler, _tier, _cap) { // one tier's turn: its agents first, then its work, which they leave a share the way a tier leaves one for the tiers below. What the work doesn't use goes back to the agents
+    var _run   = _scheduler.__run;
+    var _clock = _scheduler.clock;
+    var _share = _scheduler.share;
+
+    // the agents, leaving the tier's work its share of what's left
+    var _agents_cap = _cap;
+    var _final = true;
+    if (!_tier.idle && _share * 1000000000000 > 0) {
+        var _used = (_run.thinks + _run.works > 0) ? _clock() - _run.start : 0;
+        _agents_cap = _used + (1 - _share) * max(0, _cap - _used);
+        _final = false;
+    }
+    var _waiting = __gmsa_scheduler_run_agents(_scheduler, _tier, _agents_cap, _final);
+
+    // the work, up to the tier's cap
+    while (!_run.stopped && !_tier.cut && !_tier.idle) {
+        var _now_used = _clock() - _run.start;
+        if (_run.thinks + _run.works > 0) {
+            if (_now_used >= _scheduler.budget) { _run.stopped = true; break; }
+            if (_now_used >= _cap) { _tier.cut = true; break; }
+        }
+        if (__gmsa_scheduler_work_turn(_tier, max(1, _cap - _now_used))) _run.works++;
+        else _tier.idle = true;
+    }
+
+    // what the work left goes back to the agents
+    if (_waiting && !_run.stopped && !_tier.cut) __gmsa_scheduler_run_agents(_scheduler, _tier, _cap, true);
+}
+
+function __gmsa_scheduler_run_agents(_scheduler, _tier, _cap, _final) { // the tier's due agents in turn, until each was looked at, the cap or the budget. Returns true when it stopped at the cap with agents left; at a final cap the tier is cut, to get time back if the lower tiers leave some
     var _run    = _scheduler.__run;
     var _clock  = _scheduler.clock;
     var _start  = _run.start;
@@ -151,7 +181,7 @@ function __gmsa_scheduler_run_tier(_scheduler, _tier, _cap) { // one tier's turn
     var _agents = _tier.agents;
     var _n = array_length(_agents);
     var _k = _tier.visited; // agents already looked at this step, so a tier that gets time back never thinks anyone twice
-    var _used = 0;
+    var _held = false;
 
     while (_k < _n) {
         if (_tier.cursor >= _n) _tier.cursor = 0;
@@ -163,37 +193,22 @@ function __gmsa_scheduler_run_tier(_scheduler, _tier, _cap) { // one tier's turn
             continue;
         }
         if (_run.thinks + _run.works > 0) {
-            _used = _clock() - _start;
+            var _used = _clock() - _start;
             if (_used >= _budget) { _run.stopped = true; break; }
-            if (_used >= _cap) { _tier.cut = true; break; }
+            if (_used >= _cap) {
+                if (_final) _tier.cut = true;
+                _held = true;
+                break;
+            }
         }
         _tier.cursor++;
         _k++;
         gmsa_agent_think(_agent, _now, _rng);
         _run.thinks++;
         if (_agent.on_decide != undefined) array_push(_queue, _agent);
-
-        // work takes turns with the agents
-        if (!_tier.idle) {
-            _used = _clock() - _start;
-            if (_used >= _budget) { _run.stopped = true; break; }
-            if (_used >= _cap) { _tier.cut = true; break; }
-            if (__gmsa_scheduler_work_turn(_tier, _cap - _used)) _run.works++;
-            else _tier.idle = true;
-        }
     }
     _tier.visited = _k;
-
-    // whatever the agents left goes to the tier's work, a turn at a time
-    while (!_run.stopped && !_tier.cut && !_tier.idle) {
-        _used = _clock() - _start;
-        if (_run.thinks + _run.works > 0) {
-            if (_used >= _budget) { _run.stopped = true; break; }
-            if (_used >= _cap) { _tier.cut = true; break; }
-        }
-        if (__gmsa_scheduler_work_turn(_tier, max(1, _cap - _used))) _run.works++;
-        else _tier.idle = true;
-    }
+    return _held;
 }
 
 function gmsa_scheduler_set_seed(_scheduler, _seed) {
