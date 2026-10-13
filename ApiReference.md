@@ -2694,9 +2694,16 @@ loot_chest (running, step 2 of 3)
     open_chest
 ```
 
-Reasons are judged on the facts as they were when that task was planned. A skipped method shows its first failing condition, otherwise its first step that couldn't be done, otherwise that the rest of the plan didn't work with it. Methods ruled out by a score of 0 are listed as such, and the chosen method shows its score when the task has scored methods.
+Reasons are judged on the facts as they were when that task was planned. A skipped method shows its first failing condition. When it got under way, the search remembers the furthest of its parts it got stuck on, and the reason names that part:
 
-When no plan was found, it lists each of the task's methods with its reason instead, or for a goal, what the search couldn't reach (see [Goals](#goals)). While planning, it's the title only, such as `loot_chest (planning, 140 of 250 nodes)`.
+- a step that couldn't be done, with the condition it failed (`buy_key: gold is 3, needs at least 10`),
+- a smaller task or a goal that didn't work out (`get_away didn't work out`), even when earlier parts worked,
+- a step after a smaller task or goal, which explain can't check without the facts that part changed (`crack_vault couldn't be done after get_inside`),
+- or, when every part worked, that the rest of the plan didn't work with it.
+
+Methods ruled out by a score of 0 are listed as such, and the chosen method shows its score when the task has scored methods.
+
+When no plan was found, it lists each of the task's methods with its reason instead, or for a goal, what the search couldn't reach (see [Goals](#goals)). When the search ran out of budget, the methods it hadn't finished or tried say so. While planning, it's the title only, such as `loot_chest (planning, 140 of 250 nodes)`.
 
 ### Method order
 
