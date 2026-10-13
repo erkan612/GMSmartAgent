@@ -198,6 +198,7 @@
   "resourceVersion":"2.0",
   "RoomOrderNodes":[
     {"roomId":{"name":"rm_test","path":"rooms/rm_test/rm_test.yy",},},
+    {"roomId":{"name":"rm_demo_13","path":"rooms/rm_demo_13/rm_demo_13.yy",},},
     {"roomId":{"name":"rm_kit_scene","path":"rooms/rm_kit_scene/rm_kit_scene.yy",},},
     {"roomId":{"name":"rm_demo_22","path":"rooms/rm_demo_22/rm_demo_22.yy",},},
     {"roomId":{"name":"rm_demo_21","path":"rooms/rm_demo_21/rm_demo_21.yy",},},
@@ -208,7 +209,6 @@
     {"roomId":{"name":"rm_demo_16","path":"rooms/rm_demo_16/rm_demo_16.yy",},},
     {"roomId":{"name":"rm_demo_15","path":"rooms/rm_demo_15/rm_demo_15.yy",},},
     {"roomId":{"name":"rm_demo_14","path":"rooms/rm_demo_14/rm_demo_14.yy",},},
-    {"roomId":{"name":"rm_demo_13","path":"rooms/rm_demo_13/rm_demo_13.yy",},},
     {"roomId":{"name":"rm_demo_12","path":"rooms/rm_demo_12/rm_demo_12.yy",},},
     {"roomId":{"name":"rm_demo_11","path":"rooms/rm_demo_11/rm_demo_11.yy",},},
     {"roomId":{"name":"rm_demo10","path":"rooms/rm_demo10/rm_demo10.yy",},},

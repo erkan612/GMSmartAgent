@@ -439,7 +439,9 @@ function __gmsa_learn_action_id(_model, _name) {
 function __gmsa_learn_sample(_model, _decision, _chosen) {
     var _options = _decision.options;
     var _n = array_length(_options);
-    var _binding = __gmsa_learn_bind(_model, _decision.agent.profile);
+    var _profile = _decision[$ "profile"]; // a history entry keeps the profile it was decided under
+    if (_profile == undefined) _profile = _decision.agent.profile;
+    var _binding = __gmsa_learn_bind(_model, _profile);
     var _k = array_length(_model.inputs);
     var _map = _binding.inputs;
     var _sample = _model.__sample;

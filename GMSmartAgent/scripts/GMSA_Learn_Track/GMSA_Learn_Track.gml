@@ -103,6 +103,7 @@ function __gmsa_learn_track_hook(_option, _same) {
     }
     var _entry = {
         agent       : agent,
+        profile     : agent.profile,        // the profile it was decided under: its options are read through it, even after a swap
         options     : _copy,
         chosen      : _chosen,
         probability : _option.probability,  // the odds of this choice, corrects outcome learning for what was rarely tried

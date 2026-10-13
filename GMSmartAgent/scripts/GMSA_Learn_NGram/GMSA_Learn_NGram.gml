@@ -257,11 +257,11 @@ function __gmsa_learn_ngram_tracked(_model, _agent, _h, _upto) {
     while (_first < _end && _entries[_first].start < _h.cut) _first += 1;
     // the start is known after a break, or while the tracker hasn't dropped anything yet
     var _known = (_h.cut > -infinity) || (array_length(_entries) < _tracker.size);
-    var _binding = __gmsa_learn_bind(_model, _agent.profile);
     array_resize(_model.__ids, 0);
     if (_known) array_push(_model.__ids, -1);
     for (var _i = _first; _i < _end; _i++) {
         var _en = _entries[_i];
+        var _binding = __gmsa_learn_bind(_model, _en.profile); // each step through the profile it was decided under
         array_push(_model.__ids, _binding.actions[_en.options[_en.chosen].action.index]);
     }
     var _extra = array_length(_model.__ids) - _model.ngram.length;

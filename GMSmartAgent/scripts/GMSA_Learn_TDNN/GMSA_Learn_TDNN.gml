@@ -474,7 +474,6 @@ function __gmsa_learn_tdnn_tracked(_model, _agent, _h, _upto) {
     while (_first < _end && _entries[_first].start < _h.cut) _first += 1;
     // the start is known after a break, or while the tracker hasn't dropped anything yet
     var _known = (_h.cut > -infinity) || (array_length(_entries) < _tracker.size);
-    var _binding = __gmsa_learn_bind(_model, _agent.profile);
     array_resize(_model.__ids, 0);
     array_resize(_model.__memo, 0);
     if (_known) {
@@ -483,6 +482,7 @@ function __gmsa_learn_tdnn_tracked(_model, _agent, _h, _upto) {
     }
     for (var _i = _first; _i < _end; _i++) {
         var _o = _entries[_i].options[_entries[_i].chosen];
+        var _binding = __gmsa_learn_bind(_model, _entries[_i].profile); // each step through the profile it was decided under
         array_push(_model.__ids, _binding.actions[_o.action.index]);
         array_push(_model.__memo, __gmsa_learn_tdnn_memo(_model, _o.inputs, _binding));
     }

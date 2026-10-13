@@ -218,6 +218,45 @@ function test_learn_outcome() {
                 gmsa_test_assert_true(string_pos("from 3.0 outcomes", _line) > 0, _m.tier_name + ": " + _line);
             }
         });
+
+        gmsa_test_case("a ticket from before a profile swap credits its own action", function() {
+            var _first = __test_swap_profile("swap first", ["go", "stay"], [1, 0.5]);
+            var _second = __test_swap_profile("swap second", ["stay"], [1]);   // the same names, in another order
+            var _m = gmsa_learn_count_create({ learns : gmsa_learn_target.OUTCOMES });
+            var _agent = gmsa_agent_create(_first);
+            gmsa_learn_track(_agent);
+            var _ticket = __test_swap_act(_agent, "go");
+            gmsa_agent_set_profile(_agent, _second);
+            gmsa_learn_outcome(_m, _ticket, 1);
+
+            var _e = gmsa_agent_evaluate(gmsa_agent_create(_first), 0);
+            for (var _i = 0; _i < array_length(_e.options); _i++) {
+                var _line = gmsa_learn_explain(_m, _e, _i)[0];
+                var _want = (_e.options[_i].action.name == "go") ? "go averages +0.50 from 1.0 outcomes" : "stay not tried yet";
+                gmsa_test_assert_true(string_pos(_want, _line) > 0, _line);
+            }
+        });
+
+        gmsa_test_case("a sequence learner reads earlier steps through their own profile", function() {
+            var _makers = [
+                function() { return gmsa_learn_ngram_create({ learns : gmsa_learn_target.OUTCOMES, length : 1 }); },
+                function() { return gmsa_learn_tdnn_create({ learns : gmsa_learn_target.OUTCOMES, length : 1, replay : 0 }); },
+            ];
+            var _first = __test_swap_profile("swap many", ["go", "wait", "hide"], [0.2, 0.3, 0.9]);
+            var _second = __test_swap_profile("swap one", ["go"], [1]);
+            for (var _k = 0; _k < array_length(_makers); _k++) {
+                var _m = _makers[_k]();
+                var _agent = gmsa_agent_create(_first);
+                gmsa_learn_track(_agent, { size : 2 });
+                __test_swap_act(_agent, "hide");   // index 2 in the first profile, which the second doesn't have
+                gmsa_agent_clear_current(_agent);
+                gmsa_agent_set_profile(_agent, _second);
+                var _ticket = __test_swap_act(_agent, "go");
+                gmsa_test_assert_true(gmsa_learn_outcome(_m, _ticket, 1), _m.tier_name + ": learns after the swap");
+                var _p = gmsa_learn_predict(_m, gmsa_agent_evaluate(_agent, 0));
+                gmsa_test_assert_equal(array_length(_p.p), 1, _m.tier_name + ": and predicts after it");
+            }
+        });
     });
 }
 
@@ -287,4 +326,22 @@ function __test_outcome_odds_confidence(_make) { // confidence after one outcome
         _out[_i] = gmsa_learn_predict(_m, gmsa_agent_evaluate(_agent, 0)).confidence;
     }
     return _out;
+}
+
+function __test_swap_profile(_name, _actions, _weights) { // one push input as the feature, the actions given
+    var _p = gmsa_profile_create(_name);
+    gmsa_profile_add_input(_p, gmsa_input_push("x"));
+    gmsa_profile_set_features(_p, ["x"]);
+    for (var _i = 0; _i < array_length(_actions); _i++) gmsa_profile_add_action(_p, _actions[_i], { weight : _weights[_i] });
+    return gmsa_profile_build(_p);
+}
+
+function __test_swap_act(_agent, _name) { // acts on the option named, from the agent's own decision, and returns its ticket
+    var _d = gmsa_agent_think(_agent, 0);
+    for (var _i = 0; _i < array_length(_d.options); _i++) {
+        if (_d.options[_i].action.name != _name) continue;
+        gmsa_agent_set_current_option(_agent, _d.options[_i]);
+        return gmsa_learn_remember(_agent);
+    }
+    return undefined;
 }
