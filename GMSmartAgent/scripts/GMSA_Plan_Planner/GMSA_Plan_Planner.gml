@@ -49,8 +49,9 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         // choice points, one per task being broken down
         __frames : 0, __frame_task : [], __frame_rest : [], __frame_pool : [], __frame_undo : [], __frame_out : [],
         __frame_trace : [], __frame_depth : [], __frame_start : [], __frame_count : [], __frame_try : [], __frame_k : [],
-        // method order per choice point, best first
-        __order_top : 0, __order : [], __order_score : [], __method_score : [],
+        __frame_live : [], __frame_far : [], // whether the frame's current method is under way, and how many of its subtasks it has finished at most
+        // method order per choice point, best first, and where each method tried got stuck (-2 not tried, -1 its requirements, else a subtask)
+        __order_top : 0, __order : [], __order_score : [], __method_score : [], __order_fail : [],
         // goals: an A* search over imagined states, stored flat and found again through a hash table
         __g_active : false, __g_goal : 0, __g_undo : 0, __g_start : 0, __g_found : -1, __g_expand : -1, __g_next : 0,
         __g_short : false, // a goal in this search ran out of budget and took a chain it couldn't prove cheapest
@@ -301,9 +302,11 @@ function __gmsa_plan_search(_p) {
                 _p.__head = _p.__node_next[_n];
                 continue;
             }
+            __gmsa_plan_note_failure(_p);
             _r = __gmsa_plan_next_choice(_p);
         } else if (_p.__node_depth[_n] >= _p.depth) {
             _p.depth_cut = true;
+            __gmsa_plan_note_failure(_p);
             _r = __gmsa_plan_next_choice(_p);
         } else if (_kind == 3) {
             // a goal: the cheapest chain of steps that reaches it from the imagined state
@@ -321,6 +324,7 @@ function __gmsa_plan_search(_p) {
                 _p.__head = _p.__node_next[_n];
                 continue;
             }
+            __gmsa_plan_note_failure(_p);
             _r = __gmsa_plan_next_choice(_p);  // no chain reaches it: back up, like a step that can't be done
         } else {
             // a task: becomes the newest choice point, and its first method is tried
@@ -436,6 +440,9 @@ function __gmsa_plan_push_frame(_p, _n) {
     _p.__frame_k[_f] = _k;
     _p.__frame_start[_f] = _start;
     _p.__frame_count[_f] = _count;
+    for (var _i = 0; _i < _count; _i++) _p.__order_fail[_start + _i] = -2;
+    _p.__frame_live[_f] = false;
+    _p.__frame_far[_f] = 0;
     _p.__order_top = _start + _count;
     _p.__frames = _f + 1;
 }
@@ -444,6 +451,11 @@ function __gmsa_plan_next_choice(_p) {
     var _d = _p.domain;
     while (_p.__frames > 0) {
         var _f = _p.__frames - 1;
+        if (_p.__frame_live[_f]) {
+            // the method under way is given up: keep how far it got, for explain
+            _p.__order_fail[_p.__frame_start[_f] + _p.__frame_try[_f] - 1] = _p.__frame_far[_f];
+            _p.__frame_live[_f] = false;
+        }
         // back to how things were when this task was reached
         __gmsa_plan_undo(_p, _p.__frame_undo[_f]);
         _p.__out_count = _p.__frame_out[_f];
@@ -454,14 +466,18 @@ function __gmsa_plan_next_choice(_p) {
         while (_p.__frame_try[_f] < _p.__frame_count[_f]) {
             if (_p.nodes >= _p.budget) return 2;
             if (__gmsa_plan_time_up(_p)) return 3;
-            var _m = _p.__order[_p.__frame_start[_f] + _p.__frame_try[_f]];
+            var _slot = _p.__frame_start[_f] + _p.__frame_try[_f];
+            var _m = _p.__order[_slot];
             var _method = _task.methods[_m];
             _p.__frame_try[_f] += 1;
             _p.nodes += 1;
+            _p.__order_fail[_slot] = -1;
             if (!__gmsa_plan_met(_p.state, _method.requires)) continue;
             if (_method.check != undefined && !_method.check(_p.state)) continue;
             // the task begins, its subtasks go in front of the rest of the to-do list, then its end marker
             __gmsa_plan_out(_p, 1, _task.index, _m, __gmsa_plan_record(_p, _f));
+            _p.__frame_live[_f] = true;
+            _p.__frame_far[_f] = 0;
             var _depth = _p.__frame_depth[_f];
             _p.__head = __gmsa_plan_push_node(_p, 2, _task.index, _depth, _p.__head);
             var _subs = _method.subtasks;
@@ -472,8 +488,30 @@ function __gmsa_plan_next_choice(_p) {
         }
         _p.__order_top = _p.__frame_start[_f];
         _p.__frames = _f;
+        __gmsa_plan_note_failure(_p); // the task has no method left: the methods around it got stuck there
     }
     return 0;
+}
+
+function __gmsa_plan_note_failure(_p) { // for each method under way, how many of its own subtasks the plan output holds, keeping the most
+    for (var _f = 0; _f < _p.__frames; _f++) {
+        if (!_p.__frame_live[_f]) continue;
+        var _done = 0;
+        var _level = 0;
+        for (var _i = _p.__frame_out[_f] + 1; _i < _p.__out_count; _i++) {
+            var _k = _p.__out_kind[_i];
+            if (_k == 1 || _k == 3) {
+                _level += 1;
+            } else if (_k == 2 || _k == 4) {
+                if (_level == 0) break; // the method's own end: everything in it was done
+                _level -= 1;
+                if (_level == 0) _done += 1;
+            } else if (_level == 0) {
+                _done += 1;
+            }
+        }
+        if (_done > _p.__frame_far[_f]) _p.__frame_far[_f] = _done;
+    }
 }
 
 function __gmsa_plan_record(_p, _f) {
@@ -491,12 +529,14 @@ function __gmsa_plan_record(_p, _f) {
     var _w = _o + 3 + _c * 2;
     var _n = array_length(_p.state);
     for (var _i = 0; _i < _n; _i++) _p.__trace[_w + _i] = _p.state[_i];
-    _p.__trace_top = _w + _n;
+    for (var _i = 0; _i < _pick; _i++) _p.__trace[_w + _n + _i] = _p.__order_fail[_start + _i]; // where each skipped method got stuck
+    _p.__trace_top = _w + _n + _pick;
     return _o;
 }
 
-function __gmsa_plan_keep_record(_p, _o) {
-    var _len = 3 + _p.__trace[_o] * 2 + array_length(_p.state);
+function __gmsa_plan_keep_record(_p, _o, _kind) {
+    var _n = array_length(_p.state);
+    var _len = (_kind == 3) ? 5 + _n : 3 + _p.__trace[_o] * 2 + _n + _p.__trace[_o + 1]; // a task's record ends with its skipped methods' stuck points
     var _at = _p.__plan_trace_top;
     for (var _i = 0; _i < _len; _i++) _p.__plan_trace[_at + _i] = _p.__trace[_o + _i];
     _p.__plan_trace_top = _at + _len;
@@ -634,7 +674,7 @@ function __gmsa_plan_splice(_p, _s, _e) {
     }
     for (var _i = 0; _i < _p.__out_count; _i++) {
         var _aux = _p.__out_aux[_i];
-        if (_p.__out_kind[_i] == 1 || _p.__out_kind[_i] == 3) _aux = __gmsa_plan_keep_record(_p, _aux);
+        if (_p.__out_kind[_i] == 1 || _p.__out_kind[_i] == 3) _aux = __gmsa_plan_keep_record(_p, _aux, _p.__out_kind[_i]); // task and goal records move into the plan's trace
         _w = __gmsa_plan_spare(_p, _w, _p.__out_kind[_i], _p.__out_index[_i], _p.__out_method[_i], _aux);
     }
     for (var _i = _e + 1; _i < _p.__run_count; _i++) {

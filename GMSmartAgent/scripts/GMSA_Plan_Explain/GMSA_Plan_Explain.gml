@@ -99,7 +99,7 @@ function __gmsa_plan_task_lines(_p, _i, _depth, _fresh, _lines) {
     for (var _f = 0; _f < array_length(_p.state); _f++) _p.state[_f] = _tr[_facts + _f];
     for (var _k = 0; _k < _pick; _k++) {
         var _md = _task.methods[_tr[_o + 3 + _k * 2]];
-        var _line = __gmsa_plan_line("skipped", _depth + 1, _md.name + " skipped: " + __gmsa_plan_why_method(_p, _md));
+        var _line = __gmsa_plan_line("skipped", _depth + 1, _md.name + " skipped: " + __gmsa_plan_why_method(_p, _md, _tr[_facts + array_length(_p.state) + _k]));
         _line.repaired = _fresh;
         array_push(_lines, _line);
     }
@@ -131,12 +131,13 @@ function __gmsa_plan_failure_lines(_p, _lines) {
         __gmsa_plan_goal_failure_lines(_p, _d.goals[_root.index], _lines);
     } else {
         var _task = _d.tasks[_root.index];
-        array_push(_lines, __gmsa_plan_line("note", 0, _task.name + " has no method that works"));
+        var _out = (_p.result == gmsa_plan_result.OUT_OF_BUDGET);
+        array_push(_lines, __gmsa_plan_line("note", 0, _task.name + (_out ? ": the search ran out of budget before finding a method that works" : " has no method that works")));
         for (var _m = 0; _m < array_length(_task.methods); _m++) {
             var _md = _task.methods[_m];
             var _reason;
             if (_md.score != undefined && !(_md.score(_p.owner, _p.state) * 1000000000000 > 0)) _reason = "ruled out by its score";
-            else _reason = __gmsa_plan_why_method(_p, _md);
+            else _reason = __gmsa_plan_why_method(_p, _md, __gmsa_plan_root_fail(_p, _m));
             array_push(_lines, __gmsa_plan_line("reason", 0, _md.name + ": " + _reason));
         }
     }
@@ -148,19 +149,36 @@ function __gmsa_plan_task_scored(_task) {
     return false;
 }
 
-function __gmsa_plan_why_method(_p, _method) {
+function __gmsa_plan_why_method(_p, _method, _fail = -1) { // _fail: the subtask the search got stuck on, -1 unknown, -2 not tried, -4 cut off by the budget
     var _why = __gmsa_plan_why(_p, _method.requires, _method.check);
     if (_why != undefined) return _why;
+    if (_fail == -2) return "not tried before the budget ran out";
+    if (_fail == -4) return "the budget ran out before it was finished";
     var _d = _p.domain;
+    var _subs = _method.subtasks;
+    if (_fail >= array_length(_subs)) return "the rest of the plan didn't work with it";
     var _result = "the rest of the plan didn't work with it";
+    var _after = undefined; // the last task or goal passed that worked: what it changed isn't known here
     _p.undo_count = 0;
-    for (var _k = 0; _k < array_length(_method.subtasks); _k++) {
-        var _sub = _method.subtasks[_k];
+    for (var _k = 0; _k < array_length(_subs); _k++) {
+        var _sub = _subs[_k];
         if (_sub.kind == 1 || _sub.kind == 3) {
-            _result = ((_sub.kind == 1) ? _d.tasks[_sub.index].name : _d.goals[_sub.index].name) + " didn't work out";
-            break;
+            var _name = (_sub.kind == 1) ? _d.tasks[_sub.index].name : _d.goals[_sub.index].name;
+            if (_fail < 0 || _k == _fail) {
+                _result = _name + " didn't work out";
+                break;
+            }
+            _after = _name;
+            continue;
         }
         var _step = _d.steps[_sub.index];
+        if (_after != undefined) {
+            if (_k == _fail) {
+                _result = _step.name + " couldn't be done after " + _after;
+                break;
+            }
+            continue;
+        }
         var _w = __gmsa_plan_why(_p, _step.requires, _step.check);
         if (_w != undefined) {
             _result = _step.name + ": " + _w;
@@ -170,6 +188,15 @@ function __gmsa_plan_why_method(_p, _method) {
     }
     __gmsa_plan_undo(_p, 0);
     return _result;
+}
+
+function __gmsa_plan_root_fail(_p, _m) { // where a failed make got stuck in the root task's method _m, from the search's own records
+    for (var _i = 0; _i < _p.__frame_count[0]; _i++) {
+        if (_p.__order[_i] != _m) continue;
+        if (_p.__frames > 0 && _p.__frame_live[0] && _i == _p.__frame_try[0] - 1) return -4;
+        return _p.__order_fail[_i];
+    }
+    return -1;
 }
 
 function __gmsa_plan_why(_p, _cond, _check) {
