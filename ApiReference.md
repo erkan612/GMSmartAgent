@@ -1129,9 +1129,7 @@ How it works:
 - Saves include the buffer as well as the trees, since every training starts again from the buffer.
 - **Confidence is model-wide,** and 0 until the first training finishes.
 
-**Limits:** both come from how decision trees grow, one split at a time.
-- A perfectly balanced pattern of two inputs (exactly as often "both high or both low" as "one high, one low") gives no first split anything to gain, so it's never learned. Any imbalance fixes it, and real players are never balanced. RankNet doesn't have this limit.
-- A situation seen fewer than about 20 times can be missed when its examples are noisy.
+**Limit:** a situation seen fewer than about 20 times can be missed among the common ones, and more often the less consistent the player is there. In testing, a situation seen 8 to 15 times was missed in about 1 run in 100 when the player always chose the same in it, and in about 1 in 7 when they chose otherwise one time in ten; seen 20 times, in 4 runs in 100 or fewer. Patterns that only show in combination, even perfectly balanced ones (exactly as often "both high or both low" as "one high, one low"), are learned.
 
 **Throws** when a parameter is out of the ranges above.
 
