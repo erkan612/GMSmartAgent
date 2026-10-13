@@ -65,6 +65,25 @@ function test_learn_lambdamart() {
             gmsa_test_assert_range(_lin_worst, 0, 0.6, "linear can't");
         });
 
+        gmsa_test_case("learns a perfectly balanced interaction", function() {
+            // every corner seen 25 times: "same" exactly as often as "differ", so no first split gains anything
+            var _lm = gmsa_learn_lambdamart_create();
+            var _agent = __test_rn_agent(["same", "differ"]);
+            var _corners = [[0.1, 0.1, 0], [0.9, 0.9, 0], [0.1, 0.9, 1], [0.9, 0.1, 1]];
+            repeat (25) {
+                for (var _c = 0; _c < 4; _c++) {
+                    var _k = _corners[_c];
+                    __test_rn_observe(_lm, _agent, _k[0], _k[1], _k[2]);
+                }
+            }
+            gmsa_learn_train(_lm);
+            for (var _c = 0; _c < 4; _c++) {
+                var _k = _corners[_c];
+                var _right = (_k[2] == 0) ? "same" : "differ";
+                gmsa_test_assert_range(__test_rn_p(_lm, _agent, _k[0], _k[1], _right), 0.9, 1, "corner " + string(_c));
+            }
+        });
+
         gmsa_test_case("budgeted training matches unbudgeted", function() {
             var _a = gmsa_learn_lambdamart_create({ trees : 10 });
             var _b = gmsa_learn_lambdamart_create({ trees : 10 });
