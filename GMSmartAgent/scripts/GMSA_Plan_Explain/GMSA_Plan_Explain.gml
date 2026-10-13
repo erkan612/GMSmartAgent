@@ -215,6 +215,7 @@ function __gmsa_plan_goal_lines(_p, _i, _depth, _fresh, _lines) {
     if (_steps > 0) {
         _text = _goal.name + ": " + string(_steps) + ((_steps == 1) ? " step" : " steps")
             + ", cost " + __gmsa_plan_number_text(_tr[_o + 4]) + ", searched " + string(_tr[_o + 1]) + " nodes";
+        if (_tr[_o + 3] == 0) _text += ", the budget ran out before it was proven cheapest";
     }
     var _line = __gmsa_plan_line("goal", _depth, _text);
     _line.repaired = _fresh;

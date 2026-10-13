@@ -53,6 +53,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __order_top : 0, __order : [], __order_score : [], __method_score : [],
         // goals: an A* search over imagined states, stored flat and found again through a hash table
         __g_active : false, __g_goal : 0, __g_undo : 0, __g_start : 0, __g_found : -1, __g_expand : -1, __g_next : 0,
+        __g_short : false, // a goal in this search ran out of budget and took a chain it couldn't prove cheapest
         __g_count : 0, __g_state : [], __g_parent : [], __g_action : [], __g_cost : [], __g_depth : [], __g_hash : [], __g_closed : [],
         __g_heap : 0, __g_hf : [], __g_hg : [], __g_hn : [], __g_table_node : [], __g_table_stamp : [], __g_mask : 0, __g_stamp : 0, __g_path : [], __g_vary : [], __g_keys : [],
     };
@@ -264,6 +265,7 @@ function __gmsa_plan_search_from(_p, _kind, _index, _depth) {
     _p.depth_cut = false;
     _p.__resume_choice = false;
     _p.__g_active = false;
+    _p.__g_short = false;
     _p.__head = __gmsa_plan_push_node(_p, _kind, _index, _depth, -1);
     return __gmsa_plan_search(_p);
 }
@@ -308,6 +310,11 @@ function __gmsa_plan_search(_p) {
             if (!_p.__g_active) __gmsa_plan_goal_begin(_p, _p.__node_index[_n]);
             var _g = __gmsa_plan_goal_search(_p);
             if (_g == __GMSA_PLAN_PAUSED) return __GMSA_PLAN_PAUSED;
+            // out of budget, but a chain already reaches the goal: take the cheapest such chain, unproven
+            if (_g == gmsa_plan_result.OUT_OF_BUDGET && __gmsa_plan_goal_best_met(_p)) {
+                _p.__g_short = true;
+                _g = gmsa_plan_result.FOUND;
+            }
             __gmsa_plan_goal_end(_p, _g == gmsa_plan_result.FOUND);
             if (_g == gmsa_plan_result.OUT_OF_BUDGET) return _g;
             if (_g == gmsa_plan_result.FOUND) {
@@ -528,6 +535,7 @@ function __gmsa_plan_after_search(_p, _r) {
         _p.status = gmsa_plan_status.FAILED;
         return false;
     }
+    if (_p.__g_short) _p.result = gmsa_plan_result.OUT_OF_BUDGET; // the plan runs, but a goal in it isn't proven cheapest
     __gmsa_plan_adopt(_p);
     __gmsa_plan_settle(_p, false, _p.__paused_once);
     return _p.status != gmsa_plan_status.FAILED;
@@ -703,7 +711,7 @@ function __gmsa_plan_repair_result(_p, _r) {
     if (_r == gmsa_plan_result.FOUND) {
         var _n = __gmsa_plan_collect_chain(_p, _p.__repair_b, _p.__repair_s);
         if (__gmsa_plan_splice(_p, _p.__repair_s, _p.__repair_e)) {
-            _p.result = _r;
+            _p.result = _p.__g_short ? gmsa_plan_result.OUT_OF_BUDGET : _r; // a goal in the repair may not be proven cheapest
             _p.__fresh_from = _p.__repair_s;
             _p.__fresh_to = _p.__repair_s + _p.__out_count;
             for (var _i = 0; _i < _n; _i++) {
@@ -1050,12 +1058,25 @@ function __gmsa_plan_goal_end(_p, _found) {
     __gmsa_plan_out(_p, 4, _p.__g_goal, -1, -1);
 }
 
+function __gmsa_plan_goal_best_met(_p) { // the budget ran out: the cheapest stored state that already meets the goal, if any
+    var _goal = _p.domain.goals[_p.__g_goal];
+    var _best = -1;
+    for (var _n = 0; _n < _p.__g_count; _n++) {
+        if (_best != -1 && _p.__g_cost[_n] >= _p.__g_cost[_best]) continue;
+        __gmsa_plan_goal_load(_p, _n);
+        if (__gmsa_plan_met(_p.state, _goal.conditions)) _best = _n;
+    }
+    if (_best == -1) return false;
+    _p.__g_found = _best;
+    return true;
+}
+
 function __gmsa_plan_goal_record(_p) {
     var _o = _p.__trace_top;
     _p.__trace[_o] = 1;
     _p.__trace[_o + 1] = _p.nodes - _p.__g_start;
     _p.__trace[_o + 2] = 1;
-    _p.__trace[_o + 3] = -1;
+    _p.__trace[_o + 3] = _p.__g_closed[_p.__g_found] ? 1 : 0; // 1 when the chain is proven cheapest, 0 when the budget ran out first
     _p.__trace[_o + 4] = _p.__g_cost[_p.__g_found];
     var _nf = array_length(_p.state);
     for (var _i = 0; _i < _nf; _i++) _p.__trace[_o + 5 + _i] = _p.__g_state[_i];

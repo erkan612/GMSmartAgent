@@ -214,6 +214,26 @@ function test_plan_goal_search() {
                 }), "variety " + string(_bad[_i]));
             }
         });
+
+        gmsa_test_case("out of budget with a chain in hand: the cheapest one runs, unproven", function() {
+            var _d = __test_plan_count_up();
+            var _a = gmsa_plan_planner_create(_d, { count : 0, done : false }, { budget : 2 });
+            gmsa_test_assert_false(gmsa_plan_make(_a, "finish"), "nothing reaches it in 2 nodes");
+            gmsa_test_assert_equal(gmsa_plan_get_status(_a), gmsa_plan_status.FAILED);
+
+            var _b = gmsa_plan_planner_create(_d, { count : 0, done : false }, { budget : 6 });
+            gmsa_test_assert_true(gmsa_plan_make(_b, "finish"), "a chain was in hand");
+            gmsa_test_assert_equal(gmsa_plan_current(_b), "finish_slow", "the cheapest one found so far");
+            gmsa_test_assert_equal(gmsa_plan_last_result(_b), gmsa_plan_result.OUT_OF_BUDGET, "the result says the budget ran out");
+            gmsa_test_assert_true(string_pos("the budget ran out before it was proven cheapest", gmsa_plan_explain(_b)) > 0, "and explain says so");
+
+            var _c = gmsa_plan_planner_create(_d, { count : 0, done : false }, { budget : 100 });
+            gmsa_test_assert_true(gmsa_plan_make(_c, "finish"));
+            gmsa_test_assert_equal(gmsa_plan_length(_c), 6, "five count_ups and finish_fast");
+            gmsa_test_assert_equal(gmsa_plan_last_result(_c), gmsa_plan_result.FOUND);
+            gmsa_test_assert_equal(gmsa_plan_nodes_used(_c), 18);
+            gmsa_test_assert_true(string_pos("proven", gmsa_plan_explain(_c)) == 0, "proven, so nothing to add");
+        });
     });
 }
 
@@ -260,5 +280,16 @@ function __test_plan_camp_varied(_variety) {
     gmsa_plan_add_step(_d, "build_fire", { requires : [["has_wood", true]], effects : [["fire", true], ["has_wood", false]] });
     gmsa_plan_add_step(_d, "camp", { effects : [["has_axe", true], ["at_tree", true]], cost : 9 });
     gmsa_plan_add_goal(_d, "warm", { conditions : [["fire", true]], variety : _variety });
+    return gmsa_plan_domain_build(_d);
+}
+
+function __test_plan_count_up() { // finishing slowly costs 10, counting to five and finishing fast costs 6
+    var _d = gmsa_plan_domain_create("count up");
+    gmsa_plan_add_fact(_d, "count", function(_o) { return _o.count; });
+    gmsa_plan_add_fact(_d, "done", function(_o) { return _o.done; });
+    gmsa_plan_add_step(_d, "count_up", { effects : [["count", "+", 1]] });
+    gmsa_plan_add_step(_d, "finish_fast", { requires : [["count", ">=", 5]], effects : [["done", true]] });
+    gmsa_plan_add_step(_d, "finish_slow", { effects : [["done", true]], cost : 10 });
+    gmsa_plan_add_goal(_d, "finish", { conditions : [["done", true]] });
     return gmsa_plan_domain_build(_d);
 }
