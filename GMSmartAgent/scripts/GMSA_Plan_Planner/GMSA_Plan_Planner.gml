@@ -634,7 +634,7 @@ function __gmsa_plan_splice(_p, _s, _e) {
     }
     for (var _i = 0; _i < _p.__out_count; _i++) {
         var _aux = _p.__out_aux[_i];
-        if (_p.__out_kind[_i] == 1) _aux = __gmsa_plan_keep_record(_p, _aux);
+        if (_p.__out_kind[_i] == 1 || _p.__out_kind[_i] == 3) _aux = __gmsa_plan_keep_record(_p, _aux);
         _w = __gmsa_plan_spare(_p, _w, _p.__out_kind[_i], _p.__out_index[_i], _p.__out_method[_i], _aux);
     }
     for (var _i = _e + 1; _i < _p.__run_count; _i++) {

@@ -53,5 +53,24 @@ function test_plan_goal_explain() {
                 "dinner (running, step 1 of 6)\n  dinner: cooked\n  > forage\n    warm: 4 steps, cost 10, searched "
                 + string(_p.__plan_trace[_p.__run_aux[2] + 1]) + " nodes\n      get_axe\n      walk_to_tree\n      chop\n      build_fire\n    cook");
         });
+
+        gmsa_test_case("a repaired goal explains and reports its new search", function() {
+            var _d = __test_plan_camp_live();
+            var _seen = { axe : -1 };
+            gmsa_plan_add_listener(_d, method(_seen, function(_r) {
+                if (_r.kind == gmsa_plan_report.STEP_SUCCESS && _r.step_name == "walk_to_tree") axe = _r.state[0];
+            }));
+            var _o = __test_plan_camper();
+            var _p = gmsa_plan_planner_create(_d, _o);
+            gmsa_plan_make(_p, "warm");   // get_axe, walk_to_tree, chop, build_fire
+            _o.has_axe = true;
+            gmsa_plan_step_done(_p);
+            gmsa_plan_step_failed(_p);    // walk_to_tree didn't work: the goal is searched again, with the axe in hand
+            gmsa_test_assert_equal(gmsa_plan_explain(_p),
+                "warm (running, step 1 of 3)\n  warm: 3 steps, cost 8, searched 15 nodes\n  > walk_to_tree\n    chop\n    build_fire");
+            _o.at_tree = true;
+            gmsa_plan_step_done(_p);
+            gmsa_test_assert_equal(_seen.axe, 1, "the step's report carries the facts of the new search");
+        });
     });
 }
