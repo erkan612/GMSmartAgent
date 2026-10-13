@@ -2147,7 +2147,7 @@ The search only follows facts. If a step needs the goblin to be somewhere or hol
 `gmsa_plan_explain(planner)` lists what the search couldn't reach and how close it came. A condition "none of the goal's steps changes" usually means a step is missing from the goal's `actions` list.
 
 **A goal runs out of budget, or planning it hitches.**
-Searches try every allowed step in every promising state. Keep the goal's `actions` short, leave pruning on, raise the planner's `budget`, and plan across frames as in [chapter 15](#15-planning-on-a-budget).
+Searches try every allowed step in every promising state. Keep the goal's `actions` short, leave pruning on, raise the planner's `budget`, and plan across frames as in [chapter 15](#15-planning-on-a-budget). A search that runs out after it already found a chain still runs the cheapest chain it found, and explain adds "the budget ran out before it was proven cheapest"; raise the budget when the plan must be the cheapest.
 
 **Every goblin takes the same route.**
 The same facts and costs give the same plan. Add `variety` to the goal, or let cost functions read something that differs per goblin.

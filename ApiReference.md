@@ -144,7 +144,7 @@ How the last planning call went, see [Plan](#plan).
 | `gmsa_plan_result.NONE` | Nothing planned yet |
 | `gmsa_plan_result.FOUND` | A plan was found |
 | `gmsa_plan_result.NO_PLAN` | No method combination works with the facts as they are |
-| `gmsa_plan_result.OUT_OF_BUDGET` | The search used its node budget before finding a plan |
+| `gmsa_plan_result.OUT_OF_BUDGET` | The search used its node budget before finding a plan, or before proving a goal's chain the cheapest. In that second case the plan runs, see [Goals](#goals) |
 
 ### gmsa_plan_report
 What a plan report is about, see [Reports](#reports).
@@ -2596,7 +2596,7 @@ gmsa_plan_get_status(planner) -> gmsa_plan_status
 gmsa_plan_last_result(planner) -> gmsa_plan_result
 ```
 
-How the last planning call (a make or a repair) went.
+How the last planning call (a make or a repair) went. `OUT_OF_BUDGET` while a plan runs means a goal in it ran out of budget after finding a chain, and the plan uses the cheapest chain it found, see [Goals](#goals).
 
 ### gmsa_plan_position
 
@@ -2741,7 +2741,7 @@ var _fight = gmsa_plan_add_task(_d, "fight", {
 
 The planner goes depth first: it breaks the task into its first method's subtasks, then the first of those, and so on, imagining each step's effects. When a step or method can't be used in the imagined state, it backs up to the latest task that has another method left and tries that. This can undo a task that already looked finished, when a later step needs it done differently.
 
-- **Nodes.** Every step and every method tried costs one node. A planning call stops with `OUT_OF_BUDGET` when it has used its budget, it never goes over.
+- **Nodes.** Every step and every method tried costs one node. A planning call stops with `OUT_OF_BUDGET` when it has used its budget, it never goes over. A goal that has already found a chain by then keeps the cheapest one it found, see [Goals](#goals).
 - **Depth.** A task nested deeper than the planner's `depth` fails that branch only, the search goes on elsewhere.
 - **No allocations.** The imagined state, the to-do list, the choices and the plan live in arrays the planner reuses. Planning allocates nothing after its first calls.
 
@@ -2860,6 +2860,7 @@ The planner runs an A* search over imagined states: from the facts as they are, 
 - **Costs are what you choose them to be.** Seconds of work, walking distance, risk, money. A cost function sees the imagined state, so a step can cost more or less depending on where the agent will be by then, for example through a fact holding its position.
 - **Deterministic.** The same facts give the same chain. [Variety](#variety) adds controlled randomness.
 - **Bounded.** Every step tried in a state costs one node of the planner's `budget`. A goal over many steps uses nodes much faster than a recipe, so give goal planners a larger budget (2000 to 8000 is typical) and plan across frames when chains get long. Searching remembers the states it has seen, in arrays sized by the budget and reused.
+- **Out of budget with a chain in hand.** The search only knows a chain is the cheapest once nothing cheaper is left to try. When the budget runs out after some chain already reaches the goal, the planner takes the cheapest chain found so far: the plan runs, `gmsa_plan_last_result` says `OUT_OF_BUDGET`, and explain adds "the budget ran out before it was proven cheapest" to the goal's line. When no chain had reached the goal yet, the plan fails.
 - **A goal already met** gives an empty chain, and a plan that's done at once.
 - **Learned chances count.** With a [step chance](#gmsa_plan_set_step_chance) on the domain, such as [learned step reliability](#gmsa_plan_learn_steps), each step's cost is divided by its chance: unreliable steps get avoided without changing any cost.
 
