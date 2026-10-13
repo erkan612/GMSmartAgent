@@ -146,7 +146,6 @@
     {"id":{"name":"GMSA_Think","path":"scripts/GMSA_Think/GMSA_Think.yy",},},
     {"id":{"name":"KitScene","path":"scripts/KitScene/KitScene.yy",},},
     {"id":{"name":"Test_All","path":"scripts/Test_All/Test_All.yy",},},
-    {"id":{"name":"Test_Chapter_Numbers","path":"scripts/Test_Chapter_Numbers/Test_Chapter_Numbers.yy",},},
     {"id":{"name":"Test_Core","path":"scripts/Test_Core/Test_Core.yy",},},
     {"id":{"name":"Test_Curves","path":"scripts/Test_Curves/Test_Curves.yy",},},
     {"id":{"name":"Test_Debug","path":"scripts/Test_Debug/Test_Debug.yy",},},

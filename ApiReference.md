@@ -1585,6 +1585,7 @@ LambdaMART stores one row per outcome, so training on 500 outcomes takes about 0
 | Field | Description |
 | --- | --- |
 | `agent` | The agent that decided |
+| `profile` | The profile it was decided under. Its options are read through it, so a ticket stays right after [gmsa_agent_set_profile](#gmsa_agent_set_profile) |
 | `options` | Copies of the options on offer, with their feature values |
 | `chosen` | Index of the option acted on |
 | `probability` | The chance the agent had of picking it |
