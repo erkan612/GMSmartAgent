@@ -2316,8 +2316,9 @@ if (_decision != undefined) {
     if (_option != undefined) {
         gmsa_agent_set_current_option(agent, _option);
         if (_option.action.name == "loot") {
-            // keep a running plan, utility choosing loot again isn't a reason to start over
-            if (gmsa_plan_get_status(planner) != gmsa_plan_status.RUNNING) gmsa_plan_make(planner, "loot_chest");
+            // keep a plan that's running or still being made, utility choosing loot again isn't a reason to start over
+            var _status = gmsa_plan_get_status(planner);
+            if (_status != gmsa_plan_status.RUNNING && _status != gmsa_plan_status.PLANNING) gmsa_plan_make(planner, "loot_chest");
         } else {
             gmsa_plan_stop(planner);  // fleeing beats looting, drop the plan
         }

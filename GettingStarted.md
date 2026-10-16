@@ -918,7 +918,8 @@ When the goblin chooses it, the game asks for a plan. When it chooses anything e
     gmsa_agent_set_current_option(agent, _option);
     if (_option.action.name == "raid") {
         goal = noone;  // the plan does the walking
-        if (gmsa_plan_get_status(planner) != gmsa_plan_status.RUNNING) gmsa_plan_make(planner, "raid_chest");
+        var _status = gmsa_plan_get_status(planner);   // a plan running or still being made carries on
+        if (_status != gmsa_plan_status.RUNNING && _status != gmsa_plan_status.PLANNING) gmsa_plan_make(planner, "raid_chest");
     } else {
         gmsa_plan_stop(planner);
         goal = _option.target;
