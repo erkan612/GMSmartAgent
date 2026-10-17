@@ -923,9 +923,10 @@ gmsa_debug_draw_tree(gmsa_plan_lines(planner), 10, 300);
 | `"current"` | Green, with `>` before it |
 | `"done"` | Gray, ending in ", done" |
 | `"skipped"`, `"reason"` | Orange |
+| `"broken"` | Red, with `!` before it |
 | anything else | White |
 
-- `depth` indents by two spaces per level, and every tree line keeps a two character slot before its text, so the `>` never shifts the indentation.
+- `depth` indents by two spaces per level, and every tree line keeps a two character slot before its text, so the `>` and `!` never shift the indentation.
 - `repaired` lines get a faint yellow band behind them.
 - `progress`, 0 to 1, draws a thin bar under the line.
 - Up to `max` lines (default 40), then a line counting the rest. Restores the draw colour and alpha afterwards.
@@ -2706,6 +2707,20 @@ Methods ruled out by a score of 0 are listed as such, and the chosen method show
 
 When no plan was found, it lists each of the task's methods with its reason instead, or for a goal, what the search couldn't reach (see [Goals](#goals)). When the search ran out of budget, the methods it hadn't finished or tried say so. While planning, it's the title only, such as `loot_chest (planning, 140 of 250 nodes)`.
 
+When a running plan breaks and no repair works, it keeps the plan and marks where it broke with `!`: the step's failed condition in the facts as they are now, `failed` when your game reported it failed, or `failed 4 times in a row` when the retries ran out. A goal whose chain no longer reaches it gets a `!` line under its chain (`ready isn't reached anymore: wood is 0, needs at least 3`). Then `no repair worked:` and the same reasons a failed make gives, from the last search the repair tried:
+
+```
+escape (failed, no plan)
+  escape: by_key
+  ! take_key can't be done: key_there is false, needs true
+    leave
+no repair worked:
+escape has no method that works
+  by_key: take_key: key_there is false, needs true
+```
+
+When the retries ran out, nothing was searched, so the `!` line is the whole reason.
+
 ### Method order
 
 A task's methods are tried in the order you added them, the first that leads to a whole plan wins. Give methods a `score` and they're tried best first instead, so the situation decides between "steal the key" and "buy the key":
@@ -2760,6 +2775,8 @@ Before each step the planner reads the facts again and checks the rest of the pl
 1. The smallest task around the broken step is planned again. A task later in the plan is planned as if the steps before it were done, and the current step carries on. A task the current step belongs to starts over from the real facts.
 2. The new part is kept only if the rest of the plan still works after it.
 3. Otherwise the next larger task is tried, up to the top of the plan. If that can't be planned, the plan fails.
+
+The plan is also broken when a goal's chain no longer reaches the goal, even if every step in it could still be done (the wood the chain gathered was lost): the goal is searched again.
 
 A goal is repaired the same way: a broken step in its chain makes the goal search again from the real facts, the rest of the plan stays.
 
