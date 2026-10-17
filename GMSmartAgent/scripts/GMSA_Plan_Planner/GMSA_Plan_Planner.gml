@@ -36,6 +36,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         // a repair's climb: the task being replanned, its entries s to e, and how to search it
         __repair_s : 0, __repair_e : 0, __repair_kind : 0, __repair_index : 0, __repair_depth : 0,
         __broken : -1, __fail_cause : 0, // where a running plan broke when it failed, and why: 0 the facts, 1 a failed step, 2 the retries ran out
+        __picked_at : -1, __kept_target : undefined, // the entry the current target was picked for, so a repair elsewhere keeps it
         __repair_b : 0, __chain_task : [], __chain_method : [], __chain_aux : [], __chain_goal : [], // what a repair broke, kept for reports
         __report : { kind : 0, planner : undefined, task : -1, task_name : undefined, method : -1, method_name : undefined,
                      step : -1, step_name : undefined, chance : 1, reward : 0, state : undefined, goal : -1, goal_name : undefined },
@@ -72,8 +73,9 @@ function gmsa_plan_make(_planner, _name) {
     }
     var _root = _d.lookup[$ _name];
     _planner.goal = _name;
-    _planner.result = gmsa_plan_result.NONE;
+    _planner.status = gmsa_plan_status.IDLE;
     _planner.target = undefined;
+    _planner.__picked_at = -1;
     _planner.failures = 0;
     _planner.at = 0;
     _planner.__run_count = 0;
@@ -697,7 +699,10 @@ function __gmsa_plan_splice(_p, _s, _e) {
         __gmsa_plan_swap(_p);
         return false;
     }
-    if (_s <= _p.at) _p.at = _s;
+    if (_s <= _p.at) {
+        _p.at = _s;
+        _p.__picked_at = -1;
+    }
     _p.__run_steps = 0;
     for (var _i = 0; _i < _p.__run_count; _i++) if (_p.__run_kind[_i] == 0) _p.__run_steps += 1;
     return true;
@@ -845,6 +850,7 @@ function __gmsa_plan_settle(_p, _failed, _check) {
         var _broken = _p.at;
         if (_failed) {
             _p.failures += 1;
+            _p.__picked_at = -1;
             _p.__fail_cause = (_p.failures > _p.retries) ? 2 : 1;
             _res = (_p.failures > _p.retries) ? 0 : __gmsa_plan_repair(_p, _p.at);
         } else if (_check) {
@@ -875,7 +881,15 @@ function __gmsa_plan_settle(_p, _failed, _check) {
             return;
         }
         _p.status = gmsa_plan_status.RUNNING;
-        if (__gmsa_plan_pick_target(_p)) return;
+        if (_p.__picked_at == _p.at) {
+            _p.target = _p.__kept_target;
+            return;
+        }
+        if (__gmsa_plan_pick_target(_p)) {
+            _p.__picked_at = _p.at;
+            _p.__kept_target = _p.target;
+            return;
+        }
         // no target: the step can't start, same as failing
         __gmsa_plan_emit_step(_p, gmsa_plan_report.STEP_FAILURE);
         _failed = true;

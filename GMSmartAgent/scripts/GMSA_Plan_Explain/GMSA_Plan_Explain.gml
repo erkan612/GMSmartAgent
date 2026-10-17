@@ -1,4 +1,4 @@
-function gmsa_plan_lines(_planner) {
+function gmsa_plan_lines(_planner, _namer = undefined) {
     __gmsa_plan_check_planner(_planner);
     var _p = _planner;
     var _lines = [];
@@ -33,7 +33,10 @@ function gmsa_plan_lines(_planner) {
             var _k = "step";
             var _text = _steps[_p.__run_index[_i]].name;
             if (_i < _p.at) _k = "done";
-            else if (_i == _p.at && _p.status == gmsa_plan_status.RUNNING) _k = "current";
+            else if (_i == _p.at && _p.status == gmsa_plan_status.RUNNING) {
+                _k = "current";
+                if (_p.target != undefined) _text += " (target: " + __gmsa_plan_target_text(_p.target, _namer) + ")";
+            }
             if (_failed && _i == _p.__broken) {
                 _k = "broken";
                 _text += " " + __gmsa_plan_broken_text(_p);
@@ -54,14 +57,19 @@ function gmsa_plan_lines(_planner) {
     return _lines;
 }
 
-function gmsa_plan_explain(_planner) {
-    var _lines = gmsa_plan_lines(_planner);
+function gmsa_plan_explain(_planner, _namer = undefined) {
+    var _lines = gmsa_plan_lines(_planner, _namer);
     var _text = "";
     for (var _i = 0; _i < array_length(_lines); _i++) {
         if (_i > 0) _text += "\n";
         _text += __gmsa_plan_line_text(_lines[_i]);
     }
     return _text;
+}
+
+function __gmsa_plan_target_text(_target, _namer) { // as agents's debug names targets: the namer, else "struct" or string()
+    if (_namer != undefined) return string(_namer(_target));
+    return is_struct(_target) ? "struct" : string(_target);
 }
 
 // Internal

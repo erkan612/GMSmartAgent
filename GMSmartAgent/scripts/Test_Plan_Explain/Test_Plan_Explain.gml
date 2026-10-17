@@ -113,6 +113,28 @@ function test_plan_explain() {
             gmsa_test_assert_equal(gmsa_plan_explain(_p),
                 "escape (failed, too many failed steps)\n  escape: by_key\n  ! take_key failed 4 times in a row\n    leave");
         });
+		
+        gmsa_test_case("a repair later in the plan keeps the current step's target", function() {
+            var _o = __test_plan_woodsman();
+            var _p = gmsa_plan_planner_create(__test_plan_woods(), _o);
+            gmsa_plan_make(_p, "day");
+            gmsa_test_assert_equal(gmsa_plan_target(_p).name, "oak");
+            _o.prefer = "pine";   // the score would now pick the pine
+            _o.has_bed = false;   // breaks rest, later in the plan
+            gmsa_plan_refresh(_p);
+            gmsa_test_assert_equal(__test_plan_names(_p), "chop,sleep_ground", "rest was planned again");
+            gmsa_test_assert_equal(gmsa_plan_target(_p).name, "oak", "chop carries on at its tree");
+            gmsa_plan_step_failed(_p);
+            gmsa_test_assert_equal(gmsa_plan_target(_p).name, "pine", "a failure picks again");
+        });
+
+        gmsa_test_case("explain names the current step's target", function() {
+            var _p = gmsa_plan_planner_create(__test_plan_woods(), __test_plan_woodsman());
+            gmsa_plan_make(_p, "day");
+            gmsa_test_assert_equal(gmsa_plan_explain(_p, function(_tree) { return _tree.name; }),
+                "day (running, step 1 of 2)\n  day: work\n  > chop (target: oak)\n    rest: bed\n      sleep_bed");
+            gmsa_test_assert_true(string_pos("> chop (target: struct)", gmsa_plan_explain(_p)) > 0, "without a namer");
+        });
     });
 }
 
@@ -148,4 +170,25 @@ function __test_plan_door() { // take the key, then leave: nothing else works
     var _escape = gmsa_plan_add_task(_d, "escape");
     gmsa_plan_add_method(_escape, "by_key", { subtasks : ["take_key", "leave"] });
     return gmsa_plan_domain_build(_d);
+}
+
+function __test_plan_woods() { // chop at a tree, then rest in bed, or on the ground without one
+    var _d = gmsa_plan_domain_create("woods");
+    gmsa_plan_add_fact(_d, "has_bed", function(_o) { return _o.has_bed; });
+    gmsa_plan_add_step(_d, "chop", {
+        targets : function(_o) { return _o.trees; },
+        score   : function(_o, _tree) { return (_tree.name == _o.prefer) ? 2 : 1; },
+    });
+    gmsa_plan_add_step(_d, "sleep_bed", { requires : [["has_bed", true]] });
+    gmsa_plan_add_step(_d, "sleep_ground");
+    var _rest = gmsa_plan_add_task(_d, "rest");
+    gmsa_plan_add_method(_rest, "bed", { requires : [["has_bed", true]], subtasks : ["sleep_bed"] });
+    gmsa_plan_add_method(_rest, "ground", { subtasks : ["sleep_ground"] });
+    var _day = gmsa_plan_add_task(_d, "day");
+    gmsa_plan_add_method(_day, "work", { subtasks : ["chop", "rest"] });
+    return gmsa_plan_domain_build(_d);
+}
+
+function __test_plan_woodsman() {
+    return { has_bed : true, prefer : "oak", trees : [{ name : "oak" }, { name : "pine" }] };
 }
