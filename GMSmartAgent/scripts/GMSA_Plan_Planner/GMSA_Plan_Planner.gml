@@ -35,6 +35,7 @@ function gmsa_plan_planner_create(_domain, _owner, _params = {}) {
         __deadline : undefined, __resume_choice : false, __paused_once : false, __mode : 0, __work : undefined, __fresh_from : -1, __fresh_to : -1, __slice_first : false,
         // a repair's climb: the task being replanned, its entries s to e, and how to search it
         __repair_s : 0, __repair_e : 0, __repair_kind : 0, __repair_index : 0, __repair_depth : 0,
+        __broken : -1, __fail_cause : 0, // where a running plan broke when it failed, and why: 0 the facts, 1 a failed step, 2 the retries ran out
         __repair_b : 0, __chain_task : [], __chain_method : [], __chain_aux : [], __chain_goal : [], // what a repair broke, kept for reports
         __report : { kind : 0, planner : undefined, task : -1, task_name : undefined, method : -1, method_name : undefined,
                      step : -1, step_name : undefined, chance : 1, reward : 0, state : undefined, goal : -1, goal_name : undefined },
@@ -141,6 +142,7 @@ function gmsa_plan_refresh(_planner) {
     __gmsa_plan_read_real(_planner);
     var _bad = __gmsa_plan_broken_at(_planner, _planner.at);
     if (_bad == -1) return _planner.status;
+    _planner.__fail_cause = 0;
     __gmsa_plan_start_slice(_planner, __gmsa_plan_own_slice(_planner));
     __gmsa_plan_after_repair(_planner, __gmsa_plan_repair(_planner, _bad), false);
     _planner.__deadline = undefined;
@@ -820,6 +822,7 @@ function __gmsa_plan_fail(_p, _b) {
     if (_b >= 0 && _b < _p.__run_count) __gmsa_plan_emit_chain(_p, gmsa_plan_report.METHOD_FAILURE, _b, -1, 0);
     _p.status = gmsa_plan_status.FAILED;
     _p.target = undefined;
+    _p.__broken = _b;
 }
 
 function __gmsa_plan_seek(_p, _from, _goals = false) { // _goals: stop at a goal's end the real facts don't meet, for settle to repair
@@ -842,6 +845,7 @@ function __gmsa_plan_settle(_p, _failed, _check) {
         var _broken = _p.at;
         if (_failed) {
             _p.failures += 1;
+            _p.__fail_cause = (_p.failures > _p.retries) ? 2 : 1;
             _res = (_p.failures > _p.retries) ? 0 : __gmsa_plan_repair(_p, _p.at);
         } else if (_check) {
             __gmsa_plan_read_real(_p);
@@ -851,6 +855,7 @@ function __gmsa_plan_settle(_p, _failed, _check) {
                 var _bad = __gmsa_plan_broken_at(_p, _p.at);
                 if (_bad != -1) {
                     _broken = _bad;
+                    _p.__fail_cause = 0;
                     _res = __gmsa_plan_repair(_p, _bad);
                 }
             }

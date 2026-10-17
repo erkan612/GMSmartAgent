@@ -107,6 +107,7 @@ function __gmsa_debug_tree_text(_line) {
     switch (_line.kind) {
         case "title": case "note": return _line.text;
         case "current": return _indent + "> " + _line.text;
+        case "broken": return _indent + "! " + _line.text;
         case "done": return _indent + "  " + _line.text + ", done";
     }
     return _indent + "  " + _line.text;
@@ -115,6 +116,7 @@ function __gmsa_debug_tree_text(_line) {
 function __gmsa_debug_tree_colour(_kind) {
     switch (_kind) {
         case "current": return c_lime;
+        case "broken": return c_red;
         case "done": return c_gray;
         case "skipped": case "reason": return c_orange;
     }

@@ -17,19 +17,28 @@ function gmsa_plan_lines(_planner) {
         return _lines;
     }
     var _steps = _p.domain.steps;
+    var _failed = (_p.status == gmsa_plan_status.FAILED); // a running plan that broke and couldn't be repaired
     var _depth = 0;
     for (var _i = 0; _i < _p.__run_count; _i++) {
         var _kind = _p.__run_kind[_i];
         if (_kind == 2 || _kind == 4) {
+            if (_kind == 4 && _failed && _i == _p.__broken) {
+                array_push(_lines, __gmsa_plan_line("broken", _depth, _p.domain.goals[_p.__run_index[_i]].name + " " + __gmsa_plan_broken_text(_p)));
+            }
             _depth -= 1;
             continue;
         }
         var _fresh = (_i >= _p.__fresh_from && _i < _p.__fresh_to);
         if (_kind == 0) {
             var _k = "step";
+            var _text = _steps[_p.__run_index[_i]].name;
             if (_i < _p.at) _k = "done";
             else if (_i == _p.at && _p.status == gmsa_plan_status.RUNNING) _k = "current";
-            var _line = __gmsa_plan_line(_k, _depth, _steps[_p.__run_index[_i]].name);
+            if (_failed && _i == _p.__broken) {
+                _k = "broken";
+                _text += " " + __gmsa_plan_broken_text(_p);
+            }
+            var _line = __gmsa_plan_line(_k, _depth, _text);
             _line.repaired = _fresh;
             array_push(_lines, _line);
             continue;
@@ -37,6 +46,10 @@ function gmsa_plan_lines(_planner) {
         if (_kind == 3) __gmsa_plan_goal_lines(_p, _i, _depth, _fresh, _lines);
         else __gmsa_plan_task_lines(_p, _i, _depth, _fresh, _lines);
         _depth += 1;
+    }
+    if (_failed && _p.__fail_cause != 2 && _p.__repair_kind != 0) {
+        array_push(_lines, __gmsa_plan_line("note", 0, "no repair worked:"));
+        __gmsa_plan_reasons(_p, _p.__repair_kind, _p.__repair_index, _lines);
     }
     return _lines;
 }
@@ -61,6 +74,7 @@ function __gmsa_plan_line_text(_line) {
     switch (_line.kind) {
         case "title": case "note": return _line.text;
         case "current": return _indent + "> " + _line.text;
+        case "broken": return _indent + "! " + _line.text;
         case "done": return _indent + "  " + _line.text + ", done";
     }
     return _indent + "  " + _line.text;
@@ -120,17 +134,21 @@ function __gmsa_plan_task_lines(_p, _i, _depth, _fresh, _lines) {
 }
 
 function __gmsa_plan_failure_lines(_p, _lines) {
+    var _root = _p.domain.lookup[$ _p.goal];
+    __gmsa_plan_reasons(_p, _root.kind, _root.index, _lines);
+}
+
+function __gmsa_plan_reasons(_p, _kind, _index, _lines) { // why the last search, of this step, task or goal, found nothing, on the facts it started from
     var _d = _p.domain;
-    var _root = _d.lookup[$ _p.goal];
-    for (var _f = 0; _f < array_length(_p.state); _f++) _p.state[_f] = _p.__real[_f];
-    if (_root.kind == 0) {
-        var _step = _d.steps[_root.index];
+    for (var _f = 0; _f < array_length(_p.state); _f++) _p.state[_f] = _p.__base[_f];
+    if (_kind == 0) {
+        var _step = _d.steps[_index];
         var _why = __gmsa_plan_why(_p, _step.requires, _step.check);
         array_push(_lines, __gmsa_plan_line("note", 0, _step.name + ((_why == undefined) ? " can be done, but has no target" : " can't be done: " + _why)));
-    } else if (_root.kind == 3) {
-        __gmsa_plan_goal_failure_lines(_p, _d.goals[_root.index], _lines);
+    } else if (_kind == 3) {
+        __gmsa_plan_goal_failure_lines(_p, _d.goals[_index], _lines);
     } else {
-        var _task = _d.tasks[_root.index];
+        var _task = _d.tasks[_index];
         var _out = (_p.result == gmsa_plan_result.OUT_OF_BUDGET);
         array_push(_lines, __gmsa_plan_line("note", 0, _task.name + (_out ? ": the search ran out of budget before finding a method that works" : " has no method that works")));
         for (var _m = 0; _m < array_length(_task.methods); _m++) {
@@ -142,6 +160,31 @@ function __gmsa_plan_failure_lines(_p, _lines) {
         }
     }
     if (_p.depth_cut) array_push(_lines, __gmsa_plan_line("note", 0, "the depth cap cut some branches"));
+}
+
+function __gmsa_plan_broken_text(_p) { // why a running plan broke at __broken, for its line in a failed plan
+    if (_p.__fail_cause == 2) return "failed " + string(_p.failures) + " times in a row";
+    if (_p.__fail_cause == 1) return "failed";
+    var _d = _p.domain;
+    var _b = _p.__broken;
+    for (var _f = 0; _f < array_length(_p.state); _f++) _p.state[_f] = _p.__real[_f];
+    _p.undo_count = 0;
+    for (var _i = _p.at; _i < _b; _i++) {
+        if (_p.__run_kind[_i] == 0) __gmsa_plan_apply(_p, _d.steps[_p.__run_index[_i]].effects);
+    }
+    var _text;
+    if (_p.__run_kind[_b] == 4) {
+        var _c = _d.goals[_p.__run_index[_b]].conditions;
+        var _why = undefined;
+        for (var _k = 0; _k < _c.count && _why == undefined; _k++) _why = __gmsa_plan_why_one(_p, _c, _k);
+        _text = "isn't reached anymore" + ((_why == undefined) ? "" : ": " + _why);
+    } else {
+        var _step = _d.steps[_p.__run_index[_b]];
+        var _why = __gmsa_plan_why(_p, _step.requires, _step.check);
+        _text = "can't be done" + ((_why == undefined) ? "" : ": " + _why);
+    }
+    __gmsa_plan_undo(_p, 0);
+    return _text;
 }
 
 function __gmsa_plan_task_scored(_task) {

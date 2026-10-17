@@ -93,6 +93,26 @@ function test_plan_explain() {
                 "job (failed, ran out of budget after 1 nodes)\njob: the search ran out of budget before finding a method that works"
                 + "\n  direct: the budget ran out before it was finished\n  other: not tried before the budget ran out");
         });
+		
+        gmsa_test_case("a running plan that breaks for good says where and why", function() {
+            var _o = { key_there : true, has_key : false };
+            var _p = gmsa_plan_planner_create(__test_plan_door(), _o);
+            gmsa_plan_make(_p, "escape");
+            _o.key_there = false;   // someone else took it
+            gmsa_plan_refresh(_p);
+            gmsa_test_assert_equal(gmsa_plan_explain(_p),
+                "escape (failed, no plan)\n  escape: by_key\n  ! take_key can't be done: key_there is false, needs true\n    leave"
+                + "\nno repair worked:\nescape has no method that works\n  by_key: take_key: key_there is false, needs true");
+        });
+
+        gmsa_test_case("a step that keeps failing says how often", function() {
+            var _o = { key_there : true, has_key : false };
+            var _p = gmsa_plan_planner_create(__test_plan_door(), _o);
+            gmsa_plan_make(_p, "escape");
+            repeat (4) gmsa_plan_step_failed(_p);   // stuck, and no fact says why
+            gmsa_test_assert_equal(gmsa_plan_explain(_p),
+                "escape (failed, too many failed steps)\n  escape: by_key\n  ! take_key failed 4 times in a row\n    leave");
+        });
     });
 }
 
@@ -116,5 +136,16 @@ function __test_plan_two_goals() { // recipes whose first goal works and whose l
     gmsa_plan_add_method(_after, "other", { subtasks : ["finish"] });
     var _only = gmsa_plan_add_task(_d, "only");
     gmsa_plan_add_method(_only, "direct", { subtasks : ["get_a", "get_b"] });
+    return gmsa_plan_domain_build(_d);
+}
+
+function __test_plan_door() { // take the key, then leave: nothing else works
+    var _d = gmsa_plan_domain_create("door");
+    gmsa_plan_add_fact(_d, "key_there", function(_o) { return _o.key_there; });
+    gmsa_plan_add_fact(_d, "has_key", function(_o) { return _o.has_key; });
+    gmsa_plan_add_step(_d, "take_key", { requires : [["key_there", true]], effects : [["has_key", true]] });
+    gmsa_plan_add_step(_d, "leave", { requires : [["has_key", true]] });
+    var _escape = gmsa_plan_add_task(_d, "escape");
+    gmsa_plan_add_method(_escape, "by_key", { subtasks : ["take_key", "leave"] });
     return gmsa_plan_domain_build(_d);
 }
