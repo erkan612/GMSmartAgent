@@ -2537,7 +2537,7 @@ The name of the step your game should be doing, undefined unless a plan is runni
 gmsa_plan_target(planner) -> any
 ```
 
-The target picked for the current step, undefined when the step has no targets or no plan is running.
+The target picked for the current step, undefined when the step has no targets or no plan is running. It stays the same while the step is current: a repair elsewhere in the plan keeps it, and a new step, a failure or a repair that replans the step's own part picks again.
 
 ### gmsa_plan_step_done
 
@@ -2663,10 +2663,12 @@ Takes the planner out of its scheduler, it plans inside your calls again. **Retu
 ### gmsa_plan_lines
 
 ```gml
-gmsa_plan_lines(planner) -> array
+gmsa_plan_lines(planner, [namer]) -> array
 ```
 
 The plan as data, one struct per line, for your own UI or [gmsa_debug_draw_tree](#gmsa_debug_draw_tree). `gmsa_plan_explain` is these lines as text.
+
+The current step's line names its target, `chop (target: oak)`. `namer` is an optional `function(target)` returning text for it. Without it, struct targets show as `struct` and anything else through `string()`, as in [gmsa_debug_lines](#gmsa_debug_lines).
 
 | Field | Description |
 | --- | --- |
@@ -2681,7 +2683,7 @@ A new array each call: meant for debugging and UI, not for every agent every fra
 ### gmsa_plan_explain
 
 ```gml
-gmsa_plan_explain(planner) -> string
+gmsa_plan_explain(planner, [namer]) -> string
 ```
 
 The goal, the status and the plan as a tree: each task with the method it uses, the methods tried before it with the reason they didn't work, the steps marked done, and `>` on the current one. Every line keeps a two character slot for the arrow, so indentation always shows the nesting.
@@ -2957,6 +2959,7 @@ gmsa_plan_add_step(_d, "grab_coin", {
 ```
 
 - The best score wins. Without a score the first target wins. A score of 0 or less rules a target out.
+- The target is picked once, when the step becomes current, and kept while it runs. A repair later in the plan doesn't change it; a failure, or a repair of the step's own task or goal, picks again.
 - No target at all counts as a failed step: the plan is repaired, using a retry.
 - When the target disappears during the step, report `gmsa_plan_step_failed`.
 
