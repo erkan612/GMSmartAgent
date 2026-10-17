@@ -234,6 +234,50 @@ function test_plan_goal_search() {
             gmsa_test_assert_equal(gmsa_plan_nodes_used(_c), 18);
             gmsa_test_assert_true(string_pos("proven", gmsa_plan_explain(_c)) == 0, "proven, so nothing to add");
         });
+		
+        gmsa_test_case("a chain that no longer reaches its goal is searched again", function() {
+            var _o = { wood : 0, fire : false };
+            var _p = gmsa_plan_planner_create(__test_plan_pile(), _o);
+            gmsa_plan_make(_p, "ready");   // chop, chop, rub
+            __test_plan_pile_do(_o, "chop");
+            gmsa_plan_step_done(_p);
+            _o.wood = 0;                   // rain soaks the pile: chop and rub still run, but end with no wood
+            gmsa_plan_refresh(_p);
+            gmsa_test_assert_equal(gmsa_plan_position(_p), 0, "searched again from the soaked pile");
+            var _guard = 0;
+            while (gmsa_plan_get_status(_p) == gmsa_plan_status.RUNNING && _guard++ < 20) {
+                __test_plan_pile_do(_o, gmsa_plan_current(_p));
+                gmsa_plan_step_done(_p);
+            }
+            gmsa_test_assert_equal(gmsa_plan_get_status(_p), gmsa_plan_status.DONE);
+            gmsa_test_assert_true(_o.fire && _o.wood >= 3, "done means the goal is met");
+        });
+
+        gmsa_test_case("a change during the last step is caught when it's reported", function() {
+            var _o = { wood : 0, fire : false };
+            var _p = gmsa_plan_planner_create(__test_plan_pile(), _o);
+            gmsa_plan_make(_p, "ready");
+            repeat (2) {
+                __test_plan_pile_do(_o, "chop");
+                gmsa_plan_step_done(_p);
+            }
+            __test_plan_pile_do(_o, "rub");
+            _o.wood = 0;                   // the rain comes while she rubs
+            gmsa_plan_step_done(_p);
+            gmsa_test_assert_equal(gmsa_plan_get_status(_p), gmsa_plan_status.RUNNING, "not done");
+            gmsa_test_assert_equal(gmsa_plan_current(_p), "chop", "the goal needs wood again");
+        });
+
+        gmsa_test_case("a goal already met that stops being met is planned again", function() {
+            var _o = { wood : 3, fire : true };
+            var _p = gmsa_plan_planner_create(__test_plan_pile(), _o);
+            gmsa_plan_make(_p, "evening");
+            gmsa_test_assert_equal(__test_plan_names(_p), "sit,sleep", "ready is already met");
+            _o.wood = 0;
+            gmsa_plan_refresh(_p);
+            gmsa_test_assert_equal(__test_plan_names(_p), "sit,chop,sleep");
+            gmsa_test_assert_equal(gmsa_plan_current(_p), "sit", "the current step carries on");
+        });
     });
 }
 
@@ -292,4 +336,25 @@ function __test_plan_count_up() { // finishing slowly costs 10, counting to five
     gmsa_plan_add_step(_d, "finish_slow", { effects : [["done", true]], cost : 10 });
     gmsa_plan_add_goal(_d, "finish", { conditions : [["done", true]] });
     return gmsa_plan_domain_build(_d);
+}
+
+function __test_plan_pile() { // a fire and three wood for the night: chop, chop, rub from nothing
+    var _d = gmsa_plan_domain_create("pile");
+    gmsa_plan_add_fact(_d, "wood", function(_o) { return _o.wood; });
+    gmsa_plan_add_fact(_d, "fire", function(_o) { return _o.fire; });
+    gmsa_plan_add_step(_d, "chop", { effects : [["wood", "+", 3]], cost : 3 });
+    gmsa_plan_add_step(_d, "rub", { requires : [["wood", ">=", 3]], effects : [["wood", "-", 3], ["fire", true]], cost : 6 });
+    gmsa_plan_add_step(_d, "sit");
+    gmsa_plan_add_step(_d, "sleep");
+    gmsa_plan_add_goal(_d, "ready", { conditions : [["fire", true], ["wood", ">=", 3]], actions : ["chop", "rub"] });
+    var _evening = gmsa_plan_add_task(_d, "evening");
+    gmsa_plan_add_method(_evening, "rest", { subtasks : ["sit", "ready", "sleep"] });
+    return gmsa_plan_domain_build(_d);
+}
+
+function __test_plan_pile_do(_o, _step) {
+    switch (_step) {
+        case "chop": _o.wood += 3; break;
+        case "rub":  _o.wood -= 3; _o.fire = true; break;
+    }
 }

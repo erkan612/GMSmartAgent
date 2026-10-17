@@ -603,7 +603,15 @@ function __gmsa_plan_broken_at(_p, _from) {
     _p.undo_count = 0;
     var _bad = -1;
     for (var _i = _from; _i < _p.__run_count; _i++) {
-        if (_p.__run_kind[_i] != 0) continue;
+        var _kind = _p.__run_kind[_i];
+        if (_kind == 4) {
+            if (!__gmsa_plan_met(_p.state, _p.domain.goals[_p.__run_index[_i]].conditions)) {
+                _bad = _i;
+                break;
+            }
+            continue;
+        }
+        if (_kind != 0) continue;
         var _step = _steps[_p.__run_index[_i]];
         if (!__gmsa_plan_met(_p.state, _step.requires) || (_step.check != undefined && !_step.check(_p.state))) {
             _bad = _i;
@@ -814,12 +822,12 @@ function __gmsa_plan_fail(_p, _b) {
     _p.target = undefined;
 }
 
-function __gmsa_plan_seek(_p, _from) {
+function __gmsa_plan_seek(_p, _from, _goals = false) { // _goals: stop at a goal's end the real facts don't meet, for settle to repair
     var _i = _from;
     var _listening = __gmsa_plan_listening(_p);
     while (_i < _p.__run_count && _p.__run_kind[_i] != 0) {
-        // passing a task's or a goal's end: everything inside it finished
         var _k = _p.__run_kind[_i];
+        if (_goals && _k == 4 && !__gmsa_plan_met(_p.__real, _p.domain.goals[_p.__run_index[_i]].conditions)) break;
         if (_listening && (_k == 2 || _k == 4)) {
             __gmsa_plan_emit_entry(_p, gmsa_plan_report.METHOD_SUCCESS, __gmsa_plan_enclosing(_p, _i), -1, 0);
         }
@@ -836,9 +844,10 @@ function __gmsa_plan_settle(_p, _failed, _check) {
             _p.failures += 1;
             _res = (_p.failures > _p.retries) ? 0 : __gmsa_plan_repair(_p, _p.at);
         } else if (_check) {
-            __gmsa_plan_seek(_p, _p.at);
+            __gmsa_plan_read_real(_p);
+            __gmsa_plan_seek(_p, _p.at, true);
             if (_p.at < _p.__run_count) {
-                __gmsa_plan_read_real(_p);
+                for (var _f = 0; _f < array_length(_p.__real); _f++) _p.state[_f] = _p.__real[_f];
                 var _bad = __gmsa_plan_broken_at(_p, _p.at);
                 if (_bad != -1) {
                     _broken = _bad;
