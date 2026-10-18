@@ -23,6 +23,11 @@ timing = { timing : "on_time", sure : 0 }; // his guess at when the player will 
 tactic = "";        // "hold" or "quick" when he plays against that timing
 windup_time = 0;    // this attack's windup, shorter when quick
 windup_at = 0;      // when the windup started, on the game clock
+hold_dir = 0;       // where he was aiming when the hold began
+recover_time = 0;   // this attack's recovery, shorter when he's ready for the player's answer
+after = undefined;  // what the player does after his attack, while he watches
+follow = { answer : "wait", sure : 0 }; // his guess at it
+following = false;  // the current attack is a follow-up he planned
 thought = "";
 speech = "";        // what he says out loud, in a bubble
 speech_time = 0;
@@ -45,22 +50,29 @@ start = function(_state) {
 take = function(_option) { // acts on a fresh choice from his agent
     gmsa_agent_set_current_option(agent, _option);
     doing = _option.action.name;
+    following = (doing == "counter" || doing == "chase" || doing == "brace" || doing == "ward");
+    if (following) varn_taunt_follow(id);
+    gmsa_agent_set_input(agent, "expect_punish", 0); // the follow-up window ends with this choice
+    gmsa_agent_set_input(agent, "expect_gap", 0);
+    gmsa_agent_set_input(agent, "expect_shoot", 0);
     var _a = varn_attack(doing);
+    var _kind = varn_attack_base(doing);
     if (_a != undefined) {
         attack = _a;
         situation = duel_situation(id, target);
-        read = duel_read(doing, situation);
+        read = duel_read(_kind, situation);
         using_read = (read.sure >= DUEL_READ_SURE && read.dodge != "stay");
         thought = using_read ? "you'll dodge " + duel_dodge_words(read.dodge) + " (" + string(round(read.sure * 100)) + "%)" : "";
         timing = duel_timing_read();
         tactic = "";
-        if (timing.sure >= DUEL_READ_SURE && timing.timing == "early") tactic = "hold";
+        if (timing.sure >= DUEL_READ_SURE && timing.timing == "early" && using_read && read.dodge == "dodge_back") tactic = "hold"; // early and away: the roll is spent before the hit
         if (timing.sure >= DUEL_READ_SURE && timing.timing == "late") tactic = "quick";
         if (tactic != "") {
-            var _plan = (tactic == "hold") ? "you dodge early, I'll wait" : "you dodge late, quick one";
+            var _plan = (tactic == "hold") ? "you roll away early, I'll wait" : "you dodge late, quick one";
             thought = ((thought == "") ? "" : thought + ", ") + _plan + " (" + string(round(timing.sure * 100)) + "%)";
         }
-        windup_time = (tactic == "quick") ? _a.windup * VARN_QUICK : _a.windup;
+        //windup_time = (tactic == "quick") ? _a.windup * VARN_QUICK : _a.windup;
+        windup_time = _a.windup * VARN_WINDUP_SCALE * ((tactic == "quick") ? VARN_QUICK : 1);
         windup_at = demo_now();
         if (using_read || tactic != "") varn_taunt_read(id);
         var _to = point_direction(x, y, target.x, target.y);
@@ -81,15 +93,16 @@ take = function(_option) { // acts on a fresh choice from his agent
             else if (using_read && read.dodge == "dodge_right") sweep_side = -90;
             else sweep_side = (angle_difference(_to, facing) >= 0) ? 90 : -90;
         }
-        watch = doing;
+        watch = _kind;
         watch_x = target.x;
         watch_y = target.y;
         watch_from = _to;
         if (_a.shape == varn_shape.CIRCLE) aim_slam(infinity); // after the watch, the aim measures from where the player stood
+        if (!varn_threatens(id)) watch = ""; // an attack that can't reach the player asks no answer of them
         gmsa_agent_set_busy(agent, true);
         gmnav_agent_stop(nav);
         start(varn_state.WINDUP);
-    } else if (doing == "guard") {
+    } else if (doing == "guard" || doing == "brace" || doing == "block" || doing == "ward") {
         gmsa_agent_set_busy(agent, true);
         gmnav_agent_stop(nav);
         start(varn_state.GUARD);
@@ -104,9 +117,34 @@ finish = function() { // an attack or guard is over: he thinks again at once
     thought = "";
     using_read = false;
     tactic = "";
+    following = false;
     attack = undefined;
     swing = undefined;
     start(varn_state.FREE);
+};
+
+after_start = function(_landed) { // his attack is over: guess what the player does next, and start watching what they really do
+    if (after != undefined) after_end();
+    var _base = varn_attack_base(doing);
+    var _dist = point_distance(x, y, target.x, target.y);
+    after = { attack : _base, landed : _landed, close : _dist < 170, dist : _dist, at : demo_now(), attacked : false, shot : false, drank : false };
+    follow = duel_after_read(_base, _landed, _dist < 170);
+    var _sure = (follow.sure >= DUEL_READ_SURE && follow.answer != "wait") ? follow.sure : 0;
+    gmsa_agent_set_input(agent, "expect_punish", (follow.answer == "punish") ? _sure : 0);
+    gmsa_agent_set_input(agent, "expect_gap", (follow.answer == "back_off" || follow.answer == "drink") ? _sure : 0);
+    gmsa_agent_set_input(agent, "expect_shoot", (follow.answer == "shoot") ? _sure : 0);
+    recover_time = attack.recover;
+    if (_sure > 0) {
+        thought = duel_after_words(follow.answer) + " (" + string(round(_sure * 100)) + "%)";
+        if (follow.answer == "punish" || follow.answer == "drink") recover_time = min(recover_time, VARN_SHORT_RECOVER);
+    } else {
+        follow.sure = 0;
+    }
+};
+
+after_end = function() { // the watch is over: learn what the player did
+    duel_after_learn(after, duel_after_kind(after, point_distance(x, y, target.x, target.y)));
+    after = undefined;
 };
 
 aim_slam = function(_step) { // moves the slam toward where the player will be. _step is how far it may move, infinity to snap
@@ -165,5 +203,6 @@ on_death = function() {
     thought = "";
     using_read = false;
     tactic = "";
+    following = false;
     varn_say(id, "My oath... ends.");
 };

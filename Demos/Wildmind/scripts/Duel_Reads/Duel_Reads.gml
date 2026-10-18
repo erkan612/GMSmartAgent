@@ -4,6 +4,7 @@
 #macro DUEL_MOVE_MIN 12         // moving slower than this, in px per second, counts as standing still
 #macro DUEL_EARLY 0.3           // a roll or dodge pressed more than this many seconds before the hit is early
 #macro DUEL_LATE 0.15           // less than this is late
+#macro DUEL_AFTER_WINDOW 0.8    // seconds after an attack that Varn watches what the player does
 
 function duel_dodge_profile() { // the player's answer to an attack, as choices a model can learn
     static _profile = __duel_dodge_profile_build();
@@ -48,6 +49,10 @@ function duel_reads_create(_player) { // a fresh memory of the player, one per f
         timing_model : gmsa_learn_count_create({ bins : 1, inputs : ["attack"], confidence_k : 3, half_life : 10 }), // one bin, so every attack teaches the same timing. fades fast, so he notices a change
         timing_avg   : 0, // seconds before the hit, for the habits panel
         dodge_dist   : 120, // how far the player's dodges carry, learned as he watches them
+        after_agent  : gmsa_agent_create(duel_after_profile(), _player),
+        after_model  : gmsa_learn_bayes_create({ inputs : ["attack", "landed", "close"], input_bins : { attack : 4, landed : 2, close : 2 }, smoothing : 1, confidence_k : 3, half_life : 20 }),
+        after_seen   : 0,
+        after_ctx    : undefined, // the last attack he watched an answer to, for the habits panel
         timing_seen  : 0,
     };
 }
@@ -173,4 +178,72 @@ function duel_dodge_words(_dodge) {
         case "dodge_in":    return "past me";
     }
     return "nowhere";
+}
+
+function duel_after_profile() { // what the player does after one of Varn's attacks, as choices a model can learn
+    static _profile = __duel_after_profile_build();
+    return _profile;
+}
+
+function __duel_after_profile_build() {
+    var _p = gmsa_profile_create("player_after");
+    gmsa_profile_add_input(_p, gmsa_input_push("attack")); // which attack it was, see varn_attack_slot
+    gmsa_profile_add_input(_p, gmsa_input_push("landed")); // whether it hit the player
+    gmsa_profile_add_input(_p, gmsa_input_push("close"));
+    gmsa_profile_add_action(_p, "punish");
+    gmsa_profile_add_action(_p, "shoot");
+    gmsa_profile_add_action(_p, "drink");
+    gmsa_profile_add_action(_p, "back_off");
+    gmsa_profile_add_action(_p, "wait");
+    gmsa_profile_set_features(_p, ["attack", "landed", "close"]);
+    return gmsa_profile_build(_p);
+}
+
+function __duel_after_inputs(_attack, _landed, _close) {
+    var _a = o_duel.reads.after_agent;
+    gmsa_agent_set_input(_a, "attack", varn_attack_slot(_attack));
+    gmsa_agent_set_input(_a, "landed", _landed ? 0.75 : 0.25);
+    gmsa_agent_set_input(_a, "close", _close ? 0.75 : 0.25);
+}
+
+function duel_after_read(_attack, _landed, _close) { // what Varn expects the player to do once this attack is over: { answer, sure }
+    var _out = { answer : "wait", sure : 0 };
+    if (!global.duel_learning) return _out;
+    var _r = o_duel.reads;
+    __duel_after_inputs(_attack, _landed, _close);
+    var _d = gmsa_agent_evaluate(_r.after_agent, demo_now());
+    var _pred = gmsa_learn_predict(_r.after_model, _d);
+    if (_pred.best >= 0) {
+        _out.answer = _d.options[_pred.best].action.name;
+        _out.sure = _pred.sure;
+    }
+    return _out;
+}
+
+function duel_after_kind(_after, _dist_now) { // what the player did in the window after an attack, the first that fits
+    if (_after.attacked) return "punish";
+    if (_after.shot) return "shoot";
+    if (_after.drank) return "drink";
+    if (_dist_now > _after.dist + 80 || _dist_now > 260) return "back_off";
+    return "wait";
+}
+
+function duel_after_learn(_after, _answer) {
+    static _answers = ["punish", "shoot", "drink", "back_off", "wait"];
+    if (!global.duel_learning) return;
+    var _r = o_duel.reads;
+    __duel_after_inputs(_after.attack, _after.landed, _after.close);
+    gmsa_learn_observe(_r.after_model, gmsa_observe(_r.after_agent, _answers, array_get_index(_answers, _answer), demo_now()));
+    _r.after_seen++;
+    _r.after_ctx = _after;
+}
+
+function duel_after_words(_answer) { // his plan, for the thought line
+    switch (_answer) {
+        case "punish":   return "you'll punish, I'm ready";
+        case "shoot":    return "you'll shoot, shield up";
+        case "drink":    return "you'll drink, I'm coming";
+        case "back_off": return "you'll back off, I'm coming";
+    }
+    return "";
 }

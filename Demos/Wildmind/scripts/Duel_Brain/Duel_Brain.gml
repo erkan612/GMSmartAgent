@@ -20,6 +20,12 @@ function __varn_profile_build() {
     gmsa_profile_add_input(_p, gmsa_input_pull("shooting", function(_agent, _target) {
         return varn_sees_arrows(_agent.owner) ? 1 : 0;
     }));
+    gmsa_profile_add_input(_p, gmsa_input_pull("meleeing", function(_agent, _target) { // the player is swinging at him, close and in front
+        var _v = _agent.owner;
+        var _pl = _v.target;
+        if (_pl.state != player_state.ATTACK || point_distance(_v.x, _v.y, _pl.x, _pl.y) > 110) return 0;
+        return (abs(angle_difference(point_direction(_v.x, _v.y, _pl.x, _pl.y), _v.facing)) < 60) ? 1 : 0;
+    }));
     gmsa_profile_add_input(_p, gmsa_input_pull("clear_line", function(_agent, _target) { // no pillar in the way of a charge
         var _v = _agent.owner;
         return demo_arena_line_clear(global.arena, _v.x, _v.y, _v.target.x, _v.target.y, _v.radius) ? 1 : 0;
@@ -31,6 +37,10 @@ function __varn_profile_build() {
         var _side = (_r.dodge == "dodge_left" || _r.dodge == "dodge_right") ? _r.sure : 0;
         return max(_off, _side);
     }));
+
+    gmsa_profile_add_input(_p, gmsa_input_push("expect_punish")); // how sure he is of the player's answer to his last attack, set as he recovers. 0 again once he acts
+    gmsa_profile_add_input(_p, gmsa_input_push("expect_gap"));    // backs off or drinks: a gap to close
+    gmsa_profile_add_input(_p, gmsa_input_push("expect_shoot"));
 
     // distances below are over 0 to 500 px: 0.24 is 120 px, 0.64 is 320 px
     var _approach = gmsa_profile_add_action(_p, "approach", { weight : 0.5 });
@@ -57,6 +67,26 @@ function __varn_profile_build() {
     var _guard = gmsa_profile_add_action(_p, "guard", { weight : 0.9, cooldown : 4000000 });
     gmsa_action_add_consideration(_guard, "shooting", gmsa_curve_make(gmsa_curve.STEP));
     gmsa_action_add_consideration(_guard, "distance", gmsa_curve_make(gmsa_curve.LINEAR));
+
+    // follow-ups: they only score when he's sure what the player does after his attacks
+    var _counter = gmsa_profile_add_action(_p, "counter", { weight : 1.5, cooldown : 3000000 });
+    gmsa_action_add_consideration(_counter, "expect_punish", gmsa_curve_make(gmsa_curve.STEP, { c : DUEL_READ_SURE }));
+    gmsa_action_add_consideration(_counter, "distance", gmsa_curve_make(gmsa_curve.LINEAR, { m : -3.57, b : 1 })); // 0 from 140 px
+
+    var _chase = gmsa_profile_add_action(_p, "chase", { weight : 1.5, cooldown : 4000000 });
+    gmsa_action_add_consideration(_chase, "expect_gap", gmsa_curve_make(gmsa_curve.STEP, { c : DUEL_READ_SURE }));
+    gmsa_action_add_consideration(_chase, "clear_line", gmsa_curve_make(gmsa_curve.STEP));
+    gmsa_action_add_consideration(_chase, "distance", gmsa_curve_make(gmsa_curve.LINEAR, { m : 3, b : -0.3 })); // from 50 px, full at 220
+
+    var _brace = gmsa_profile_add_action(_p, "brace", { weight : 1.5, cooldown : 4000000 });
+    gmsa_action_add_consideration(_brace, "expect_shoot", gmsa_curve_make(gmsa_curve.STEP, { c : DUEL_READ_SURE }));
+
+    var _block = gmsa_profile_add_action(_p, "block", { weight : 0.9, cooldown : 4000000 });
+    gmsa_action_add_consideration(_block, "meleeing", gmsa_curve_make(gmsa_curve.STEP));
+
+    var _ward = gmsa_profile_add_action(_p, "ward", { weight : 1.5, cooldown : 4000000 }); // the counter's other answer to a punish: the shield instead of the sword
+    gmsa_action_add_consideration(_ward, "expect_punish", gmsa_curve_make(gmsa_curve.STEP, { c : DUEL_READ_SURE }));
+    gmsa_action_add_consideration(_ward, "distance", gmsa_curve_make(gmsa_curve.LINEAR, { m : -3.57, b : 1 })); // 0 from 140 px
 
     gmsa_profile_add_action(_p, "hold", { weight : 0.12 });
     return gmsa_profile_build(_p);

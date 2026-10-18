@@ -28,7 +28,8 @@ if (state == varn_state.GUARD) demo_draw_sector(x, y, radius + 14, facing, 60, m
 
 fighter_draw(demo_art("varn"), facing, dead ? 0.4 : 1);
 
-var _sure = max(using_read ? read.sure : 0, (tactic != "") ? timing.sure : 0);
+var _follow = (following || state == varn_state.RECOVER) ? follow.sure : 0;
+var _sure = max(using_read ? read.sure : 0, (tactic != "") ? timing.sure : 0, _follow);
 if (_sure > 0) { // the visor burns brighter the surer he is
     gpu_set_blendmode(bm_add);
     draw_set_colour(make_color_rgb(255, 110, 40));
@@ -40,7 +41,7 @@ if (_sure > 0) { // the visor burns brighter the surer he is
 
 var _line = (thought != "") ? thought : doing;
 if (_line != "") { // until the real thought lines
-    draw_set_colour((using_read || tactic != "") ? make_color_rgb(255, 170, 90) : c_white);
+    draw_set_colour((using_read || tactic != "" || _follow > 0) ? make_color_rgb(255, 170, 90) : c_white);
     draw_set_halign(fa_center);
     draw_text(x, y - radius - 28, _line);
     draw_set_halign(fa_left);

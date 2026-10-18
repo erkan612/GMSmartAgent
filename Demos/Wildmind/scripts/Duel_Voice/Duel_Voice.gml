@@ -31,6 +31,15 @@ function varn_taunt_timing(_v) { // a held or quick swing caught the player
     _v.taunt_wait = 8;
 }
 
+function varn_taunt_follow(_v) { // he starts a follow-up he planned while recovering
+    var _set = ["Arrows again?"];
+    if (_v.doing == "counter") _set = ["I knew you'd come.", "Greedy."];
+    if (_v.doing == "ward") _set = ["Not this time.", "I know that combo."];
+    if (_v.doing == "chase") _set = (_v.follow.answer == "drink") ? ["No time to drink."] : ["Running again?", "You always back off."];
+    varn_say(_v, _set[irandom(array_length(_set) - 1)]);
+    _v.taunt_wait = 8;
+}
+
 function varn_taunt_miss(_v) { // his guess was wrong: the player changed
     static _lines = ["Hm.", "Clever.", "You learn too."];
     if (_v.taunt_wait > 0) return;
@@ -56,6 +65,15 @@ function duel_habits_draw(_x, _y) { // what Varn knows about the player, for the
         var _when = "no idea yet";
         if (_t.sure > 0.05) _when = "you dodge " + string_replace(_t.timing, "_", " ") + ", " + string_format(_reads.timing_avg, 1, 2) + " s before the hit";
         array_push(_rows, { text : "Timing: " + _when + "  (" + string(_reads.timing_seen) + " seen)", col : c_white, bar : _t.sure, bar_col : (_t.sure >= DUEL_READ_SURE && _t.timing != "on_time") ? _on : _off });
+        var _ctx = _reads.after_ctx;
+        var _then = "no idea yet";
+        var _f = { answer : "wait", sure : 0 };
+        if (_ctx != undefined) {
+            _f = duel_after_read(_ctx.attack, _ctx.landed, _ctx.close);
+            var _words = { punish : "you punish", shoot : "you shoot", drink : "you drink", back_off : "you back off", wait : "you wait" };
+            if (_f.sure > 0.05) _then = "after my " + _ctx.attack + (_ctx.landed ? " hits" : " misses") + ", " + _words[$ _f.answer];
+        }
+        array_push(_rows, { text : "Then: " + _then + "  (" + string(_reads.after_seen) + " seen)", col : c_white, bar : _f.sure, bar_col : (_f.sure >= DUEL_READ_SURE && _f.answer != "wait") ? _on : _off });
         for (var _i = 0; _i < 4; _i++) { // his guess for each attack, if it started right now
             var _r = duel_read(_kinds[_i], _s);
             var _what = "no idea yet";
