@@ -48,53 +48,32 @@ function varn_taunt_miss(_v) { // his guess was wrong: the player changed
 }
 
 function duel_habits_draw(_x, _y) { // what Varn knows about the player, for the player to see. long lines wrap
-    static _kinds = ["cleave", "sweep", "slam", "charge"];
-    static _names = ["Cleave", "Sweep", "Slam", "Charge"];
-    static _on = make_color_rgb(255, 120, 40);   // a bar he acts on
-    static _off = make_color_rgb(110, 110, 110);
+    static _cache = { owner : noone, rows : [], heights : [], h : 0, next : 0 };
     var _w = 380;
     var _tw = _w - 20;
-    var _rows = [{ text : "What Varn knows about you", col : make_color_rgb(255, 170, 90), bar : -1 }];
-    if (!global.duel_learning) {
-        array_push(_rows, { text : "Nothing. He isn't learning.", col : c_ltgray, bar : -1 });
-    } else {
-        var _reads = o_duel.reads;
-        var _s = duel_situation(o_duel.varn, o_duel.player);
-        array_push(_rows, { text : "He sees: " + duel_situation_words(_s), col : c_ltgray, bar : -1 });
-        var _t = duel_timing_read();
-        var _when = "no idea yet";
-        if (_t.sure > 0.05) _when = "you dodge " + string_replace(_t.timing, "_", " ") + ", " + string_format(_reads.timing_avg, 1, 2) + " s before the hit";
-        array_push(_rows, { text : "Timing: " + _when + "  (" + string(_reads.timing_seen) + " seen)", col : c_white, bar : _t.sure, bar_col : (_t.sure >= DUEL_READ_SURE && _t.timing != "on_time") ? _on : _off });
-        var _ctx = _reads.after_ctx;
-        var _then = "no idea yet";
-        var _f = { answer : "wait", sure : 0 };
-        if (_ctx != undefined) {
-            _f = duel_after_read(_ctx.attack, _ctx.landed, _ctx.close);
-            var _words = { punish : "you punish", shoot : "you shoot", drink : "you drink", back_off : "you back off", wait : "you wait" };
-            if (_f.sure > 0.05) _then = "after my " + _ctx.attack + (_ctx.landed ? " hits" : " misses") + ", " + _words[$ _f.answer];
-        }
-        array_push(_rows, { text : "Then: " + _then + "  (" + string(_reads.after_seen) + " seen)", col : c_white, bar : _f.sure, bar_col : (_f.sure >= DUEL_READ_SURE && _f.answer != "wait") ? _on : _off });
-        for (var _i = 0; _i < 4; _i++) { // his guess for each attack, if it started right now
-            var _r = duel_read(_kinds[_i], _s);
-            var _what = "no idea yet";
-            if (_r.sure > 0.05) _what = (_r.dodge == "stay") ? "you stand still" : "you dodge " + duel_dodge_words(_r.dodge);
-            array_push(_rows, { text : _names[_i] + ": " + _what + "  (" + string(o_duel.seen[$ _kinds[_i]]) + " seen)", col : c_white, bar : _r.sure, bar_col : (_r.sure >= DUEL_READ_SURE) ? _on : _off });
+    if (_cache.owner != o_duel.id || demo_now() >= _cache.next) { // rebuilt ten times a second, the reads are too costly to redo every frame
+        _cache.owner = o_duel.id;
+        _cache.next = demo_now() + 100000;
+        _cache.rows = __duel_habits_rows();
+        _cache.h = 8;
+        array_resize(_cache.heights, array_length(_cache.rows));
+        for (var _i = 0; _i < array_length(_cache.rows); _i++) {
+            var _row = _cache.rows[_i];
+            _cache.heights[_i] = string_height_ext(_row.text, -1, _tw);
+            _cache.h += _cache.heights[_i] + ((_row.bar >= 0) ? 12 : 6);
         }
     }
 
-    var _h = 8; // measured first, so the background fits the wrapped lines
-    for (var _i = 0; _i < array_length(_rows); _i++) _h += string_height_ext(_rows[_i].text, -1, _tw) + ((_rows[_i].bar >= 0) ? 12 : 6);
     draw_set_alpha(0.6);
     draw_set_colour(c_black);
-    draw_rectangle(_x, _y, _x + _w, _y + _h, false);
+    draw_rectangle(_x, _y, _x + _w, _y + _cache.h, false);
     draw_set_alpha(1);
-
     var _cy = _y + 8;
-    for (var _i = 0; _i < array_length(_rows); _i++) {
-        var _row = _rows[_i];
+    for (var _i = 0; _i < array_length(_cache.rows); _i++) {
+        var _row = _cache.rows[_i];
         draw_set_colour(_row.col);
         draw_text_ext(_x + 10, _cy, _row.text, -1, _tw);
-        _cy += string_height_ext(_row.text, -1, _tw);
+        _cy += _cache.heights[_i];
         if (_row.bar >= 0) {
             __hud_bar(_x + 10, _cy + 2, _tw, 5, _row.bar, _row.bar_col);
             _cy += 12;
@@ -102,4 +81,42 @@ function duel_habits_draw(_x, _y) { // what Varn knows about the player, for the
             _cy += 6;
         }
     }
+}
+
+function __duel_habits_rows() {
+    static _kinds = ["cleave", "sweep", "slam", "charge"];
+    static _names = ["Cleave", "Sweep", "Slam", "Charge"];
+    static _on = make_color_rgb(255, 120, 40);   // a bar he acts on
+    static _off = make_color_rgb(110, 110, 110);
+    var _rows = [{ text : "What Varn knows about you", col : make_color_rgb(255, 170, 90), bar : -1 }];
+    if (!global.duel_learning) {
+        array_push(_rows, { text : "Nothing. He isn't learning.", col : c_ltgray, bar : -1 });
+        return _rows;
+    }
+    var _reads = o_duel.reads;
+    var _s = duel_situation(o_duel.varn, o_duel.player);
+    array_push(_rows, { text : "He sees: " + duel_situation_words(_s), col : c_ltgray, bar : -1 });
+
+    var _t = duel_timing_read();
+    var _when = "no idea yet";
+    if (_t.sure > 0.05) _when = "you dodge " + string_replace(_t.timing, "_", " ") + ", " + string_format(_reads.timing_avg, 1, 2) + " s before the hit";
+    array_push(_rows, { text : "Timing: " + _when + "  (" + string(_reads.timing_seen) + " seen)", col : c_white, bar : _t.sure, bar_col : (_t.sure >= DUEL_READ_SURE && _t.timing != "on_time") ? _on : _off });
+
+    var _ctx = _reads.after_ctx;
+    var _then = "no idea yet";
+    var _f = { answer : "wait", sure : 0 };
+    if (_ctx != undefined) {
+        _f = duel_after_read(_ctx.attack, _ctx.landed, _ctx.close);
+        var _words = { punish : "you punish", shoot : "you shoot", drink : "you drink", back_off : "you back off", wait : "you wait" };
+        if (_f.sure > 0.05) _then = "after my " + _ctx.attack + (_ctx.landed ? " hits" : " misses") + ", " + _words[$ _f.answer];
+    }
+    array_push(_rows, { text : "Then: " + _then + "  (" + string(_reads.after_seen) + " seen)", col : c_white, bar : _f.sure, bar_col : (_f.sure >= DUEL_READ_SURE && _f.answer != "wait") ? _on : _off });
+
+    for (var _i = 0; _i < 4; _i++) { // his guess for each attack, if it started right now
+        var _r = duel_read(_kinds[_i], _s);
+        var _what = "no idea yet";
+        if (_r.sure > 0.05) _what = (_r.dodge == "stay") ? "you stand still" : "you dodge " + duel_dodge_words(_r.dodge);
+        array_push(_rows, { text : _names[_i] + ": " + _what + "  (" + string(o_duel.seen[$ _kinds[_i]]) + " seen)", col : c_white, bar : _r.sure, bar_col : (_r.sure >= DUEL_READ_SURE) ? _on : _off });
+    }
+    return _rows;
 }

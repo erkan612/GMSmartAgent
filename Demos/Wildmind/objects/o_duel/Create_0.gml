@@ -30,6 +30,26 @@ view_hport[0] = 768;
 camera = camera_create_view(0, 0, 1366, 768);
 view_camera[0] = camera;
 
+debug_cache = [];
+debug_next = 0;
+debug_lines = function() { // the reads and his reasoning, as text for the debug window
+    var _out = [];
+    var _kinds = ["cleave", "sweep", "slam", "charge"];
+    var _s = duel_situation(varn, player);
+    array_push(_out, "sees: " + duel_situation_words(_s));
+    for (var _k = 0; _k < array_length(_kinds); _k++) {
+        var _r = duel_read(_kinds[_k], _s);
+        array_push(_out, _kinds[_k] + ": " + ((_r.sure > 0) ? "dodges " + duel_dodge_words(_r.dodge) + " " + string(round(_r.sure * 100)) + "%" : "no idea yet"));
+    }
+    var _t = duel_timing_read();
+    array_push(_out, "timing: " + ((_t.sure > 0) ? _t.timing + " " + string(round(_t.sure * 100)) + "% (avg " + string_format(reads.timing_avg, 1, 2) + " s)" : "no idea yet"));
+    array_push(_out, ""); // a separator
+    array_push(_out, "doing: " + ((varn.doing == "") ? "-" : varn.doing));
+    var _lines = gmsa_debug_lines(varn.agent.decision, 8);
+    for (var _i = 0; _i < array_length(_lines); _i++) array_push(_out, _lines[_i]);
+    return _out;
+};
+
 hold_varn = false;
 global.debug.scene = function() {
     gmui_text("Varn: " + string(round(varn.hp)) + " / " + string(varn.hp_max));
@@ -39,19 +59,14 @@ global.debug.scene = function() {
     hold_varn = gmui_checkbox(hold_varn, "Hold Varn still");
     if (gmui_button("Restart fight")) room_restart();
     global.duel_learning = gmui_checkbox(global.duel_learning, "Varn learns from you");
-    var _kinds = ["cleave", "sweep", "slam", "charge"];
-    var _s = duel_situation(varn, player);
-    gmui_text("sees: " + duel_situation_words(_s));
-    for (var _k = 0; _k < array_length(_kinds); _k++) {
-        var _r = duel_read(_kinds[_k], _s);
-        gmui_text(_kinds[_k] + ": " + ((_r.sure > 0) ? "dodges " + duel_dodge_words(_r.dodge) + " " + string(round(_r.sure * 100)) + "%" : "no idea yet"));
+    if (current_time >= debug_next) { // rebuilt ten times a second, on real time so it still refreshes while paused
+        debug_next = current_time + 100;
+        debug_cache = debug_lines();
     }
-    var _t = duel_timing_read();
-    gmui_text("timing: " + ((_t.sure > 0) ? _t.timing + " " + string(round(_t.sure * 100)) + "% (avg " + string_format(reads.timing_avg, 1, 2) + " s)" : "no idea yet"));
-    gmui_separator();
-    gmui_text("doing: " + ((varn.doing == "") ? "-" : varn.doing));
-    var _lines = gmsa_debug_lines(varn.agent.decision, 8);
-    for (var _i = 0; _i < array_length(_lines); _i++) gmui_text(_lines[_i]);
+    for (var _i = 0; _i < array_length(debug_cache); _i++) {
+        if (debug_cache[_i] == "") gmui_separator();
+        else gmui_text(debug_cache[_i]);
+    }
 };
 
 seen = { cleave : 0, sweep : 0, slam : 0, charge : 0 }; // answers recorded per attack, for the habits panel
