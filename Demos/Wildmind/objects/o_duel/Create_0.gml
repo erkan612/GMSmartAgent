@@ -44,6 +44,8 @@ global.debug.scene = function() {
         var _r = duel_read(_kinds[_k]);
         gmui_text(_kinds[_k] + ": " + ((_r.sure > 0) ? "dodges " + duel_dodge_words(_r.dodge) + " " + string(round(_r.sure * 100)) + "%" : "no idea yet"));
     }
+    var _t = duel_timing_read();
+    gmui_text("timing: " + ((_t.sure > 0) ? _t.timing + " " + string(round(_t.sure * 100)) + "% (avg " + string_format(reads.timing_avg, 1, 2) + " s)" : "no idea yet"));
     gmui_separator();
     gmui_text("doing: " + ((varn.doing == "") ? "-" : varn.doing));
     var _lines = gmsa_debug_lines(varn.agent.decision, 8);

@@ -18,6 +18,10 @@ slam_x = x;
 slam_y = y;
 read = { dodge : "stay", sure : 0 }; // his guess at the player's dodge for the current attack
 using_read = false; // whether he's acting on it
+timing = { timing : "on_time", sure : 0 }; // his guess at when the player will roll or dodge
+tactic = "";        // "hold" or "quick" when he plays against that timing
+windup_time = 0;    // this attack's windup, shorter when quick
+windup_at = 0;      // when the windup started, on the game clock
 thought = "";
 speech = "";        // what he says out loud, in a bubble
 speech_time = 0;
@@ -46,7 +50,17 @@ take = function(_option) { // acts on a fresh choice from his agent
         read = duel_read(doing);
         using_read = (read.sure >= DUEL_READ_SURE && read.dodge != "stay");
         thought = using_read ? "you'll dodge " + duel_dodge_words(read.dodge) + " (" + string(round(read.sure * 100)) + "%)" : "";
-        if (using_read) varn_taunt_read(id);
+        timing = duel_timing_read();
+        tactic = "";
+        if (timing.sure >= DUEL_READ_SURE && timing.timing == "early") tactic = "hold";
+        if (timing.sure >= DUEL_READ_SURE && timing.timing == "late") tactic = "quick";
+        if (tactic != "") {
+            var _plan = (tactic == "hold") ? "you dodge early, I'll wait" : "you dodge late, quick one";
+            thought = ((thought == "") ? "" : thought + ", ") + _plan + " (" + string(round(timing.sure * 100)) + "%)";
+        }
+        windup_time = (tactic == "quick") ? _a.windup * VARN_QUICK : _a.windup;
+        windup_at = demo_now();
+        if (using_read || tactic != "") varn_taunt_read(id);
         var _to = point_direction(x, y, target.x, target.y);
         if (_a.shape == varn_shape.CIRCLE) { // the slam lands where the player will be: where he stands, or where Varn expects him to roll
             var _px = target.x;
@@ -86,9 +100,16 @@ finish = function() { // an attack or guard is over: he thinks again at once
     doing = "";
     thought = "";
     using_read = false;
+    tactic = "";
     attack = undefined;
     swing = undefined;
     start(varn_state.FREE);
+};
+
+swing_now = function() { // the hit starts
+    attack_dir = facing;
+    swing = demo_swing_create(id, team, attack.damage, attack.knock);
+    start(varn_state.ACTIVE);
 };
 
 strike = function(_dt) { // the active part of an attack, every step
@@ -120,5 +141,6 @@ on_death = function() {
     doing = "";
     thought = "";
     using_read = false;
+    tactic = "";
     varn_say(id, "My oath... ends.");
 };

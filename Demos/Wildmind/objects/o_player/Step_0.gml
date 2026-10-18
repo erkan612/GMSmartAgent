@@ -12,13 +12,25 @@ if (_moving) move_dir = point_direction(0, 0, _mx, _my);
 stamina_wait -= _dt;
 if (stamina_wait <= 0) stamina = min(stamina_max, stamina + PLAYER_STAMINA_REGEN * _dt);
 
+roll_wait -= _dt;
+dodge_wait -= _dt;
+evade_queue_time -= _dt;
+if (keyboard_check_pressed(vk_space)) {
+    evade_queued = player_state.ROLL;
+    evade_queue_time = PLAYER_EVADE_BUFFER;
+}
+if (keyboard_check_pressed(vk_lshift)) {
+    evade_queued = player_state.DODGE;
+    evade_queue_time = PLAYER_EVADE_BUFFER;
+}
+
 var _speed = 0;
 var _dir = move_dir;
 switch (state) {
     case player_state.MOVE:
         if (_moving) _speed = PLAYER_SPEED;
-        if (keyboard_check_pressed(vk_space)) roll(_moving ? move_dir : aim);
-        else if (mouse_check_button_pressed(mb_left) && !global.ui_mouse) attack(0);
+        if (evade(_moving ? move_dir : aim)) break;
+        if (mouse_check_button_pressed(mb_left) && !global.ui_mouse) attack(0);
         else if (mouse_check_button_pressed(mb_right) && !global.ui_mouse) shoot();
         else if (keyboard_check_pressed(ord("Q"))) drink();
         break;
@@ -26,7 +38,13 @@ switch (state) {
     case player_state.ROLL:
         _speed = PLAYER_ROLL_SPEED;
         _dir = roll_dir;
-        if (state_time >= PLAYER_ROLL_TIME) start(player_state.MOVE);
+        if (state_time >= PLAYER_ROLL_TIME && (!fighter_overlaps(id) || state_time >= PLAYER_ROLL_TIME + PLAYER_ROLL_UNDER)) start(player_state.MOVE);
+        break;
+
+    case player_state.DODGE:
+        _speed = (2 * PLAYER_DODGE_DISTANCE / PLAYER_DODGE_TIME) * max(0, 1 - state_time / PLAYER_DODGE_TIME); // starts fast and slows to a stop, covering the distance
+        _dir = roll_dir;
+        if (state_time >= PLAYER_DODGE_TIME) start(player_state.MOVE);
         break;
 
     case player_state.ATTACK:
@@ -40,8 +58,8 @@ switch (state) {
             _dir = attack_dir;
         }
         if (state_time >= _active_end) {
-            if (keyboard_check_pressed(vk_space)) {
-                roll(_moving ? move_dir : aim);   // the recovery can be rolled out of
+            if (evade(_moving ? move_dir : aim)) {
+                // the recovery can be rolled or dodged out of
             } else if (combo_queued) {
                 combo_queued = false;
                 attack(combo + 1);
@@ -82,6 +100,8 @@ switch (state) {
 
 x += lengthdir_x(_speed * _dt, _dir);
 y += lengthdir_y(_speed * _dt, _dir);
+if (state != player_state.ROLL) fighter_push_out(id); // only a roll goes under another fighter
+depth = (state == player_state.ROLL) ? 1 : 0;         // drawn under the boss while rolling
 if (global.arena != undefined) {
     demo_arena_collide(global.arena, id);
 } else {

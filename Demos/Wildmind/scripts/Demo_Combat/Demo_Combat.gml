@@ -99,3 +99,23 @@ function demo_draw_lane(_x, _y, _dir, _len, _width, _col, _alpha) { // a filled 
     draw_primitive_end();
     draw_set_alpha(1);
 }
+
+function fighter_overlaps(_f) { // true when _f stands inside another living fighter
+    with (o_fighter) {
+        if (id == _f || dead) continue;
+        if (point_distance(x, y, _f.x, _f.y) < radius + _f.radius) return true;
+    }
+    return false;
+}
+
+function fighter_push_out(_f) { // moves _f out of every other living fighter, they don't move
+    with (o_fighter) {
+        if (id == _f || dead) continue;
+        var _min = radius + _f.radius;
+        var _d = point_distance(x, y, _f.x, _f.y);
+        if (_d >= _min) continue;
+        var _dir = (_d > 0.01) ? point_direction(x, y, _f.x, _f.y) : irandom(359);
+        _f.x = x + lengthdir_x(_min, _dir);
+        _f.y = y + lengthdir_y(_min, _dir);
+    }
+}

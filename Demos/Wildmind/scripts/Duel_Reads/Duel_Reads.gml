@@ -1,6 +1,8 @@
 #macro DUEL_READ_SURE 0.3       // how sure Varn has to be before he acts on a guess
 #macro DUEL_DODGE_DISTANCE 180  // about how far a dodge carries the player
 #macro DUEL_DODGE_MIN 40        // moving less than this before the hit counts as staying
+#macro DUEL_EARLY 0.3           // a roll or dodge pressed more than this many seconds before the hit is early
+#macro DUEL_LATE 0.15           // less than this is late
 
 function duel_dodge_profile() { // the player's answer to an attack, as choices a model can learn
     static _profile = __duel_dodge_profile_build();
@@ -19,11 +21,53 @@ function __duel_dodge_profile_build() {
     return gmsa_profile_build(_p);
 }
 
-function duel_reads_create(_player) { // a fresh memory of the player's dodges, one per fight
+function duel_timing_profile() { // when the player presses roll or dodge, as choices a model can learn
+    static _profile = __duel_timing_profile_build();
+    return _profile;
+}
+
+function __duel_timing_profile_build() {
+    var _p = gmsa_profile_create("player_timing");
+    gmsa_profile_add_input(_p, gmsa_input_push("attack"));
+    gmsa_profile_add_action(_p, "early");
+    gmsa_profile_add_action(_p, "on_time");
+    gmsa_profile_add_action(_p, "late");
+    gmsa_profile_set_features(_p, ["attack"]);
+    return gmsa_profile_build(_p);
+}
+
+function duel_reads_create(_player) { // a fresh memory of the player, one per fight
     return {
-        agent : gmsa_agent_create(duel_dodge_profile(), _player),
-        model : gmsa_learn_count_create({ bins : 4, inputs : ["attack"], confidence_k : 3 }),
+        agent        : gmsa_agent_create(duel_dodge_profile(), _player),
+        model        : gmsa_learn_count_create({ bins : 4, inputs : ["attack"], confidence_k : 3 }),
+        timing_agent : gmsa_agent_create(duel_timing_profile(), _player),
+        timing_model : gmsa_learn_count_create({ bins : 1, inputs : ["attack"], confidence_k : 3, half_life : 10 }), // one bin, so every attack teaches the same timing. fades fast, so he notices a change
+        timing_avg   : 0, // seconds before the hit, for the habits panel
+        timing_seen  : 0,
     };
+}
+
+function duel_timing_read() { // when Varn expects the player to roll or dodge: { timing, sure }
+    var _out = { timing : "on_time", sure : 0 };
+    if (!global.duel_learning) return _out;
+    var _r = o_duel.reads;
+    var _d = gmsa_agent_evaluate(_r.timing_agent, demo_now());
+    var _pred = gmsa_learn_predict(_r.timing_model, _d);
+    if (_pred.best >= 0) {
+        _out.timing = _d.options[_pred.best].action.name;
+        _out.sure = _pred.sure;
+    }
+    return _out;
+}
+
+function duel_timing_learn(_lead) { // the player pressed roll or dodge this many seconds before the hit
+    static _timings = ["early", "on_time", "late"];
+    if (!global.duel_learning) return;
+    var _r = o_duel.reads;
+    var _kind = (_lead > DUEL_EARLY) ? "early" : ((_lead < DUEL_LATE) ? "late" : "on_time");
+    gmsa_learn_observe(_r.timing_model, gmsa_observe(_r.timing_agent, _timings, array_get_index(_timings, _kind), demo_now()));
+    _r.timing_avg = (_r.timing_seen == 0) ? _lead : lerp(_r.timing_avg, _lead, 0.3);
+    _r.timing_seen++;
 }
 
 function varn_attack_slot(_attack) { // each attack in its own quarter of the "attack" input, so Count keeps them apart

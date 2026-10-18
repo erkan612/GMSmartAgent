@@ -1,4 +1,4 @@
-enum player_state { MOVE, ROLL, ATTACK, SHOOT, DRINK, HURT, DEAD }
+enum player_state { MOVE, ROLL, DODGE, ATTACK, SHOOT, DRINK, HURT, DEAD }
 
 // speeds in px per second, times in seconds
 #macro PLAYER_SPEED 220
@@ -6,6 +6,14 @@ enum player_state { MOVE, ROLL, ATTACK, SHOOT, DRINK, HURT, DEAD }
 #macro PLAYER_ROLL_TIME 0.35
 #macro PLAYER_ROLL_INVULN 0.25
 #macro PLAYER_ROLL_COST 20
+#macro PLAYER_ROLL_WAIT 0.4
+#macro PLAYER_ROLL_UNDER 0.25 // a roll that ends under someone carries on this long at most to get out
+#macro PLAYER_DODGE_DISTANCE 70
+#macro PLAYER_DODGE_TIME 0.09
+#macro PLAYER_DODGE_COST 5
+#macro PLAYER_DODGE_WAIT 0.25
+#macro PLAYER_EVADE_LOCK 0.15   // after a roll or dodge, the other one waits this long
+#macro PLAYER_EVADE_BUFFER 0.15 // a press this early is kept until it can fire
 #macro PLAYER_STAMINA_MAX 120
 #macro PLAYER_STAMINA_REGEN 55
 #macro PLAYER_STAMINA_WAIT 0.45

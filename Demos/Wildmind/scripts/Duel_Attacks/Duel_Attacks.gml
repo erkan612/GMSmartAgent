@@ -1,7 +1,10 @@
-enum varn_state { FREE, WINDUP, ACTIVE, RECOVER, GUARD }
+enum varn_state { FREE, WINDUP, HOLD, ACTIVE, RECOVER, GUARD }
 enum varn_shape { ARC, SIDE, CIRCLE, CHARGE }
 
 #macro VARN_GUARD_TIME 1.2
+#macro VARN_HOLD_TIME 0.45 // how long he holds a swing against an early dodger
+#macro VARN_HOLD_STEP 260  // how fast he steps in, and the slam follows, while holding
+#macro VARN_QUICK 0.65     // his windup against a late dodger, as a share of the normal one
 
 function varn_attack(_name) { // each attack's shape and timing, undefined for actions that aren't attacks. times in seconds
     // lock: the part of the windup he keeps turning toward the player, after that the direction is fixed

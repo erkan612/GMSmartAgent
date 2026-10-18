@@ -30,7 +30,7 @@ if (intro) {
     draw_text_transformed(_gw / 2, _gh / 2 - 150, "Oathkeeper Varn", 2, 2, 0);
     draw_set_colour(c_white);
     draw_text(_gw / 2, _gh / 2 - 80, "He watches how you dodge, and learns.");
-    draw_text(_gw / 2, _gh / 2 - 20, "WASD move    Mouse aim    Left click sword    Right click bow    Space roll    Q potion");
+    draw_text(_gw / 2, _gh / 2 - 20, "WASD move    Mouse aim    Left click sword    Right click bow    Space roll    Shift dodge    Q potion");
     draw_text(_gw / 2, _gh / 2 + 40, "Varn learns from you: " + (global.duel_learning ? "ON" : "OFF") + "    (L to change)");
     draw_text(_gw / 2, _gh / 2 + 100, "Press Enter to fight");
     draw_set_halign(fa_left);

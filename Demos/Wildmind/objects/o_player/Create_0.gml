@@ -8,7 +8,12 @@ state = player_state.MOVE;
 state_time = 0;        // seconds in the current state
 aim = 0;
 move_dir = 0;          // the last way the player moved, rolls go this way
-roll_dir = 0;
+roll_dir = 0;          // rolls and dodges go this way
+roll_wait = 0;         // seconds before the next roll
+dodge_wait = 0;        // seconds before the next dodge
+evade_queued = player_state.ROLL;
+evade_queue_time = 0;
+evade_at = -1;         // when the last roll or dodge started, on the game clock
 attack_dir = 0;
 combo = 0;             // which hit of the combo, 0 to 2
 combo_queued = false;
@@ -28,11 +33,33 @@ spend = function(_cost) { // false when there isn't enough stamina
 };
 
 roll = function(_dir) {
-    if (!spend(PLAYER_ROLL_COST)) return;
+    if (roll_wait > 0 || !spend(PLAYER_ROLL_COST)) return false;
     roll_dir = _dir;
     invuln = max(invuln, PLAYER_ROLL_INVULN);
     swing = undefined;
+    roll_wait = PLAYER_ROLL_TIME + PLAYER_ROLL_WAIT; // counted from the start, so a hit mid roll doesn't skip it
+    dodge_wait = max(dodge_wait, PLAYER_ROLL_TIME + PLAYER_EVADE_LOCK);
+    evade_at = demo_now();
     start(player_state.ROLL);
+    return true;
+};
+
+dodge = function(_dir) { // a quick step, no invulnerability
+    if (dodge_wait > 0 || !spend(PLAYER_DODGE_COST)) return false;
+    roll_dir = _dir;
+    swing = undefined;
+    dodge_wait = PLAYER_DODGE_TIME + PLAYER_DODGE_WAIT;
+    roll_wait = max(roll_wait, PLAYER_DODGE_TIME + PLAYER_EVADE_LOCK);
+    evade_at = demo_now();
+    start(player_state.DODGE);
+    return true;
+};
+
+evade = function(_dir) { // fires a pressed roll or dodge, true when one started
+    if (evade_queue_time <= 0) return false;
+    var _started = (evade_queued == player_state.ROLL) ? roll(_dir) : dodge(_dir);
+    if (_started) evade_queue_time = 0;
+    return _started;
 };
 
 attack = function(_hit) {

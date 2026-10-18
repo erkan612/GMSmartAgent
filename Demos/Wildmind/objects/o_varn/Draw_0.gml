@@ -1,6 +1,6 @@
 // the warning: a faint full shape, and a stronger one growing inside it until the hit. white while it hits
-if (state == varn_state.WINDUP || state == varn_state.ACTIVE) {
-    var _t = (state == varn_state.WINDUP) ? state_time / attack.windup : 1;
+if (state == varn_state.WINDUP || state == varn_state.HOLD || state == varn_state.ACTIVE) {
+    var _t = (state == varn_state.WINDUP) ? state_time / windup_time : 1;
     var _col = (state == varn_state.ACTIVE) ? c_white : make_color_rgb(220, 60, 40);
     switch (attack.shape) {
         case varn_shape.ARC:
@@ -20,7 +20,7 @@ if (state == varn_state.WINDUP || state == varn_state.ACTIVE) {
             draw_set_alpha(1);
             break;
         case varn_shape.CHARGE:
-            if (state == varn_state.WINDUP) demo_draw_lane(x, y, facing, attack.speed * attack.active + radius, radius * 2, _col, 0.15 + 0.15 * _t);
+            if (state != varn_state.ACTIVE) demo_draw_lane(x, y, facing, attack.speed * attack.active + radius, radius * 2, _col, 0.15 + 0.15 * _t);
             break;
     }
 }
@@ -28,18 +28,19 @@ if (state == varn_state.GUARD) demo_draw_sector(x, y, radius + 14, facing, 60, m
 
 fighter_draw(demo_art("varn"), facing, dead ? 0.4 : 1);
 
-if (using_read) { // the visor burns brighter the surer he is
+var _sure = max(using_read ? read.sure : 0, (tactic != "") ? timing.sure : 0);
+if (_sure > 0) { // the visor burns brighter the surer he is
     gpu_set_blendmode(bm_add);
     draw_set_colour(make_color_rgb(255, 110, 40));
-    draw_set_alpha(0.25 + 0.5 * read.sure);
-    draw_circle(x + lengthdir_x(radius * 0.6, facing), y + lengthdir_y(radius * 0.6, facing), 8 + 14 * read.sure, false);
+    draw_set_alpha(0.25 + 0.5 * _sure);
+    draw_circle(x + lengthdir_x(radius * 0.6, facing), y + lengthdir_y(radius * 0.6, facing), 8 + 14 * _sure, false);
     draw_set_alpha(1);
     gpu_set_blendmode(bm_normal);
 }
 
 var _line = (thought != "") ? thought : doing;
 if (_line != "") { // until the real thought lines
-    draw_set_colour(using_read ? make_color_rgb(255, 170, 90) : c_white);
+    draw_set_colour((using_read || tactic != "") ? make_color_rgb(255, 170, 90) : c_white);
     draw_set_halign(fa_center);
     draw_text(x, y - radius - 28, _line);
     draw_set_halign(fa_left);
