@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMUI_Input",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMUI_Input",
+  "parent":{
+    "name":"Core",
+    "path":"folders/Libs/GMUI/Core.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

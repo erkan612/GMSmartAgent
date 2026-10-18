@@ -1,0 +1,487 @@
+function gmnav_grid_create(_w, _h, _layout, _slots = 4) {
+    var _n = _w * _h;
+
+    // sized once here, so the ring arrays and the cap can never disagree
+    var _ring = max(1, global.gmnav.config.EDIT_RING);
+
+    return {
+        domain   : gmnav_domain.GRID,
+
+        width    : _w,
+        height   : _h,
+        count    : _n,
+        layout   : _layout,
+
+        flags    : array_create(_n, 0),
+        cost     : array_create(_n, 1),
+
+        clear    : undefined,   // clearance values, built on demand
+        clear_v  : -1,          // grid version the clearance was built at
+
+        height_z : undefined,
+
+        version  : 0,
+
+        edit_cap  : _ring,      // set from config at creation, do not write to it
+        edit_c1   : array_create(_ring, 0),
+        edit_r1   : array_create(_ring, 0),
+        edit_c2   : array_create(_ring, 0),
+        edit_r2   : array_create(_ring, 0),
+        edit_v    : array_create(_ring, -1),
+        edit_at   : 0,
+        edit_lost : -1,         // newest version whose rect has been overwritten
+
+        slots    : array_create(_slots, undefined),
+        slot_max : _slots
+    };
+}
+
+function gmnav_grid_in_bounds(_grid, _col, _row) {
+    return (_col >= 0 && _row >= 0 && _col < _grid.width && _row < _grid.height);
+}
+
+function gmnav_grid_node(_grid, _col, _row) {
+    if (_col < 0 || _row < 0 || _col >= _grid.width || _row >= _grid.height) {
+        return GMNAV_NO_NODE;
+    }
+    return _row * _grid.width + _col;
+}
+
+function gmnav_grid_col(_grid, _node) {
+    if (_node < 0) return -1;
+
+    if (_node >= _grid.count) {
+        if (!variable_struct_exists(_grid, "overlay")) return -1;
+        if (_grid.overlay == undefined) return -1;
+
+        var _i = _node - _grid.overlay.base;
+        if (_i < 0 || _i >= _grid.overlay.count) return -1;
+
+        return _grid.overlay.col[_i];
+    }
+    return _node % _grid.width;
+}
+
+function gmnav_grid_row(_grid, _node) {
+    if (_node < 0) return -1;
+
+    if (_node >= _grid.count) {
+        if (!variable_struct_exists(_grid, "overlay")) return -1;
+        if (_grid.overlay == undefined) return -1;
+
+        var _i = _node - _grid.overlay.base;
+        if (_i < 0 || _i >= _grid.overlay.count) return -1;
+
+        return _grid.overlay.row[_i];
+    }
+    return _node div _grid.width;
+}
+
+function gmnav_grid_node_layer(_grid, _node) {
+    if (_node < 0) return -1;
+    if (_node < _grid.count) return 0;
+    if (!gmnav_grid_has_overlay(_grid)) return -1;
+
+    return gmnav_overlay_layer(_grid.overlay, _node);
+}
+
+function gmnav_grid_world_to_node(_grid, _x, _y, _layer = 0) {
+    if (_layer == 0) {
+        var _cr0 = gmnav_layout_world_to_cell(_grid.layout, _x, _y);
+        return gmnav_grid_node(_grid, _cr0[0], _cr0[1]);
+    }
+
+    if (!gmnav_grid_has_overlay(_grid)) return GMNAV_NO_NODE;
+
+    var _lift = gmnav_grid_layer_lift(_grid);
+    var _lay  = _grid.layout;
+
+    var _cr = gmnav_layout_world_to_cell(_lay, _x, _y + _layer * _lift);
+    var _c  = _cr[0];
+
+    var _span = (_lift <= 0) ? 0 : (ceil(_lift / _lay.tile_h) + 1);
+
+    for (var _d = -_span; _d <= _span; _d++) {
+        var _r = _cr[1] + _d;
+        var _n = gmnav_overlay_node_at(_grid.overlay, _c, _r, _layer);
+        if (_n == GMNAV_NO_NODE) continue;
+
+        var _cy = gmnav_layout_cell_y(_lay, _c, _r) // where this cell is actually drawn, offset included
+                - (_layer + gmnav_overlay_offset(_grid.overlay, _n)) * _lift;
+
+        if (_y >= _cy - _lay.tile_h * 0.5 && _y < _cy + _lay.tile_h * 0.5) {
+            return _n;
+        }
+    }
+    return GMNAV_NO_NODE;
+}
+
+function gmnav_grid_node_to_world(_grid, _node) {
+    var _c = gmnav_grid_col(_grid, _node);
+    var _r = gmnav_grid_row(_grid, _node);
+
+    if (_c < 0 || _r < 0) return [0, 0];
+
+    var _h = gmnav_grid_node_layer(_grid, _node);
+
+    if (_node >= _grid.count && gmnav_grid_has_overlay(_grid)) {
+        _h += gmnav_overlay_offset(_grid.overlay, _node);
+    }
+
+    return [gmnav_layout_cell_x(_grid.layout, _c, _r),
+            gmnav_layout_cell_y(_grid.layout, _c, _r)
+                - _h * gmnav_grid_layer_lift(_grid)];
+}
+
+function gmnav_grid_world_to_node_top(_grid, _x, _y) {
+    if (gmnav_grid_has_overlay(_grid)) {
+        for (var _l = _grid.overlay.max_layer; _l >= 1; _l--) {
+            var _n = gmnav_grid_world_to_node(_grid, _x, _y, _l);
+            if (_n != GMNAV_NO_NODE) return _n;
+        }
+    }
+    return gmnav_grid_world_to_node(_grid, _x, _y, 0);
+}
+
+function gmnav_grid_is_blocked(_grid, _node) {
+    if (_node < 0) return true;
+
+    if (_node >= _grid.count) {
+        if (!gmnav_grid_has_overlay(_grid)) return true;
+        return gmnav_overlay_is_blocked(_grid.overlay, _node);
+    }
+    return (_grid.flags[_node] & GMNAV_FLAG_BLOCKED) != 0;
+}
+
+function gmnav_grid_cost(_grid, _node) {
+    if (_node < 0) return 1;
+
+    if (_node >= _grid.count) {
+        if (!gmnav_grid_has_overlay(_grid)) return 1;
+
+        var _i = _node - _grid.overlay.base;
+        if (_i < 0 || _i >= _grid.overlay.count) return 1;
+
+        return _grid.overlay.cost[_i];
+    }
+    return _grid.cost[_node];
+}
+
+function gmnav_grid_has_flag(_grid, _node, _flag) {
+    if (_node < 0 || _node >= _grid.count) return false;
+
+    return (_grid.flags[_node] & _flag) != 0;
+}
+
+function gmnav_grid_get_cost(_grid, _node) {
+    return _grid.cost[_node];
+}
+
+function gmnav_grid_set_blocked(_grid, _col, _row, _on) {
+    var _n = gmnav_grid_node(_grid, _col, _row);
+    if (_n == GMNAV_NO_NODE) return false;
+
+    var _f = _on ? (_grid.flags[_n] | GMNAV_FLAG_BLOCKED)
+                 : (_grid.flags[_n] & ~GMNAV_FLAG_BLOCKED);
+
+    if (_f != _grid.flags[_n]) {
+        _grid.flags[_n] = _f;
+        _grid.version++;
+        __gmnav_grid_note_edit(_grid, _col, _row, _col, _row);
+    }
+    return true;
+}
+
+function gmnav_grid_set_cost(_grid, _col, _row, _cost) {
+    var _n = gmnav_grid_node(_grid, _col, _row);
+    if (_n == GMNAV_NO_NODE) return false;
+
+    var _c = max(1, _cost);
+
+    if (_grid.cost[_n] != _c) {
+        _grid.cost[_n] = _c;
+        _grid.version++;
+        __gmnav_grid_note_edit(_grid, _col, _row, _col, _row);
+    }
+    return true;
+}
+
+function gmnav_grid_set_flag(_grid, _col, _row, _flag, _on) {
+    var _n = gmnav_grid_node(_grid, _col, _row);
+    if (_n == GMNAV_NO_NODE) return false;
+
+    var _f  = _grid.flags[_n];
+    var _nf = _on ? (_f | _flag) : (_f & ~_flag);
+
+    if (_nf != _f) {
+        _grid.flags[_n] = _nf;
+        _grid.version++;
+        __gmnav_grid_note_edit(_grid, _col, _row, _col, _row);
+    }
+    return true;
+}
+
+function gmnav_grid_fill_blocked(_grid, _c1, _r1, _c2, _r2, _on) {
+    var _lo_c = max(0, min(_c1, _c2));
+    var _hi_c = min(_grid.width  - 1, max(_c1, _c2));
+    var _lo_r = max(0, min(_r1, _r2));
+    var _hi_r = min(_grid.height - 1, max(_r1, _r2));
+
+    var _changed = false;
+
+    for (var _r = _lo_r; _r <= _hi_r; _r++) {
+        for (var _c = _lo_c; _c <= _hi_c; _c++) {
+            var _n = _r * _grid.width + _c;
+            var _f = _on ? (_grid.flags[_n] | GMNAV_FLAG_BLOCKED)
+                         : (_grid.flags[_n] & ~GMNAV_FLAG_BLOCKED);
+
+            if (_f != _grid.flags[_n]) {
+                _grid.flags[_n] = _f;
+                _changed = true;
+            }
+        }
+    }
+
+    // one bump for the whole rectangle, so a door re-asserting itself is free
+    if (_changed) {
+        _grid.version++;
+        __gmnav_grid_note_edit(_grid, _lo_c, _lo_r, _hi_c, _hi_r);
+    }
+    return _changed;
+}
+
+function gmnav_grid_import_tilemap(_grid, _tilemap, _is_blocked = undefined) {
+    var _w  = min(_grid.width,  tilemap_get_width(_tilemap));
+    var _h  = min(_grid.height, tilemap_get_height(_tilemap));
+    var _fl = _grid.flags;
+    var _gw = _grid.width;
+
+    for (var _r = 0; _r < _h; _r++) {
+        var _base = _r * _gw;
+        for (var _c = 0; _c < _w; _c++) {
+            var _tile = tile_get_index(tilemap_get(_tilemap, _c, _r));
+
+            var _b = (_is_blocked == undefined) ? (_tile != 0)
+                                                : _is_blocked(_tile);
+
+            var _i = _base + _c;
+            _fl[_i] = _b ? (_fl[_i] | GMNAV_FLAG_BLOCKED)
+                         : (_fl[_i] & ~GMNAV_FLAG_BLOCKED);
+        }
+    }
+    _grid.version++;
+
+    // an import rewrites everything it covers, so the rect is the whole area
+    __gmnav_grid_note_edit(_grid, 0, 0, _w - 1, _h - 1);
+}
+
+function gmnav_grid_import_dsgrid(_grid, _ds, _is_blocked = undefined) {
+    var _w  = min(_grid.width,  ds_grid_width(_ds));
+    var _h  = min(_grid.height, ds_grid_height(_ds));
+    var _fl = _grid.flags;
+    var _gw = _grid.width;
+
+    for (var _r = 0; _r < _h; _r++) {
+        var _base = _r * _gw;
+        for (var _c = 0; _c < _w; _c++) {
+            var _v = _ds[# _c, _r];
+
+            var _b = (_is_blocked == undefined) ? (_v != 0)
+                                                : _is_blocked(_v);
+
+            var _i = _base + _c;
+            _fl[_i] = _b ? (_fl[_i] | GMNAV_FLAG_BLOCKED)
+                         : (_fl[_i] & ~GMNAV_FLAG_BLOCKED);
+        }
+    }
+    _grid.version++;
+    __gmnav_grid_note_edit(_grid, 0, 0, _w - 1, _h - 1);
+}
+
+function gmnav_grid_import_callback(_grid, _fn) {
+    var _fl = _grid.flags;
+    var _cs = _grid.cost;
+    var _gw = _grid.width;
+
+    for (var _r = 0; _r < _grid.height; _r++) {
+        var _base = _r * _gw;
+        for (var _c = 0; _c < _gw; _c++) {
+            var _res = _fn(_c, _r);
+            var _i   = _base + _c;
+
+            if (is_struct(_res)) {
+                var _b = _res[$ "blocked"] ?? false;
+                _fl[_i] = _b ? (_fl[_i] | GMNAV_FLAG_BLOCKED)
+                             : (_fl[_i] & ~GMNAV_FLAG_BLOCKED);
+                _fl[_i] |= (_res[$ "flags"] ?? 0);
+                _cs[_i]  = max(1, _res[$ "cost"] ?? 1);
+            } else {
+                _fl[_i] = _res ? (_fl[_i] | GMNAV_FLAG_BLOCKED)
+                               : (_fl[_i] & ~GMNAV_FLAG_BLOCKED);
+            }
+        }
+    }
+    _grid.version++;
+    __gmnav_grid_note_edit(_grid, 0, 0, _grid.width - 1, _grid.height - 1);
+}
+
+function gmnav_grid_scratch_acquire(_grid) {
+    var _n = _grid.count;
+    if (variable_struct_exists(_grid, "overlay") && _grid.overlay != undefined) {
+        _n += _grid.overlay.count;
+    }
+
+    for (var i = 0; i < _grid.slot_max; i++) {
+        var _s = _grid.slots[i];
+
+        if (_s == undefined) {
+            _s = {
+                index  : i,
+                busy   : true,
+                gen    : 1,
+                size   : _n,
+                mark   : array_create(_n, 0),
+                g      : array_create(_n, 0),
+                parent : array_create(_n, GMNAV_NO_NODE),
+                depth  : array_create(_n, 0)
+            };
+            _grid.slots[i] = _s;
+            return _s;
+        }
+
+        if (!_s.busy) {
+            _s.busy = true;
+            _s.gen++;
+
+            if (_s.size < _n) {
+                array_resize(_s.mark,   _n);
+                array_resize(_s.g,      _n);
+                array_resize(_s.parent, _n);
+                array_resize(_s.depth,  _n);
+
+                for (var k = _s.size; k < _n; k++) _s.parent[k] = GMNAV_NO_NODE;
+
+                _s.size = _n;
+            }
+            return _s;
+        }
+    }
+    return undefined;
+}
+
+function gmnav_grid_scratch_release(_grid, _slot) {
+    if (_slot != undefined) _slot.busy = false;
+}
+
+function gmnav_grid_scratch_flush(_grid) {
+    for (var i = 0; i < _grid.slot_max; i++) {
+        if (_grid.slots[i] != undefined && !_grid.slots[i].busy) {
+            _grid.slots[i] = undefined;
+        }
+    }
+}
+
+function gmnav_grid_has_heights(_grid) {
+    return (_grid.height_z != undefined);
+}
+
+function gmnav_grid_height(_grid, _node) {
+    if (_grid.height_z == undefined) return 0;
+    if (_node < 0 || _node >= _grid.count) return 0;
+    return _grid.height_z[_node];
+}
+
+function gmnav_grid_set_height(_grid, _col, _row, _z) {
+    var _n = gmnav_grid_node(_grid, _col, _row);
+    if (_n == GMNAV_NO_NODE) return false;
+
+    if (_grid.height_z == undefined) {
+        _grid.height_z = array_create(_grid.count, 0);
+    }
+
+    if (_grid.height_z[_n] == _z) return true; // no-op, do not bump
+
+    _grid.height_z[_n] = _z;
+    _grid.version++;
+    __gmnav_grid_note_edit(_grid, _col, _row, _col, _row);
+    return true;
+}
+
+function gmnav_grid_fill_height(_grid, _c1, _r1, _c2, _r2, _z) {
+    var _lo_c = min(_c1, _c2);
+    var _hi_c = max(_c1, _c2);
+    var _lo_r = min(_r1, _r2);
+    var _hi_r = max(_r1, _r2);
+
+    if (_grid.height_z == undefined) {
+        _grid.height_z = array_create(_grid.count, 0);
+    }
+
+    var _changed = false;
+
+    for (var _r = _lo_r; _r <= _hi_r; _r++) {
+        for (var _c = _lo_c; _c <= _hi_c; _c++) {
+            var _n = gmnav_grid_node(_grid, _c, _r);
+            if (_n == GMNAV_NO_NODE) continue;
+            if (_grid.height_z[_n] == _z) continue;
+
+            _grid.height_z[_n] = _z;
+            _changed = true;
+        }
+    }
+
+    if (_changed) {
+        _grid.version++;
+        __gmnav_grid_note_edit(_grid, _lo_c, _lo_r, _hi_c, _hi_r);
+    }
+    return _changed;
+}
+
+function gmnav_grid_step_blocked(_grid, _a, _b, _max_climb, _max_drop) {
+    if (_max_climb == undefined) return false;
+    if (_grid.height_z == undefined) return false;
+    if (_a == GMNAV_NO_NODE || _b == GMNAV_NO_NODE) return false;
+
+    var _dz = _grid.height_z[_b] - _grid.height_z[_a];
+
+    return (_dz > _max_climb || -_dz > _max_drop);
+}
+
+function gmnav_grid_set_layer_lift(_grid, _lift) {
+    _grid.layer_lift = _lift;
+}
+
+function gmnav_grid_layer_lift(_grid) {
+    if (!variable_struct_exists(_grid, "layer_lift")) return 0;
+    return _grid.layer_lift;
+}
+
+function __gmnav_grid_note_edit(_grid, _c1, _r1, _c2, _r2) { // call after the version bump, so the entry carries the new version
+    var _i = _grid.edit_at;
+
+    if (_grid.edit_v[_i] >= 0) _grid.edit_lost = max(_grid.edit_lost, _grid.edit_v[_i]);
+
+    _grid.edit_c1[_i] = _c1;
+    _grid.edit_r1[_i] = _r1;
+    _grid.edit_c2[_i] = _c2;
+    _grid.edit_r2[_i] = _r2;
+    _grid.edit_v[_i]  = _grid.version;
+
+    _grid.edit_at = (_i + 1) % _grid.edit_cap;
+}
+
+function gmnav_grid_changed_since(_grid, _version, _c1, _r1, _c2, _r2) { // has anything since _version touched this cell rect
+    if (_version <= _grid.edit_lost) return true;
+    if (_version == _grid.version)   return false;
+
+    for (var i = 0; i < _grid.edit_cap; i++) {
+        var _v = _grid.edit_v[i];
+        if (_v <= _version) continue;
+
+        if (_grid.edit_c2[i] < _c1 || _grid.edit_c1[i] > _c2) continue;
+        if (_grid.edit_r2[i] < _r1 || _grid.edit_r1[i] > _r2) continue;
+
+        return true;
+    }
+    return false;
+}

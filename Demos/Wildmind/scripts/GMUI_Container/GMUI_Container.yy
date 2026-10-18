@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMUI_Container",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMUI_Container",
+  "parent":{
+    "name":"Core",
+    "path":"folders/Libs/GMUI/Core.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

@@ -1,0 +1,12 @@
+{
+  "$GMShader":"",
+  "%Name":"GMUI_SHADER_HUE",
+  "name":"GMUI_SHADER_HUE",
+  "parent":{
+    "name":"Shaders",
+    "path":"folders/Libs/GMUI/Shaders.yy",
+  },
+  "resourceType":"GMShader",
+  "resourceVersion":"2.0",
+  "type":1,
+}

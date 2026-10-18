@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_Arc",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_Arc",
+  "parent":{
+    "name":"Path",
+    "path":"folders/Libs/GMVex/Path.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

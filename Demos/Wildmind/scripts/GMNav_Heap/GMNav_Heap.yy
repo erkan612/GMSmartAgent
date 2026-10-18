@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMNav_Heap",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMNav_Heap",
+  "parent":{
+    "name":"Core",
+    "path":"folders/Libs/GMNav/Core.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

@@ -1,0 +1,12 @@
+{
+  "$GMShader":"",
+  "%Name":"GMVEX_SOLID_COLOR",
+  "name":"GMVEX_SOLID_COLOR",
+  "parent":{
+    "name":"Shaders",
+    "path":"folders/Libs/GMVex/Shaders.yy",
+  },
+  "resourceType":"GMShader",
+  "resourceVersion":"2.0",
+  "type":1,
+}

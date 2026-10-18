@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_Dash",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_Dash",
+  "parent":{
+    "name":"Stroke",
+    "path":"folders/Libs/GMVex/Stroke.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

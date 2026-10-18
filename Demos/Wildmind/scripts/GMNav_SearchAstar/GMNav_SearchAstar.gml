@@ -1,0 +1,472 @@
+function gmnav_search_create(_grid, _heuristic = gmnav_heuristic.AUTO) {
+    return {
+        grid        : _grid,
+        slot        : undefined,
+        heap        : gmnav_heap_create(),
+
+        state       : gmnav_state.IDLE,
+        start       : GMNAV_NO_NODE,
+        goal        : GMNAV_NO_NODE,
+        goal_c      : 0,
+        goal_r      : 0,
+        goal_x      : 0,
+        goal_y      : 0,
+
+        h_mode      : _heuristic,
+        corner_cut  : false,
+		
+		need_clear  : 0,
+        relax       : 2,
+		
+        avoid_pinch : false, // only on ISO_STAGGERED
+
+        version     : -1,
+        stale       : false,
+        expansions  : 0,
+        pops        : 0,
+        result      : [],
+        slot_g_final: 0,
+        profile     : undefined,
+
+        on_complete : undefined
+    };
+}
+
+function gmnav_search_begin(_srch, _start_node, _goal_node, _corner_cut = false,
+                            _profile = undefined, _need_clear = 0,
+                            _max_climb = undefined, _max_drop = undefined,
+                            _avoid_pinch = false) {
+    var _grid = _srch.grid;
+
+    gmnav_search_abort(_srch);
+
+    if (_start_node == GMNAV_NO_NODE || _goal_node == GMNAV_NO_NODE
+    ||  gmnav_grid_is_blocked(_grid, _goal_node)
+    ||  gmnav_grid_is_blocked(_grid, _start_node)) {
+        _srch.state = gmnav_state.FAILED;
+        return false;
+    }
+
+    if (_need_clear > 1 && gmnav_clearance_is_stale(_grid)) {
+        gmnav_clearance_build(_grid);
+    }
+
+    var _slot = gmnav_grid_scratch_acquire(_grid);
+    if (_slot == undefined) return false; // state stays IDLE, retry later
+
+    var _lay = _grid.layout;
+
+    _srch.slot       = _slot;
+    _srch.start      = _start_node;
+    _srch.goal       = _goal_node;
+    _srch.goal_c     = gmnav_grid_col(_grid, _goal_node);
+    _srch.goal_r     = gmnav_grid_row(_grid, _goal_node);
+
+    var _gp          = gmnav_grid_node_to_world(_grid, _goal_node);
+    _srch.goal_x     = _gp[0];
+    _srch.goal_y     = _gp[1];
+	
+    _srch.h_mode     = __gmnav_heuristic_resolve(_lay, _srch.h_mode);
+    _srch.corner_cut = _corner_cut;
+    _srch.profile    = _profile;
+    _srch.need_clear = (_grid.clear == undefined) ? 0 : _need_clear;
+    _srch.max_climb = _max_climb;
+    _srch.max_drop  = _max_drop;
+    _srch.avoid_pinch = _avoid_pinch;
+    _srch.version    = _grid.version;
+    _srch.stale      = false;
+    _srch.expansions = 0;
+    _srch.pops       = 0;
+    _srch.result     = [];
+    _srch.state      = gmnav_state.WORKING;
+
+    gmnav_heap_clear(_srch.heap);
+
+    _slot.g[_start_node]      = 0;
+    _slot.parent[_start_node] = GMNAV_NO_NODE;
+    _slot.depth[_start_node]  = 0;
+    _slot.mark[_start_node]   = _slot.gen;
+
+    var _h0 = __gmnav_h(_srch,
+                        gmnav_grid_col(_grid, _srch.start),
+                        gmnav_grid_row(_grid, _srch.start));
+    gmnav_heap_push(_srch.heap, _h0, _h0, _start_node);
+
+    return true;
+}
+
+function gmnav_search_step(_srch, _budget = global.gmnav.config.DEFAULT_BUDGET) {
+    if (_srch.state != gmnav_state.WORKING) return _srch.state;
+
+    var _grid = _srch.grid;
+    var _lay  = _grid.layout;
+    var _slot = _srch.slot;
+    var _heap = _srch.heap;
+
+    var _mark = _slot.mark;
+    var _gc   = _slot.g;
+    var _par  = _slot.parent;
+    var _dep  = _slot.depth;
+    var _gen  = _slot.gen;
+    var _cgen = -_gen;
+
+    var _flags = _grid.flags;
+    var _cost  = (_srch.profile != undefined) ? _srch.profile.resolved : _grid.cost;
+    var _w     = _grid.width;
+    var _h     = _grid.height;
+
+    var _need  = _srch.need_clear;
+    var _clr   = (_need > 1) ? _grid.clear : undefined;
+    var _relax = _srch.relax;
+
+    var _hz    = (_srch.max_climb == undefined) ? undefined : _srch.grid.height_z;
+    var _climb = _srch.max_climb;
+    var _drop  = _srch.max_drop;
+
+    var _ov = undefined;
+    if (variable_struct_exists(_grid, "overlay") && _grid.overlay != undefined) {
+        if (array_length(_grid.overlay.edge_start) > 0) _ov = _grid.overlay;
+    }
+    var _obase = (_ov != undefined) ? _ov.base : infinity;
+
+    var _nbc = _lay.nb_count;
+    var _ndc = _lay.nb_dc;
+    var _ndr = _lay.nb_dr;
+    var _ncs = _lay.nb_cost;
+    var _pax = _lay.parity_axis;
+
+    var _goal  = _srch.goal;
+    var _check = (!_srch.corner_cut) && (_pax == 0) && (_nbc == 8);
+    var _left  = _budget;
+	
+    var _profile = _srch.profile;
+
+    var _pinch = _srch.avoid_pinch && (_lay.mode == gmnav_layout.ISO_STAGGERED);
+
+    while (_left > 0) {
+        if (_heap.count == 0) {
+            _srch.state = gmnav_state.FAILED;
+            gmnav_search_release(_srch);
+
+            __gmnav_search_fire_complete(_srch);
+            return _srch.state;
+        }
+
+        _left--;
+        _srch.pops++;
+
+        var _cur = gmnav_heap_pop(_heap);
+        if (_mark[_cur] == _cgen) continue; // already closed, stale entry
+        _mark[_cur] = _cgen;
+
+        if (_cur == _goal) {
+            _srch.slot_g_final = _gc[_cur];
+            __gmnav_search_reconstruct(_srch);
+            _srch.state = gmnav_state.FOUND;
+            gmnav_search_release(_srch);
+
+            __gmnav_search_fire_complete(_srch);
+            return _srch.state;
+        }
+
+        _srch.expansions++;
+
+        var _cg = _gc[_cur];
+        var _cd = _dep[_cur];
+
+        if (_cur >= _obase) {
+            var _oi = _cur - _obase;
+            var _oe = _ov.edge_start[_oi + 1];
+
+            for (var e = _ov.edge_start[_oi]; e < _oe; e++) {
+                var _on = _ov.edge_to[e];
+                if (_mark[_on] == _cgen) continue;
+
+                if (_on < _obase && (_flags[_on] & GMNAV_FLAG_BLOCKED) != 0) continue; // a link may land back on the base grid, which can be blocked
+                if (_on >= _obase && gmnav_overlay_is_blocked(_ov, _on)) continue;     // or on a span collapsed since the last finish
+
+                if (_need > 1 && _on >= _obase) {
+                    var _oclr = _ov.clear[_on - _obase];
+
+                    if (_oclr < _need && _on != _goal) {
+                        var _cur_clr_ov = _ov.clear[_cur - _obase];
+                        if (_cur_clr_ov >= _need) continue;
+                        if ((_cd + 1) > _relax) continue;
+                    }
+                }
+
+                var _ocost = (_on >= _obase && _srch.profile == undefined)
+                           ? _ov.cost[_on - _obase]
+                           : _cost[_on];
+
+                var _og = _cg + _ov.edge_cost[e] * _ocost;
+                if (_mark[_on] == _gen && _og >= _gc[_on]) continue;
+
+                _gc[_on]   = _og;
+                _par[_on]  = _cur;
+                _dep[_on]  = _cd + 1;
+                _mark[_on] = _gen;
+
+                var _oc, _orr;
+                if (_on >= _obase) {
+                    _oc  = _ov.col[_on - _obase];
+                    _orr = _ov.row[_on - _obase];
+                } else {
+                    _oc  = _on % _w;
+                    _orr = _on div _w;
+                }
+
+                var _oh = __gmnav_h(_srch, _oc, _orr);
+                gmnav_heap_push(_heap, _og + _oh, _oh, _on);
+            }
+            continue;
+        }
+
+        var _cc = _cur % _w;
+        var _cr = _cur div _w;
+
+        var _p = 0;
+        if (_pax == 1)      _p = gmnav_parity(_cr);
+        else if (_pax == 2) _p = gmnav_parity(_cc);
+        var _base = _p * _nbc;
+
+        for (var i = 0; i < _nbc; i++) {
+            var _idx = _base + i;
+            var _dc  = _ndc[_idx];
+            var _dr  = _ndr[_idx];
+            var _nc  = _cc + _dc;
+            var _nr  = _cr + _dr;
+
+            if (_nc < 0 || _nr < 0 || _nc >= _w || _nr >= _h) continue;
+
+            var _nn = _nr * _w + _nc;
+            if (_mark[_nn] == _cgen) continue;
+            if ((_flags[_nn] & GMNAV_FLAG_BLOCKED) != 0) continue;
+
+            if (_hz != undefined) {
+                var _dz = _hz[_nn] - _hz[_cur];
+                if (_dz > _climb || -_dz > _drop) continue;
+            }
+
+            //if (_clr != undefined && _clr[_nn] < _need) { // stupid goal exemption, TODO: re enable it if things are still working out after disabling it
+            //    if (_nn != _goal) {
+            //        if (_clr[_cur] >= _need) continue;
+            //        if ((_cd + 1) > _relax) continue;
+            //    }
+            //}
+            if (_clr != undefined && _clr[_nn] < _need) {
+                if (_clr[_cur] >= _need) continue;
+                if ((_cd + 1) > _relax) continue;
+            }
+
+            if (_pinch) {
+                var _ub = (_nr - 1 < 0)
+                       || ((_flags[_nn - _w] & GMNAV_FLAG_BLOCKED) != 0);
+                var _db = (_nr + 1 >= _h)
+                       || ((_flags[_nn + _w] & GMNAV_FLAG_BLOCKED) != 0);
+
+                if (_ub && _db) continue;
+            }
+
+            if (_check && _dc != 0 && _dr != 0) {
+                var _f1 = _cr * _w + _nc;
+                var _f2 = _nr * _w + _cc;
+
+                if ((_flags[_f1] & GMNAV_FLAG_BLOCKED) != 0) continue;
+                if ((_flags[_f2] & GMNAV_FLAG_BLOCKED) != 0) continue;
+
+                if (_clr != undefined && (_cd + 1) > _relax) {
+                    if (_clr[_f1] < _need || _clr[_f2] < _need) continue;
+                }
+
+                if (_hz != undefined) {
+                    var _zc  = _hz[_cur];
+                    var _dz1 = _hz[_f1] - _zc;
+                    var _dz2 = _hz[_f2] - _zc;
+
+                    if (_dz1 > _climb || -_dz1 > _drop) continue;
+                    if (_dz2 > _climb || -_dz2 > _drop) continue;
+                }
+            }
+
+            var _ng = _cg + _ncs[_idx] * _cost[_nn];
+            if (_mark[_nn] == _gen && _ng >= _gc[_nn]) continue;
+
+            _gc[_nn]   = _ng;
+            _par[_nn]  = _cur;
+            _dep[_nn]  = _cd + 1;
+            _mark[_nn] = _gen;
+
+            var _hh = __gmnav_h(_srch, _nc, _nr);
+            gmnav_heap_push(_heap, _ng + _hh, _hh, _nn);
+        }
+
+        if (_ov != undefined) {
+            var _ue = _ov.up_start[_cur + 1];
+
+            for (var u = _ov.up_start[_cur]; u < _ue; u++) {
+                var _un = _ov.up_to[u];
+                if (_mark[_un] == _cgen) continue;
+                if (_un >= _obase && gmnav_overlay_is_blocked(_ov, _un)) continue;
+
+                if (_need > 1 && _un >= _obase) {
+                    var _uclr = _ov.clear[_un - _obase];
+
+                    if (_uclr < _need && _un != _goal) {
+                        if (_clr[_cur] >= _need) continue;
+                        if ((_cd + 1) > _relax) continue;
+                    }
+                }
+
+                var _ucost = (_un >= _obase && _srch.profile == undefined)
+                           ? _ov.cost[_un - _obase]
+                           : _cost[_un];
+
+                var _ug = _cg + _ov.up_cost[u] * _ucost;
+                if (_mark[_un] == _gen && _ug >= _gc[_un]) continue;
+
+                _gc[_un]   = _ug;
+                _par[_un]  = _cur;
+                _dep[_un]  = _cd + 1;
+                _mark[_un] = _gen;
+
+                var _uc, _ur;
+                if (_un >= _obase) {
+                    _uc = _ov.col[_un - _obase];
+                    _ur = _ov.row[_un - _obase];
+                } else {
+                    _uc = _un % _w;
+                    _ur = _un div _w;
+                }
+
+                var _uh = __gmnav_h(_srch, _uc, _ur);
+                gmnav_heap_push(_heap, _ug + _uh, _uh, _un);
+            }
+        }
+    }
+
+    if (_grid.version != _srch.version) _srch.stale = true;
+    return _srch.state;
+}
+
+function gmnav_search_is_stale(_srch) {
+    return _srch.stale || (_srch.grid.version != _srch.version);
+}
+
+function gmnav_search_get_path(_srch) {
+    return _srch.result;
+}
+
+function gmnav_search_release(_srch) {
+    if (_srch.slot != undefined) {
+        gmnav_grid_scratch_release(_srch.grid, _srch.slot);
+        _srch.slot = undefined;
+    }
+}
+
+function __gmnav_search_fire_complete(_srch) {
+    if (_srch.on_complete == undefined) return;
+
+    var _t = typeof(_srch.on_complete);
+    if (_t != "function" && _t != "method") return;
+
+    _srch.on_complete(_srch);
+}
+
+function gmnav_search_abort(_srch) {
+    gmnav_search_release(_srch);
+    gmnav_heap_clear(_srch.heap);
+    _srch.state  = gmnav_state.IDLE;
+    _srch.result = [];
+}
+
+function __gmnav_search_reconstruct(_srch) {
+    var _par = _srch.slot.parent;
+    var _out = [];
+    var _n   = _srch.goal;
+
+    while (_n != GMNAV_NO_NODE) {
+        array_push(_out, _n);
+        if (_n == _srch.start) break;
+        _n = _par[_n];
+    }
+
+    var _len  = array_length(_out);
+    var _half = _len div 2;
+    for (var i = 0; i < _half; i++) {
+        var _t = _out[i];
+        _out[i] = _out[_len - 1 - i];
+        _out[_len - 1 - i] = _t;
+    }
+
+    _srch.result = _out;
+}
+
+function __gmnav_heuristic_resolve(_lay, _requested) {
+    var _t = typeof(_requested);
+    if (_t == "function" || _t == "method") return _requested;
+
+    if (_requested != gmnav_heuristic.AUTO) return _requested;
+
+    switch (_lay.mode) {
+        case gmnav_layout.HEX_POINTY:
+        case gmnav_layout.HEX_FLAT:
+            return gmnav_heuristic.HEX;
+
+        case gmnav_layout.ORTHO:
+        case gmnav_layout.ISO_DIAMOND:
+            if (_lay.cost_mode == gmnav_costmode.VISUAL) return gmnav_heuristic.EUCLIDEAN;
+            return (_lay.neighbours == gmnav_neighbours.FOUR)
+                 ? gmnav_heuristic.MANHATTAN
+                 : gmnav_heuristic.OCTILE;
+    }
+    return gmnav_heuristic.EUCLIDEAN;
+}
+
+function __gmnav_h(_srch, _col, _row) {
+    var _t = typeof(_srch.h_mode);
+    if (_t == "function" || _t == "method") {
+        return _srch.h_mode(_col, _row, _srch.goal_c, _srch.goal_r, _srch.grid);
+    }
+
+    var _dx = abs(_col - _srch.goal_c);
+    var _dy = abs(_row - _srch.goal_r);
+
+    switch (_srch.h_mode) {
+        case gmnav_heuristic.MANHATTAN:
+            return _dx + _dy;
+
+        case gmnav_heuristic.CHEBYSHEV:
+            return max(_dx, _dy);
+
+        case gmnav_heuristic.OCTILE: {
+            var _lo = min(_dx, _dy);
+            return (_dx + _dy) + (GMNAV_SQRT2 - 2) * _lo;
+        }
+
+        case gmnav_heuristic.HEX: {
+            var _lay = _srch.grid.layout;
+            var _q1, _r1, _q2, _r2;
+
+            if (_lay.mode == gmnav_layout.HEX_POINTY) {
+                _r1 = _row;  _q1 = _col - ((_row - gmnav_parity(_row)) div 2);
+                _r2 = _srch.goal_r;
+                _q2 = _srch.goal_c - ((_srch.goal_r - gmnav_parity(_srch.goal_r)) div 2);
+            } else {
+                _q1 = _col;  _r1 = _row - ((_col - gmnav_parity(_col)) div 2);
+                _q2 = _srch.goal_c;
+                _r2 = _srch.goal_r - ((_srch.goal_c - gmnav_parity(_srch.goal_c)) div 2);
+            }
+
+            return (abs(_q1 - _q2) + abs(_q1 + _r1 - _q2 - _r2) + abs(_r1 - _r2)) * 0.5;
+        }
+
+        case gmnav_heuristic.EUCLIDEAN: {
+            var _lay = _srch.grid.layout;
+            var _x = gmnav_layout_cell_x(_lay, _col, _row);
+            var _y = gmnav_layout_cell_y(_lay, _col, _row);
+            return point_distance(_x, _y, _srch.goal_x, _srch.goal_y) / _lay.step_min_world;
+        }
+    }
+    return 0;
+}

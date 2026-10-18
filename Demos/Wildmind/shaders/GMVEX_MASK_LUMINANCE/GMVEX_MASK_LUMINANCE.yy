@@ -1,0 +1,12 @@
+{
+  "$GMShader":"",
+  "%Name":"GMVEX_MASK_LUMINANCE",
+  "name":"GMVEX_MASK_LUMINANCE",
+  "parent":{
+    "name":"Shaders",
+    "path":"folders/Libs/GMVex/Shaders.yy",
+  },
+  "resourceType":"GMShader",
+  "resourceVersion":"2.0",
+  "type":1,
+}

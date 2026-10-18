@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_StrokeEmit",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_StrokeEmit",
+  "parent":{
+    "name":"Stroke",
+    "path":"folders/Libs/GMVex/Stroke.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

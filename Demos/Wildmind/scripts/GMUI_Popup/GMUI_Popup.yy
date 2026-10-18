@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMUI_Popup",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMUI_Popup",
+  "parent":{
+    "name":"Features",
+    "path":"folders/Libs/GMUI/Features.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

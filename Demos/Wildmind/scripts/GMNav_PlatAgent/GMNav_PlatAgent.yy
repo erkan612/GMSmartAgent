@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMNav_PlatAgent",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMNav_PlatAgent",
+  "parent":{
+    "name":"Agents",
+    "path":"folders/Libs/GMNav/Agents.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_TextGlyph",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_TextGlyph",
+  "parent":{
+    "name":"Text",
+    "path":"folders/Libs/GMVex/Text.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

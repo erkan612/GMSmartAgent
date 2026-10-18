@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMNav_SearchGraph",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMNav_SearchGraph",
+  "parent":{
+    "name":"Search",
+    "path":"folders/Libs/GMNav/Search.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

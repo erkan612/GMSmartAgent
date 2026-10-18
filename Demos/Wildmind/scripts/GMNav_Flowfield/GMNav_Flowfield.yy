@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMNav_Flowfield",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMNav_Flowfield",
+  "parent":{
+    "name":"Search",
+    "path":"folders/Libs/GMNav/Search.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

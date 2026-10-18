@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_Text",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_Text",
+  "parent":{
+    "name":"Text",
+    "path":"folders/Libs/GMVex/Text.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

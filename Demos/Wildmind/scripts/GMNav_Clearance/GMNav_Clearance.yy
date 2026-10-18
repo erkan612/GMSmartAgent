@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMNav_Clearance",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMNav_Clearance",
+  "parent":{
+    "name":"Grid",
+    "path":"folders/Libs/GMNav/Grid.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

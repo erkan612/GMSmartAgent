@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_PathBuilding",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_PathBuilding",
+  "parent":{
+    "name":"Path",
+    "path":"folders/Libs/GMVex/Path.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

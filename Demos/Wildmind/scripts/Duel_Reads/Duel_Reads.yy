@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"Duel_Reads",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"Duel_Reads",
+  "parent":{
+    "name":"Duelist",
+    "path":"folders/Scenes/Duelist.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

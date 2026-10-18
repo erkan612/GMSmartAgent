@@ -1,0 +1,12 @@
+{
+  "$GMShader":"",
+  "%Name":"sh_demo_unpremultiply",
+  "name":"sh_demo_unpremultiply",
+  "parent":{
+    "name":"Shaders",
+    "path":"folders/Shaders.yy",
+  },
+  "resourceType":"GMShader",
+  "resourceVersion":"2.0",
+  "type":1,
+}

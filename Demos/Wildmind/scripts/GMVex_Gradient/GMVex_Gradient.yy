@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_Gradient",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_Gradient",
+  "parent":{
+    "name":"Draw",
+    "path":"folders/Libs/GMVex/Draw.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

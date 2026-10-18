@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_Enums",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_Enums",
+  "parent":{
+    "name":"Core",
+    "path":"folders/Libs/GMVex/Core.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

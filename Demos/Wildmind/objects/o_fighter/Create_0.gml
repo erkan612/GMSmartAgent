@@ -1,0 +1,13 @@
+team = 0;
+radius = 14;
+hp_max = 100;
+hp = hp_max;
+dead = false;
+invuln = 0;    // seconds left
+flash = 0;     // seconds left of the white hit flash
+knock_x = 0;   // knockback in px per second, fades out
+knock_y = 0;
+knock_scale = 1; // how much knockback moves it
+on_hurt = function(_damage) {};
+on_death = function() {};
+blocks = function(_from_dir) { return false; }; // true when a hit from that direction is blocked

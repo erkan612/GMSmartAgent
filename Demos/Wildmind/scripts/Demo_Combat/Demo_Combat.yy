@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"Demo_Combat",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"Demo_Combat",
+  "parent":{
+    "name":"Combat",
+    "path":"folders/Combat.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

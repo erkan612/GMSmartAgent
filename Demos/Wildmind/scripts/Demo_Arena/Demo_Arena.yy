@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"Demo_Arena",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"Demo_Arena",
+  "parent":{
+    "name":"Combat",
+    "path":"folders/Combat.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

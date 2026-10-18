@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMNav_Overlay",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMNav_Overlay",
+  "parent":{
+    "name":"Layered",
+    "path":"folders/Libs/GMNav/Layered.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMSA_Kit_Learn",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMSA_Kit_Learn",
+  "parent":{
+    "name":"Kit",
+    "path":"folders/Libs/GMSmartAgent/Kit.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

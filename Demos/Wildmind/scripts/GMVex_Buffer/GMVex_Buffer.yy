@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_Buffer",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_Buffer",
+  "parent":{
+    "name":"Importers",
+    "path":"folders/Libs/GMVex/Importers.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

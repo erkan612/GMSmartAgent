@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_Core",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_Core",
+  "parent":{
+    "name":"Core",
+    "path":"folders/Libs/GMVex/Core.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

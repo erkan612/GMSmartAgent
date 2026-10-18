@@ -1,0 +1,12 @@
+{
+  "$GMShader":"",
+  "%Name":"GMVEX_GRADIENT_RADIAL",
+  "name":"GMVEX_GRADIENT_RADIAL",
+  "parent":{
+    "name":"Shaders",
+    "path":"folders/Libs/GMVex/Shaders.yy",
+  },
+  "resourceType":"GMShader",
+  "resourceVersion":"2.0",
+  "type":1,
+}

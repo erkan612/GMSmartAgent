@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMNav_Platformer",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMNav_Platformer",
+  "parent":{
+    "name":"Platformer",
+    "path":"folders/Libs/GMNav/Platformer.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

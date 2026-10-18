@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMVex_BooleanOps",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMVex_BooleanOps",
+  "parent":{
+    "name":"Path",
+    "path":"folders/Libs/GMVex/Path.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

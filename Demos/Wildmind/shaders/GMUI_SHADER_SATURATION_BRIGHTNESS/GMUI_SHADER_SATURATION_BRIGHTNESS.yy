@@ -1,0 +1,12 @@
+{
+  "$GMShader":"",
+  "%Name":"GMUI_SHADER_SATURATION_BRIGHTNESS",
+  "name":"GMUI_SHADER_SATURATION_BRIGHTNESS",
+  "parent":{
+    "name":"Shaders",
+    "path":"folders/Libs/GMUI/Shaders.yy",
+  },
+  "resourceType":"GMShader",
+  "resourceVersion":"2.0",
+  "type":1,
+}
