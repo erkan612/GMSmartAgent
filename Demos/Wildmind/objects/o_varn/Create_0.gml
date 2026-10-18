@@ -17,6 +17,7 @@ swing = undefined;
 slam_x = x;
 slam_y = y;
 read = { dodge : "stay", sure : 0 }; // his guess at the player's dodge for the current attack
+situation = undefined; // what he saw when the current attack started, see duel_situation
 using_read = false; // whether he's acting on it
 timing = { timing : "on_time", sure : 0 }; // his guess at when the player will roll or dodge
 tactic = "";        // "hold" or "quick" when he plays against that timing
@@ -47,7 +48,8 @@ take = function(_option) { // acts on a fresh choice from his agent
     var _a = varn_attack(doing);
     if (_a != undefined) {
         attack = _a;
-        read = duel_read(doing);
+        situation = duel_situation(id, target);
+        read = duel_read(doing, situation);
         using_read = (read.sure >= DUEL_READ_SURE && read.dodge != "stay");
         thought = using_read ? "you'll dodge " + duel_dodge_words(read.dodge) + " (" + string(round(read.sure * 100)) + "%)" : "";
         timing = duel_timing_read();
@@ -62,18 +64,18 @@ take = function(_option) { // acts on a fresh choice from his agent
         windup_at = demo_now();
         if (using_read || tactic != "") varn_taunt_read(id);
         var _to = point_direction(x, y, target.x, target.y);
-        if (_a.shape == varn_shape.CIRCLE) { // the slam lands where the player will be: where he stands, or where Varn expects him to roll
-            var _px = target.x;
-            var _py = target.y;
-            if (using_read) {
-                _px += lengthdir_x(DUEL_DODGE_DISTANCE * 0.8, _to + duel_dodge_angle(read.dodge));
-                _py += lengthdir_y(DUEL_DODGE_DISTANCE * 0.8, _to + duel_dodge_angle(read.dodge));
-            }
-            var _len = min(_a.range, point_distance(x, y, _px, _py));
-            var _dir = point_direction(x, y, _px, _py);
-            slam_x = x + lengthdir_x(_len, _dir);
-            slam_y = y + lengthdir_y(_len, _dir);
-        }
+        //if (_a.shape == varn_shape.CIRCLE) { // the slam lands where the player will be: where he stands, or where Varn expects him to roll
+        //    var _px = target.x;
+        //    var _py = target.y;
+        //    if (using_read) {
+        //        _px += lengthdir_x(DUEL_DODGE_DISTANCE * 0.8, _to + duel_dodge_angle(read.dodge));
+        //        _py += lengthdir_y(DUEL_DODGE_DISTANCE * 0.8, _to + duel_dodge_angle(read.dodge));
+        //    }
+        //    var _len = min(_a.range, point_distance(x, y, _px, _py));
+        //    var _dir = point_direction(x, y, _px, _py);
+        //    slam_x = x + lengthdir_x(_len, _dir);
+        //    slam_y = y + lengthdir_y(_len, _dir);
+        //}
         if (_a.shape == varn_shape.SIDE) { // the side he expects the player to roll into, or the side the player is on
             if (using_read && read.dodge == "dodge_left") sweep_side = 90;
             else if (using_read && read.dodge == "dodge_right") sweep_side = -90;
@@ -83,6 +85,7 @@ take = function(_option) { // acts on a fresh choice from his agent
         watch_x = target.x;
         watch_y = target.y;
         watch_from = _to;
+        if (_a.shape == varn_shape.CIRCLE) aim_slam(infinity); // after the watch, the aim measures from where the player stood
         gmsa_agent_set_busy(agent, true);
         gmnav_agent_stop(nav);
         start(varn_state.WINDUP);
@@ -104,6 +107,26 @@ finish = function() { // an attack or guard is over: he thinks again at once
     attack = undefined;
     swing = undefined;
     start(varn_state.FREE);
+};
+
+aim_slam = function(_step) { // moves the slam toward where the player will be. _step is how far it may move, infinity to snap
+    var _px = target.x;
+    var _py = target.y;
+    if (using_read) { // the rest of the dodge he expects: what the player already moved that way doesn't count twice
+        var _way = watch_from + duel_dodge_angle(read.dodge);
+        var _done = lengthdir_x(1, _way) * (target.x - watch_x) + lengthdir_y(1, _way) * (target.y - watch_y);
+        var _left = max(0, o_duel.reads.dodge_dist - _done);
+        _px += lengthdir_x(_left, _way);
+        _py += lengthdir_y(_left, _way);
+    }
+    var _len = min(attack.range, point_distance(x, y, _px, _py));
+    var _dir = point_direction(x, y, _px, _py);
+    var _gx = x + lengthdir_x(_len, _dir);
+    var _gy = y + lengthdir_y(_len, _dir);
+    var _move = min(_step, point_distance(slam_x, slam_y, _gx, _gy));
+    var _md = point_direction(slam_x, slam_y, _gx, _gy);
+    slam_x += lengthdir_x(_move, _md);
+    slam_y += lengthdir_y(_move, _md);
 };
 
 swing_now = function() { // the hit starts

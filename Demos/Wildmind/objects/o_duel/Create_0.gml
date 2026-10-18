@@ -40,8 +40,10 @@ global.debug.scene = function() {
     if (gmui_button("Restart fight")) room_restart();
     global.duel_learning = gmui_checkbox(global.duel_learning, "Varn learns from you");
     var _kinds = ["cleave", "sweep", "slam", "charge"];
+    var _s = duel_situation(varn, player);
+    gmui_text("sees: " + duel_situation_words(_s));
     for (var _k = 0; _k < array_length(_kinds); _k++) {
-        var _r = duel_read(_kinds[_k]);
+        var _r = duel_read(_kinds[_k], _s);
         gmui_text(_kinds[_k] + ": " + ((_r.sure > 0) ? "dodges " + duel_dodge_words(_r.dodge) + " " + string(round(_r.sure * 100)) + "%" : "no idea yet"));
     }
     var _t = duel_timing_read();

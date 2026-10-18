@@ -1,5 +1,7 @@
 if (demo_paused()) exit;
 var _dt = demo_dt();
+var _x0 = x;
+var _y0 = y;
 fighter_tick(id, _dt);
 state_time += _dt;
 aim = point_direction(x, y, mouse_x, mouse_y);
@@ -107,4 +109,9 @@ if (global.arena != undefined) {
 } else {
     x = clamp(x, radius, room_width - radius);
     y = clamp(y, radius, room_height - radius);
+}
+if (_dt > 0) { // smoothed over about a fifth of a second, so one frame of push doesn't count
+    var _k = 1 - exp(-_dt / 0.12);
+    vel_x = lerp(vel_x, (x - _x0) / _dt, _k);
+    vel_y = lerp(vel_y, (y - _y0) / _dt, _k);
 }

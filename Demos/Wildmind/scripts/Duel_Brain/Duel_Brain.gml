@@ -27,7 +27,7 @@ function __varn_profile_build() {
     gmsa_profile_add_input(_p, gmsa_input_pull("sweep_chance", function(_agent, _target) { // the player is off to one side, or Varn expects a roll to one
         var _v = _agent.owner;
         var _off = min(1, abs(angle_difference(point_direction(_v.x, _v.y, _v.target.x, _v.target.y), _v.facing)) / 60);
-        var _r = duel_read("sweep");
+        var _r = duel_read("sweep", duel_situation(_v, _v.target));
         var _side = (_r.dodge == "dodge_left" || _r.dodge == "dodge_right") ? _r.sure : 0;
         return max(_off, _side);
     }));

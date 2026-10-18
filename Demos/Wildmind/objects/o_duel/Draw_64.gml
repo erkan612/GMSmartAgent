@@ -9,7 +9,7 @@ if (instance_exists(varn)) {
 
 var _gw = display_get_gui_width();
 var _gh = display_get_gui_height();
-if (show_habits || varn.dead || player.dead) duel_habits_draw(_gw - 340, 20);
+if (show_habits || varn.dead || player.dead) duel_habits_draw(20, 100); // under the health and stamina
 
 if (varn.dead) {
     draw_set_halign(fa_center);

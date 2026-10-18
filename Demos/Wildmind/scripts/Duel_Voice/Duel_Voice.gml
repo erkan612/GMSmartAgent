@@ -38,35 +38,50 @@ function varn_taunt_miss(_v) { // his guess was wrong: the player changed
     _v.taunt_wait = 8;
 }
 
-function duel_habits_draw(_x, _y) { // what Varn knows about the player, for the player to see
+function duel_habits_draw(_x, _y) { // what Varn knows about the player, for the player to see. long lines wrap
     static _kinds = ["cleave", "sweep", "slam", "charge"];
     static _names = ["Cleave", "Sweep", "Slam", "Charge"];
-    var _w = 360;
+    static _on = make_color_rgb(255, 120, 40);   // a bar he acts on
+    static _off = make_color_rgb(110, 110, 110);
+    var _w = 380;
+    var _tw = _w - 20;
+    var _rows = [{ text : "What Varn knows about you", col : make_color_rgb(255, 170, 90), bar : -1 }];
+    if (!global.duel_learning) {
+        array_push(_rows, { text : "Nothing. He isn't learning.", col : c_ltgray, bar : -1 });
+    } else {
+        var _reads = o_duel.reads;
+        var _s = duel_situation(o_duel.varn, o_duel.player);
+        array_push(_rows, { text : "He sees: " + duel_situation_words(_s), col : c_ltgray, bar : -1 });
+        var _t = duel_timing_read();
+        var _when = "no idea yet";
+        if (_t.sure > 0.05) _when = "you dodge " + string_replace(_t.timing, "_", " ") + ", " + string_format(_reads.timing_avg, 1, 2) + " s before the hit";
+        array_push(_rows, { text : "Timing: " + _when + "  (" + string(_reads.timing_seen) + " seen)", col : c_white, bar : _t.sure, bar_col : (_t.sure >= DUEL_READ_SURE && _t.timing != "on_time") ? _on : _off });
+        for (var _i = 0; _i < 4; _i++) { // his guess for each attack, if it started right now
+            var _r = duel_read(_kinds[_i], _s);
+            var _what = "no idea yet";
+            if (_r.sure > 0.05) _what = (_r.dodge == "stay") ? "you stand still" : "you dodge " + duel_dodge_words(_r.dodge);
+            array_push(_rows, { text : _names[_i] + ": " + _what + "  (" + string(o_duel.seen[$ _kinds[_i]]) + " seen)", col : c_white, bar : _r.sure, bar_col : (_r.sure >= DUEL_READ_SURE) ? _on : _off });
+        }
+    }
+
+    var _h = 8; // measured first, so the background fits the wrapped lines
+    for (var _i = 0; _i < array_length(_rows); _i++) _h += string_height_ext(_rows[_i].text, -1, _tw) + ((_rows[_i].bar >= 0) ? 12 : 6);
     draw_set_alpha(0.6);
     draw_set_colour(c_black);
-    draw_rectangle(_x, _y, _x + _w, _y + 36 + 34 * 5, false);
+    draw_rectangle(_x, _y, _x + _w, _y + _h, false);
     draw_set_alpha(1);
-    draw_set_colour(make_color_rgb(255, 170, 90));
-    draw_text(_x + 10, _y + 8, "What Varn knows about you");
-    if (!global.duel_learning) {
-        draw_set_colour(c_ltgray);
-        draw_text(_x + 10, _y + 40, "Nothing. He isn't learning.");
-        return;
-    }
-    var _reads = o_duel.reads;
-    var _t = duel_timing_read();
-    var _when = "no idea yet";
-    if (_t.sure > 0.05) _when = "you dodge " + string_replace(_t.timing, "_", " ") + ", " + string_format(_reads.timing_avg, 1, 2) + " s before the hit";
-    draw_set_colour(c_white);
-    draw_text(_x + 10, _y + 36, "Timing: " + _when + "  (" + string(_reads.timing_seen) + " seen)");
-    __hud_bar(_x + 10, _y + 56, _w - 20, 5, _t.sure, (_t.sure >= DUEL_READ_SURE && _t.timing != "on_time") ? make_color_rgb(255, 120, 40) : make_color_rgb(110, 110, 110));
-    for (var _i = 0; _i < 4; _i++) {
-        var _r = duel_read(_kinds[_i]);
-        var _ry = _y + 70 + _i * 34;
-        var _what = "no idea yet";
-        if (_r.sure > 0.05) _what = (_r.dodge == "stay") ? "you stand still" : "you dodge " + duel_dodge_words(_r.dodge);
-        draw_set_colour(c_white);
-        draw_text(_x + 10, _ry, _names[_i] + ": " + _what + "  (" + string(o_duel.seen[$ _kinds[_i]]) + " seen)");
-        __hud_bar(_x + 10, _ry + 20, _w - 20, 5, _r.sure, (_r.sure >= DUEL_READ_SURE) ? make_color_rgb(255, 120, 40) : make_color_rgb(110, 110, 110));
+
+    var _cy = _y + 8;
+    for (var _i = 0; _i < array_length(_rows); _i++) {
+        var _row = _rows[_i];
+        draw_set_colour(_row.col);
+        draw_text_ext(_x + 10, _cy, _row.text, -1, _tw);
+        _cy += string_height_ext(_row.text, -1, _tw);
+        if (_row.bar >= 0) {
+            __hud_bar(_x + 10, _cy + 2, _tw, 5, _row.bar, _row.bar_col);
+            _cy += 12;
+        } else {
+            _cy += 6;
+        }
     }
 }

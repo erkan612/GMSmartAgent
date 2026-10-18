@@ -8,7 +8,7 @@ function demo_debug_ui() { // the debug window on F1, after gmui_update. A scene
     if (keyboard_check_pressed(vk_f1)) _d.open = !_d.open;
     global.ui_mouse = false;
     if (!_d.open) return;
-    if (gmui_begin_window("Debug", 20, 90, 560, 520)) {
+    if (gmui_begin_window("Debug", display_get_gui_width() - 580, 90, 560, 520)) {
         gmui_text("fps: " + string(round(fps_real)));
         gmui_text("game time: " + string(demo_now() div 1000000) + " s");
         var _paused = gmui_checkbox(demo_paused(), "Paused (P)");

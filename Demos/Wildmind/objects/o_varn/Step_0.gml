@@ -33,7 +33,7 @@ switch (state) {
         break;
 
     case varn_state.WINDUP:
-        if (state_time < windup_time * attack.lock) {
+        if (state_time < windup_time * (using_read ? attack.lock : VARN_PLAIN_LOCK)) { // a warning that keeps following the player means he has a read
             var _aim = _to_player;
             if (using_read && (attack.shape == varn_shape.ARC || attack.shape == varn_shape.CHARGE)) { // aims ahead of the roll he expects
                 var _lead = (attack.shape == varn_shape.CHARGE) ? 110 : 60;
@@ -42,10 +42,15 @@ switch (state) {
                 _aim = point_direction(x, y, _ax, _ay);
             }
             facing += angle_difference(_aim, facing) * min(1, 4 * _dt);
+            if (attack.shape == varn_shape.CIRCLE && using_read) aim_slam(VARN_HOLD_STEP * _dt); // only when he's sure: the circle follows the dodge he expects
         }
         if (state_time >= windup_time) {
             if (watch != "" && instance_exists(target)) { // the hit comes now: where did the player go since the windup started, and when
-                duel_read_learn(watch, duel_dodge_kind(target.x - watch_x, target.y - watch_y, watch_from));
+                var _dx = target.x - watch_x;
+                var _dy = target.y - watch_y;
+                var _kind = duel_dodge_kind(_dx, _dy, watch_from);
+                duel_read_learn(watch, situation, _kind);
+                if (_kind != "stay") o_duel.reads.dodge_dist = lerp(o_duel.reads.dodge_dist, point_distance(0, 0, _dx, _dy), 0.3);
                 if (target.evade_at >= windup_at) duel_timing_learn((demo_now() - target.evade_at) / 1000000);
                 watch = "";
             }
