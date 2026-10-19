@@ -34,7 +34,7 @@ switch (state) {
             x += nav.vx * _dt * 60; // GMNav speeds are per frame, this keeps them on the game clock
             y += nav.vy * _dt * 60;
         } else if (state == varn_state.FREE) {
-            gmnav_agent_stop(nav);
+            nav_stop();
         }
         break;
 
@@ -102,6 +102,14 @@ switch (state) {
             var _landed = array_length(swing.hit) > 0;
             if (tactic != "" && _landed) varn_taunt_timing(id);
             else if ((using_read || tactic != "") && !_landed) varn_taunt_miss(id); // he played a guess and caught nothing
+            var _base = varn_attack_base(doing);
+            duel_lands_learn(_base, _landed);
+            //var _l = o_duel.reads.lands[$ _base];
+            if (global.duel_learning && !_landed && duel_lands_works(_base) <= 0.34 && !variable_struct_exists(given_up, _base)) {
+                given_up[$ _base] = true;
+                varn_say(id, "Hm. You read that one.");
+                taunt_wait = 8;
+            }
             start(varn_state.RECOVER);
             after_start(_landed);
         }

@@ -112,6 +112,13 @@ function __duel_habits_rows() {
     }
     array_push(_rows, { text : "Then: " + _then + "  (" + string(_reads.after_seen) + " seen)", col : c_white, bar : _f.sure, bar_col : (_f.sure >= DUEL_READ_SURE && _f.answer != "wait") ? _on : _off });
 
+    var _lands = "";
+    for (var _i = 0; _i < 4; _i++) {
+        var _l = _reads.lands[$ _kinds[_i]];
+        _lands += ((_i > 0) ? ", " : "") + _kinds[_i] + " " + string(_l.hit) + "/" + string(_l.used);
+    }
+    array_push(_rows, { text : "Lands on you: " + _lands, col : c_white, bar : -1 });
+
     for (var _i = 0; _i < 4; _i++) { // his guess for each attack, if it started right now
         var _r = duel_read(_kinds[_i], _s);
         var _what = "no idea yet";

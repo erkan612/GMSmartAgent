@@ -49,6 +49,7 @@ function duel_reads_create(_player) { // a fresh memory of the player, one per f
         timing_model : gmsa_learn_count_create({ bins : 1, inputs : ["attack"], confidence_k : 3, half_life : 10 }), // one bin, so every attack teaches the same timing. fades fast, so he notices a change
         timing_avg   : 0, // seconds before the hit, for the habits panel
         dodge_dist   : 120, // how far the player's dodges carry, learned as he watches them
+        lands        : { cleave : { used : 0, hit : 0 }, sweep : { used : 0, hit : 0 }, slam : { used : 0, hit : 0 }, charge : { used : 0, hit : 0 } }, // per attack: how often it hit this player
         after_agent  : gmsa_agent_create(duel_after_profile(), _player),
         after_model  : gmsa_learn_bayes_create({ inputs : ["attack", "landed", "close"], input_bins : { attack : 4, landed : 2, close : 2 }, smoothing : 1, confidence_k : 3, half_life : 20 }),
         after_seen   : 0,
@@ -246,4 +247,24 @@ function duel_after_words(_answer) { // his plan, for the thought line
         case "back_off": return "you'll back off, I'm coming";
     }
     return "";
+}
+
+function duel_lands_works(_attack) { // how well this attack works on the player, 1 until he knows. hitting half the time or more counts as working, the fewer tries the less he trusts it
+    if (!global.duel_learning) return 1;
+    var _l = o_duel.reads.lands[$ _attack];
+    if (_l.used == 0) return 1;
+    return lerp(1, min(1, 2 * _l.hit / _l.used), _l.used / (_l.used + 2));
+}
+
+function duel_lands_learn(_attack, _landed) {
+    if (!global.duel_learning) return;
+    var _l = o_duel.reads.lands[$ _attack];
+    if (_l == undefined) return;
+    _l.used += 1;
+    if (_landed) _l.hit += 1;
+}
+
+function duel_lands_rest(_attack) { // seconds Varn saves an attack after using it, on top of its cooldown: the full rest when it never works on the player, none when it does
+    static _rest = { cleave : 3, sweep : 3, slam : 16, charge : 8 };
+    return _rest[$ _attack] * (1 - duel_lands_works(_attack));
 }

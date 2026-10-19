@@ -28,6 +28,8 @@ recover_time = 0;   // this attack's recovery, shorter when he's ready for the p
 after = undefined;  // what the player does after his attack, while he watches
 follow = { answer : "wait", sure : 0 }; // his guess at it
 following = false;  // the current attack is a follow-up he planned
+given_up = {};      // attacks he has said won't work on this player
+used_at = {};       // when he last used each attack, see duel_lands_rest
 thought = "";
 speech = "";        // what he says out loud, in a bubble
 speech_time = 0;
@@ -47,6 +49,12 @@ start = function(_state) {
     state_time = 0;
 };
 
+nav_stop = function() { // stops walking and forgets the goal, so the next approach asks for a fresh path
+    gmnav_agent_stop(nav);
+    goal_x = -100000;
+    repath_wait = 0;
+};
+
 take = function(_option) { // acts on a fresh choice from his agent
     gmsa_agent_set_current_option(agent, _option);
     doing = _option.action.name;
@@ -59,6 +67,7 @@ take = function(_option) { // acts on a fresh choice from his agent
     var _kind = varn_attack_base(doing);
     if (_a != undefined) {
         attack = _a;
+        used_at[$ _kind] = demo_now();
         situation = duel_situation(id, target);
         read = duel_read(_kind, situation);
         using_read = (read.sure >= DUEL_READ_SURE && read.dodge != "stay");
@@ -100,11 +109,11 @@ take = function(_option) { // acts on a fresh choice from his agent
         if (_a.shape == varn_shape.CIRCLE) aim_slam(infinity); // after the watch, the aim measures from where the player stood
         if (!varn_threatens(id)) watch = ""; // an attack that can't reach the player asks no answer of them
         gmsa_agent_set_busy(agent, true);
-        gmnav_agent_stop(nav);
+        nav_stop();
         start(varn_state.WINDUP);
     } else if (doing == "guard" || doing == "brace" || doing == "block" || doing == "ward") {
         gmsa_agent_set_busy(agent, true);
-        gmnav_agent_stop(nav);
+        nav_stop();
         start(varn_state.GUARD);
     }
 };
@@ -198,7 +207,7 @@ blocks = function(_from_dir) { // the shield stops what comes from the front whi
 
 on_death = function() {
     gmsa_agent_set_busy(agent, true);
-    gmnav_agent_stop(nav);
+    nav_stop();
     doing = "";
     thought = "";
     using_read = false;
