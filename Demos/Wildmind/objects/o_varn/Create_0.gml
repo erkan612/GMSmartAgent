@@ -31,6 +31,9 @@ following = false;  // the current attack is a follow-up he planned
 given_up = {};      // attacks he has said won't work on this player
 used_at = {};       // when he last used each attack, see duel_lands_rest
 played = false;     // the current attack is shaped by something he learned
+phase = 1;
+leap_dir = 0;
+volley_fired = false;
 thought = "";
 speech = "";        // what he says out loud, in a bubble
 speech_time = 0;
@@ -119,6 +122,11 @@ take = function(_option) { // acts on a fresh choice from his agent
         gmsa_agent_set_busy(agent, true);
         nav_stop();
         start(varn_state.GUARD);
+    } else if (doing == "leap") {
+        leap_dir = varn_leap_dir(id);
+        gmsa_agent_set_busy(agent, true);
+        nav_stop();
+        start(varn_state.LEAP);
     }
 };
 
@@ -183,6 +191,7 @@ aim_slam = function(_step) { // moves the slam toward where the player will be. 
 swing_now = function() { // the hit starts
     attack_dir = facing;
     swing = demo_swing_create(id, team, attack.damage, attack.knock);
+    volley_fired = false;
     start(varn_state.ACTIVE);
 };
 
@@ -196,6 +205,19 @@ strike = function(_dt) { // the active part of an attack, every step
             break;
         case varn_shape.CIRCLE:
             demo_swing_hit_circle(swing, slam_x, slam_y, attack.radius);
+            break;
+        case varn_shape.VOLLEY:
+            if (!volley_fired) {
+                volley_fired = true;
+                for (var _i = 0; _i < attack.count; _i++) {
+                    var _d = attack_dir + (_i - (attack.count - 1) / 2) * attack.spread;
+                    var _b = instance_create_depth(x + lengthdir_x(radius, _d), y + lengthdir_y(radius, _d), depth - 1, o_bolt);
+                    _b.dir = _d;
+                    _b.fly = attack.speed;
+                    _b.swing = swing;
+                    _b.life = attack.active;
+                }
+            }
             break;
         case varn_shape.CHARGE:
             x += lengthdir_x(attack.speed * _dt, attack_dir);

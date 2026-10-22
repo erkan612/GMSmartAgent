@@ -84,8 +84,8 @@ function duel_habits_draw(_x, _y) { // what Varn knows about the player, for the
 }
 
 function __duel_habits_rows() {
-    static _kinds = ["cleave", "sweep", "slam", "charge"];
-    static _names = ["Cleave", "Sweep", "Slam", "Charge"];
+    static _kinds = varn_attack_kinds();
+    static _names = ["Cleave", "Sweep", "Slam", "Charge", "Volley"];
     static _on = make_color_rgb(255, 120, 40);   // a bar he acts on
     static _off = make_color_rgb(110, 110, 110);
     var _rows = [{ text : "What Varn knows about you", col : make_color_rgb(255, 170, 90), bar : -1 }];
@@ -113,13 +113,13 @@ function __duel_habits_rows() {
     array_push(_rows, { text : "Then: " + _then + "  (" + string(_reads.after_seen) + " seen)", col : c_white, bar : _f.sure, bar_col : (_f.sure >= DUEL_READ_SURE && _f.answer != "wait") ? _on : _off });
 
     var _lands = "";
-    for (var _i = 0; _i < 4; _i++) {
+    for (var _i = 0; _i < array_length(_kinds); _i++) {
         var _l = _reads.lands[$ _kinds[_i]];
         _lands += ((_i > 0) ? ", " : "") + _kinds[_i] + " " + string(_l.hit) + "/" + string(_l.used);
     }
     array_push(_rows, { text : "Lands on you: " + _lands, col : c_white, bar : -1 });
 
-    for (var _i = 0; _i < 4; _i++) { // his guess for each attack, if it started right now
+    for (var _i = 0; _i < array_length(_kinds); _i++) { // his guess for each attack, if it started right now
         var _r = duel_read(_kinds[_i], _s);
         var _what = "no idea yet";
         if (_r.sure > 0.05) _what = (_r.dodge == "stay") ? "you stand still" : "you dodge " + duel_dodge_words(_r.dodge);
@@ -142,9 +142,9 @@ function duel_summary_lines() { // what Varn learned about the player this fight
     if (_r.timing_seen > 0) array_push(_out, "You pressed roll or dodge " + string_format(_r.timing_avg, 1, 2) + " s before his hits, on average.");
     var _a = _r.afters;
     array_push(_out, "After his attacks you punished " + string(_a.punish) + ", shot " + string(_a.shoot) + ", drank " + string(_a.drink) + ", backed off " + string(_a.back_off) + " and waited " + string(_a.wait) + " times.");
-    var _kinds = ["cleave", "sweep", "slam", "charge"];
+    var _kinds = varn_attack_kinds();
     var _lands = "";
-    for (var _i = 0; _i < 4; _i++) {
+    for (var _i = 0; _i < array_length(_kinds); _i++) {
         var _l = _r.lands[$ _kinds[_i]];
         _lands += ((_i > 0) ? ", " : "") + _kinds[_i] + " " + string(_l.hit) + " of " + string(_l.used);
     }

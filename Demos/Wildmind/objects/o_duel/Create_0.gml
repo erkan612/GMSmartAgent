@@ -34,7 +34,7 @@ debug_cache = [];
 debug_next = 0;
 debug_lines = function() { // the reads and his reasoning, as text for the debug window
     var _out = [];
-    var _kinds = ["cleave", "sweep", "slam", "charge"];
+    var _kinds = varn_attack_kinds();
     var _s = duel_situation(varn, player);
     array_push(_out, "sees: " + duel_situation_words(_s));
     for (var _k = 0; _k < array_length(_kinds); _k++) {
@@ -87,7 +87,7 @@ global.debug.scene = function() {
     }
 };
 
-seen = { cleave : 0, sweep : 0, slam : 0, charge : 0 }; // answers recorded per attack, for the habits panel
+seen = { cleave : 0, sweep : 0, slam : 0, charge : 0, volley : 0 }; // answers recorded per attack, for the habits panel
 show_habits = true;
 intro = true;          // the start screen, the world waits behind it
 global.demo_menu = true;

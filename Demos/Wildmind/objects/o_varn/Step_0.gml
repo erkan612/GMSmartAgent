@@ -16,6 +16,12 @@ var _to_player = _alive ? point_direction(x, y, target.x, target.y) : facing;
 
 switch (state) {
     case varn_state.FREE:
+        if (phase == 1 && hp < hp_max * VARN_PHASE_2) { // swapped between actions, never mid swing
+            phase = 2;
+            gmsa_agent_set_profile(agent, varn_profile(2));
+            varn_say(id, "Enough. Now I fight.");
+            taunt_wait = 8;
+        }
         facing += angle_difference(_to_player, facing) * min(1, 6 * _dt);
         var _d = gmsa_agent_consume(agent);
         if (_d != undefined && _alive && !o_duel.hold_varn) {
@@ -41,8 +47,8 @@ switch (state) {
     case varn_state.WINDUP:
         if (state_time < windup_time * ((using_read || following) ? attack.lock : VARN_PLAIN_LOCK)) { // a warning that keeps following the player means he has a read
             var _aim = _to_player;
-            if (using_read && (attack.shape == varn_shape.ARC || attack.shape == varn_shape.CHARGE)) { // aims ahead of the roll he expects
-                var _lead = (attack.shape == varn_shape.CHARGE) ? 110 : 60;
+            if (using_read && (attack.shape == varn_shape.ARC || attack.shape == varn_shape.CHARGE || attack.shape == varn_shape.VOLLEY)) { // aims ahead of the roll he expects
+                var _lead = (attack.shape == varn_shape.ARC) ? 60 : 110;
                 var _ax = target.x + lengthdir_x(_lead, _to_player + duel_dodge_angle(read.dodge));
                 var _ay = target.y + lengthdir_y(_lead, _to_player + duel_dodge_angle(read.dodge));
                 _aim = point_direction(x, y, _ax, _ay);
@@ -118,6 +124,15 @@ switch (state) {
 
     case varn_state.RECOVER:
         if (state_time >= recover_time) finish();
+        break;
+
+    case varn_state.LEAP: // a crouch, then a jump away from the player
+        facing += angle_difference(_to_player, facing) * min(1, 6 * _dt);
+        if (state_time >= VARN_LEAP_CROUCH) {
+            x += lengthdir_x(VARN_LEAP_DIST / VARN_LEAP_TIME * _dt, leap_dir);
+            y += lengthdir_y(VARN_LEAP_DIST / VARN_LEAP_TIME * _dt, leap_dir);
+        }
+        if (state_time >= VARN_LEAP_CROUCH + VARN_LEAP_TIME) finish();
         break;
 
     case varn_state.GUARD:

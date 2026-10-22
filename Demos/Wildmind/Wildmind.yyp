@@ -66,6 +66,7 @@
   "resources":[
     {"id":{"name":"fnt_ui","path":"fonts/fnt_ui/fnt_ui.yy",},},
     {"id":{"name":"o_arrow","path":"objects/o_arrow/o_arrow.yy",},},
+    {"id":{"name":"o_bolt","path":"objects/o_bolt/o_bolt.yy",},},
     {"id":{"name":"o_duel","path":"objects/o_duel/o_duel.yy",},},
     {"id":{"name":"o_dummy","path":"objects/o_dummy/o_dummy.yy",},},
     {"id":{"name":"o_fighter","path":"objects/o_fighter/o_fighter.yy",},},

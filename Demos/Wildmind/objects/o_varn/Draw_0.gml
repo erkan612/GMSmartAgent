@@ -22,9 +22,18 @@ if (state == varn_state.WINDUP || state == varn_state.HOLD || state == varn_stat
         case varn_shape.CHARGE:
             if (state != varn_state.ACTIVE) demo_draw_lane(x, y, facing, attack.speed * attack.active + radius, radius * 2, _col, 0.15 + 0.15 * _t);
             break;
+        case varn_shape.VOLLEY:
+            if (state != varn_state.ACTIVE) {
+                for (var _i = 0; _i < attack.count; _i++) {
+                    var _d = facing + (_i - (attack.count - 1) / 2) * attack.spread;
+                    demo_draw_lane(x, y, _d, attack.speed * attack.active, 10, _col, 0.1 + 0.2 * _t);
+                }
+            }
+            break;
     }
 }
 if (state == varn_state.GUARD) demo_draw_sector(x, y, radius + 14, facing, 60, make_color_rgb(120, 180, 255), 0.35);
+if (state == varn_state.LEAP && state_time < VARN_LEAP_CROUCH) demo_draw_lane(x, y, leap_dir, VARN_LEAP_DIST, radius * 2, c_white, 0.15); // where he'll land
 
 fighter_draw(demo_art("varn"), facing, dead ? 0.4 : 1);
 

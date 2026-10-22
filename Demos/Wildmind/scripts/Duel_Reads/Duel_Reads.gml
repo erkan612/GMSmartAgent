@@ -45,18 +45,18 @@ function __duel_timing_profile_build() {
 function duel_reads_create(_player) { // a fresh memory of the player, one per fight
     return {
         agent        : gmsa_agent_create(duel_dodge_profile(), _player),
-        model        : gmsa_learn_bayes_create({ inputs : ["attack", "strafe", "room", "close"], input_bins : { attack : 4, strafe : 5, room : 3, close : 2 }, smoothing : 1, confidence_k : DUEL_LEARN_PACE, half_life : 30 }), // each input learns on its own, so every attack teaches the others
+        model        : gmsa_learn_bayes_create({ inputs : ["attack", "strafe", "room", "close"], input_bins : { attack : 5, strafe : 5, room : 3, close : 2 }, smoothing : 1, confidence_k : DUEL_LEARN_PACE, half_life : 30 }), // each input learns on its own, so every attack teaches the others
 		timing_agent : gmsa_agent_create(duel_timing_profile(), _player),
         timing_model : gmsa_learn_count_create({ bins : 1, inputs : ["attack"], confidence_k : DUEL_LEARN_PACE, half_life : 10 }), // one bin, so every attack teaches the same timing. fades fast, so he notices a change
         timing_avg   : 0, // seconds before the hit, for the habits panel
         dodge_dist   : 120, // how far the player's dodges carry, learned as he watches them
-        lands        : { cleave : { used : 0, hit : 0 }, sweep : { used : 0, hit : 0 }, slam : { used : 0, hit : 0 }, charge : { used : 0, hit : 0 } }, // per attack: how often it hit this player
+        lands        : { cleave : { used : 0, hit : 0 }, sweep : { used : 0, hit : 0 }, slam : { used : 0, hit : 0 }, charge : { used : 0, hit : 0 }, volley : { used : 0, hit : 0 } }, // per attack: how often it hit this player
         dodges       : { dodge_left : 0, dodge_right : 0, dodge_back : 0, dodge_in : 0, stay : 0 }, // counts for the summary after the fight
         afters       : { punish : 0, shoot : 0, drink : 0, back_off : 0, wait : 0 },
         played       : 0, // attacks he shaped with something he learned
         caught       : 0, // and how many of those hit
         after_agent  : gmsa_agent_create(duel_after_profile(), _player),
-        after_model  : gmsa_learn_bayes_create({ inputs : ["attack", "landed", "close"], input_bins : { attack : 4, landed : 2, close : 2 }, smoothing : 1, confidence_k : DUEL_LEARN_PACE, half_life : 20 }),
+        after_model  : gmsa_learn_bayes_create({ inputs : ["attack", "landed", "close"], input_bins : { attack : 5, landed : 2, close : 2 }, smoothing : 1, confidence_k : DUEL_LEARN_PACE, half_life : 20 }),
         after_seen   : 0,
         after_ctx    : undefined, // the last attack he watched an answer to, for the habits panel
         timing_seen  : 0,
@@ -86,12 +86,13 @@ function duel_timing_learn(_lead) { // the player pressed roll or dodge this man
     _r.timing_seen++;
 }
 
-function varn_attack_slot(_attack) { // each attack in its own quarter of the "attack" input, so Count keeps them apart
+function varn_attack_slot(_attack) { // each attack in its own fifth of the "attack" input, so the models keep them apart
     switch (_attack) {
-        case "cleave": return 0.125;
-        case "sweep":  return 0.375;
-        case "slam":   return 0.625;
-        case "charge": return 0.875;
+        case "cleave": return 0.1;
+        case "sweep":  return 0.3;
+        case "slam":   return 0.5;
+        case "charge": return 0.7;
+        case "volley": return 0.9;
     }
     return 0;
 }
@@ -272,6 +273,6 @@ function duel_lands_learn(_attack, _landed) {
 }
 
 function duel_lands_rest(_attack) { // seconds Varn saves an attack after using it, on top of its cooldown: the full rest when it never works on the player, none when it does
-    static _rest = { cleave : 3, sweep : 3, slam : 16, charge : 8 };
+    static _rest = { cleave : 3, sweep : 3, slam : 16, charge : 8, volley : 8 };
     return _rest[$ _attack] * (1 - duel_lands_works(_attack));
 }

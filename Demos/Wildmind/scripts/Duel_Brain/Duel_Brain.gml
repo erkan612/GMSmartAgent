@@ -1,10 +1,11 @@
-function varn_profile() {
-    static _profile = __varn_profile_build();
-    return _profile;
+function varn_profile(_phase = 1) { // one profile per phase, each adds to the last. what he learned lives outside them, so it carries over
+    static _one = __varn_profile_build(1);
+    static _two = __varn_profile_build(2);
+    return (_phase >= 2) ? _two : _one;
 }
 
-function __varn_profile_build() {
-    var _p = gmsa_profile_create("varn", { commitment : 0.15, select : gmsa_select.TOP_N_WEIGHTED, top_n : 2 });
+function __varn_profile_build(_phase) {
+    var _p = gmsa_profile_create("varn_" + string(_phase), { commitment : 0.15, select : gmsa_select.TOP_N_WEIGHTED, top_n : 2 });
     gmsa_profile_add_input(_p, gmsa_input_pull("distance", function(_agent, _target) {
         var _v = _agent.owner;
         return point_distance(_v.x, _v.y, _v.target.x, _v.target.y);
@@ -38,8 +39,8 @@ function __varn_profile_build() {
         return max(_off, _side);
     }));
 
-    var _kinds = ["cleave", "sweep", "slam", "charge"];
-    for (var _i = 0; _i < 4; _i++) { // how well each attack works on this player, see duel_lands_works
+    var _kinds = varn_attack_kinds();
+    for (var _i = 0; _i < array_length(_kinds); _i++) { // how well each attack works on this player, see duel_lands_works
         gmsa_profile_add_input(_p, gmsa_input_pull("lands_" + _kinds[_i], method({ attack : _kinds[_i] }, function(_agent, _target) {
             return duel_lands_works(attack);
         })));
@@ -117,6 +118,17 @@ function __varn_profile_build() {
     var _ward = gmsa_profile_add_action(_p, "ward", { weight : 1.5, cooldown : 4000000 }); // the counter's other answer to a punish: the shield instead of the sword
     gmsa_action_add_consideration(_ward, "expect_punish", gmsa_curve_make(gmsa_curve.STEP, { c : DUEL_READ_SURE }));
     gmsa_action_add_consideration(_ward, "distance", gmsa_curve_make(gmsa_curve.LINEAR, { m : -3.57, b : 1 })); // 0 from 140 px
+
+    if (_phase >= 2) { // phase two adds ways to fight, the mind is the same
+        var _volley = gmsa_profile_add_action(_p, "volley", { weight : 0.9, cooldown : 7000000 });
+        gmsa_action_add_consideration(_volley, "distance", gmsa_curve_make(gmsa_curve.LINEAR, { m : 2.5, b : -0.9 })); // from 180 px, full at 380
+        gmsa_action_add_consideration(_volley, "lands_volley", _works_slam);
+        gmsa_action_add_consideration(_volley, "rested_volley", _rested);
+
+        var _leap = gmsa_profile_add_action(_p, "leap", { weight : 0.7, cooldown : 6000000 });
+        gmsa_action_add_consideration(_leap, "distance", gmsa_curve_make(gmsa_curve.LINEAR, { m : -4, b : 1 }));         // 0 from 125 px
+        gmsa_action_add_consideration(_leap, "close_works", gmsa_curve_make(gmsa_curve.LINEAR, { m : -0.6, b : 1 })); // more when his close attacks don't land on this player
+    }
 
     gmsa_profile_add_action(_p, "hold", { weight : 0.12 });
     return gmsa_profile_build(_p);
