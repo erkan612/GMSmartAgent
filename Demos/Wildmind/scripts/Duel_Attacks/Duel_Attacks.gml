@@ -7,6 +7,7 @@ enum varn_shape { ARC, SIDE, CIRCLE, CHARGE }
 #macro VARN_HOLD_WALK 90   // how fast he steps in while holding a swing, slower than his walk (150)
 #macro VARN_QUICK 0.8      // his windup against a late dodger, as a share of the normal one
 #macro VARN_WINDUP_SCALE 1.15 // every windup, for tuning how fast he feels
+#macro VARN_MIN_WINDUP 0.7   // no attack winds up faster than this, whatever he has learned
 #macro VARN_PLAIN_LOCK 0.2 // with no read to act on he aims only at the start of a windup, then commits
 #macro VARN_SHORT_RECOVER 0.25 // his recovery when he's ready for what the player does next
 

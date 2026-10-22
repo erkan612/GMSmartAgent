@@ -127,3 +127,58 @@ function __duel_habits_rows() {
     }
     return _rows;
 }
+
+function duel_summary_lines() { // what Varn learned about the player this fight, built once when it ends
+    var _d = o_duel;
+    var _r = _d.reads;
+    var _secs = round((_d.fight_end - _d.fight_start) / 1000000);
+    var _out = ["Fight time: " + string(_secs div 60) + ":" + string_replace(string_format(_secs mod 60, 2, 0), " ", "0")];
+    if (!global.duel_learning) {
+        array_push(_out, "Varn wasn't learning. He fought the same way the whole time.");
+        return _out;
+    }
+    var _dg = _r.dodges;
+    array_push(_out, "You dodged to his left " + string(_dg.dodge_left) + ", to his right " + string(_dg.dodge_right) + ", away " + string(_dg.dodge_back) + ", past him " + string(_dg.dodge_in) + ", and stood still " + string(_dg.stay) + " times.");
+    if (_r.timing_seen > 0) array_push(_out, "You pressed roll or dodge " + string_format(_r.timing_avg, 1, 2) + " s before his hits, on average.");
+    var _a = _r.afters;
+    array_push(_out, "After his attacks you punished " + string(_a.punish) + ", shot " + string(_a.shoot) + ", drank " + string(_a.drink) + ", backed off " + string(_a.back_off) + " and waited " + string(_a.wait) + " times.");
+    var _kinds = ["cleave", "sweep", "slam", "charge"];
+    var _lands = "";
+    for (var _i = 0; _i < 4; _i++) {
+        var _l = _r.lands[$ _kinds[_i]];
+        _lands += ((_i > 0) ? ", " : "") + _kinds[_i] + " " + string(_l.hit) + " of " + string(_l.used);
+    }
+    array_push(_out, "What landed on you: " + _lands + ".");
+    array_push(_out, "He acted on what he knew " + string(_r.played) + ((_r.played == 1) ? " time" : " times") + " and caught you " + string(_r.caught) + ((_r.caught == 1) ? " time." : " times."));
+    return _out;
+}
+
+function duel_summary_draw(_lines, _won) {
+    var _gw = display_get_gui_width();
+    var _gh = display_get_gui_height();
+    var _w = 720;
+    var _x = (_gw - _w) / 2;
+    var _h = 120;
+    for (var _i = 0; _i < array_length(_lines); _i++) _h += string_height_ext(_lines[_i], -1, _w - 40) + 10;
+    var _y = (_gh - _h) / 2;
+    draw_set_alpha(0.8);
+    draw_set_colour(c_black);
+    draw_rectangle(_x, _y, _x + _w, _y + _h, false);
+    draw_set_alpha(1);
+    draw_set_halign(fa_center);
+    draw_set_colour(make_color_rgb(255, 170, 90));
+    draw_text_transformed(_gw / 2, _y + 16, _won ? "Oathkeeper Varn falls" : "You fell", 2, 2, 0);
+    draw_set_colour(c_ltgray);
+    draw_text(_gw / 2, _y + 62, "What Varn learned about you");
+    draw_set_halign(fa_left);
+    var _cy = _y + 96;
+    draw_set_colour(c_white);
+    for (var _i = 0; _i < array_length(_lines); _i++) {
+        draw_text_ext(_x + 20, _cy, _lines[_i], -1, _w - 40);
+        _cy += string_height_ext(_lines[_i], -1, _w - 40) + 10;
+    }
+    draw_set_halign(fa_center);
+    draw_set_colour(make_color_rgb(255, 170, 90));
+    draw_text(_gw / 2, _y + _h - 28, "R to fight again");
+    draw_set_halign(fa_left);
+}

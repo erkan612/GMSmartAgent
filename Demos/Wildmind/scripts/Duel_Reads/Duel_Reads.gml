@@ -1,4 +1,5 @@
 #macro DUEL_READ_SURE 0.3       // how sure Varn has to be before he acts on a guess
+#macro DUEL_LEARN_PACE 9        // how much he must see before he trusts a read. higher is slower: 3 acts within a handful of moves, 9 after about twenty
 #macro DUEL_DODGE_DISTANCE 180  // about how far a dodge carries the player
 #macro DUEL_DODGE_MIN 40        // moving less than this before the hit counts as staying
 #macro DUEL_MOVE_MIN 12         // moving slower than this, in px per second, counts as standing still
@@ -44,14 +45,18 @@ function __duel_timing_profile_build() {
 function duel_reads_create(_player) { // a fresh memory of the player, one per fight
     return {
         agent        : gmsa_agent_create(duel_dodge_profile(), _player),
-        model        : gmsa_learn_bayes_create({ inputs : ["attack", "strafe", "room", "close"], input_bins : { attack : 4, strafe : 5, room : 3, close : 2 }, smoothing : 1, confidence_k : 3, half_life : 30 }), // each input learns on its own, so every attack teaches the others
-        timing_agent : gmsa_agent_create(duel_timing_profile(), _player),
-        timing_model : gmsa_learn_count_create({ bins : 1, inputs : ["attack"], confidence_k : 3, half_life : 10 }), // one bin, so every attack teaches the same timing. fades fast, so he notices a change
+        model        : gmsa_learn_bayes_create({ inputs : ["attack", "strafe", "room", "close"], input_bins : { attack : 4, strafe : 5, room : 3, close : 2 }, smoothing : 1, confidence_k : DUEL_LEARN_PACE, half_life : 30 }), // each input learns on its own, so every attack teaches the others
+		timing_agent : gmsa_agent_create(duel_timing_profile(), _player),
+        timing_model : gmsa_learn_count_create({ bins : 1, inputs : ["attack"], confidence_k : DUEL_LEARN_PACE, half_life : 10 }), // one bin, so every attack teaches the same timing. fades fast, so he notices a change
         timing_avg   : 0, // seconds before the hit, for the habits panel
         dodge_dist   : 120, // how far the player's dodges carry, learned as he watches them
         lands        : { cleave : { used : 0, hit : 0 }, sweep : { used : 0, hit : 0 }, slam : { used : 0, hit : 0 }, charge : { used : 0, hit : 0 } }, // per attack: how often it hit this player
+        dodges       : { dodge_left : 0, dodge_right : 0, dodge_back : 0, dodge_in : 0, stay : 0 }, // counts for the summary after the fight
+        afters       : { punish : 0, shoot : 0, drink : 0, back_off : 0, wait : 0 },
+        played       : 0, // attacks he shaped with something he learned
+        caught       : 0, // and how many of those hit
         after_agent  : gmsa_agent_create(duel_after_profile(), _player),
-        after_model  : gmsa_learn_bayes_create({ inputs : ["attack", "landed", "close"], input_bins : { attack : 4, landed : 2, close : 2 }, smoothing : 1, confidence_k : 3, half_life : 20 }),
+        after_model  : gmsa_learn_bayes_create({ inputs : ["attack", "landed", "close"], input_bins : { attack : 4, landed : 2, close : 2 }, smoothing : 1, confidence_k : DUEL_LEARN_PACE, half_life : 20 }),
         after_seen   : 0,
         after_ctx    : undefined, // the last attack he watched an answer to, for the habits panel
         timing_seen  : 0,
@@ -151,6 +156,7 @@ function duel_read_learn(_attack, _s, _dodge) { // the player answered an attack
     __duel_read_inputs(_attack, _s);
     gmsa_learn_observe(_r.model, gmsa_observe(_r.agent, _dodges, array_get_index(_dodges, _dodge), demo_now()));
     o_duel.seen[$ _attack] += 1;
+    _r.dodges[$ _dodge] += 1;
 }
 
 function duel_dodge_kind(_dx, _dy, _from_dir, _min = DUEL_DODGE_MIN) { // how the player moved, as Varn sees it. from_dir points from Varn to where the player stood
@@ -236,6 +242,7 @@ function duel_after_learn(_after, _answer) {
     __duel_after_inputs(_after.attack, _after.landed, _after.close);
     gmsa_learn_observe(_r.after_model, gmsa_observe(_r.after_agent, _answers, array_get_index(_answers, _answer), demo_now()));
     _r.after_seen++;
+    _r.afters[$ _answer] += 1;
     _r.after_ctx = _after;
 }
 

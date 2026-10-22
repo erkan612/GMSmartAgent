@@ -100,6 +100,7 @@ switch (state) {
         strike(_dt);
         if (state_time >= attack.active) {
             var _landed = array_length(swing.hit) > 0;
+            if (played && _landed) o_duel.reads.caught += 1;
             if (tactic != "" && _landed) varn_taunt_timing(id);
             else if ((using_read || tactic != "") && !_landed) varn_taunt_miss(id); // he played a guess and caught nothing
             var _base = varn_attack_base(doing);

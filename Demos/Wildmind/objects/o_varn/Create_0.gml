@@ -30,6 +30,7 @@ follow = { answer : "wait", sure : 0 }; // his guess at it
 following = false;  // the current attack is a follow-up he planned
 given_up = {};      // attacks he has said won't work on this player
 used_at = {};       // when he last used each attack, see duel_lands_rest
+played = false;     // the current attack is shaped by something he learned
 thought = "";
 speech = "";        // what he says out loud, in a bubble
 speech_time = 0;
@@ -81,9 +82,12 @@ take = function(_option) { // acts on a fresh choice from his agent
             thought = ((thought == "") ? "" : thought + ", ") + _plan + " (" + string(round(timing.sure * 100)) + "%)";
         }
         //windup_time = (tactic == "quick") ? _a.windup * VARN_QUICK : _a.windup;
-        windup_time = _a.windup * VARN_WINDUP_SCALE * ((tactic == "quick") ? VARN_QUICK : 1);
+        //windup_time = _a.windup * VARN_WINDUP_SCALE * ((tactic == "quick") ? VARN_QUICK : 1);
+        windup_time = max(VARN_MIN_WINDUP, _a.windup * VARN_WINDUP_SCALE * ((tactic == "quick") ? VARN_QUICK : 1));
         windup_at = demo_now();
         if (using_read || tactic != "") varn_taunt_read(id);
+        played = using_read || tactic != "" || following;
+        if (played) o_duel.reads.played += 1;
         var _to = point_direction(x, y, target.x, target.y);
         //if (_a.shape == varn_shape.CIRCLE) { // the slam lands where the player will be: where he stands, or where Varn expects him to roll
         //    var _px = target.x;

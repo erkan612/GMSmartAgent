@@ -9,16 +9,8 @@ if (instance_exists(varn)) {
 
 var _gw = display_get_gui_width();
 var _gh = display_get_gui_height();
-if (show_habits || varn.dead || player.dead) duel_habits_draw(20, 100); // under the health and stamina
-
-if (varn.dead) {
-    draw_set_halign(fa_center);
-    draw_set_colour(make_color_rgb(255, 170, 90));
-    draw_text_transformed(_gw / 2, _gh / 2 - 40, "Oathkeeper Varn falls", 2, 2, 0);
-    draw_set_colour(c_white);
-    draw_text(_gw / 2, _gh / 2 + 10, "R to fight again");
-    draw_set_halign(fa_left);
-}
+if (summary != undefined) duel_summary_draw(summary, varn.dead);
+else if (show_habits) duel_habits_draw(20, 100); // under the health and stamina
 
 if (intro) {
     draw_set_alpha(0.75);

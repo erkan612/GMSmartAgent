@@ -51,6 +51,8 @@ debug_lines = function() { // the reads and his reasoning, as text for the debug
 };
 
 hold_varn = false;
+cheat_damage = 500;
+cheat_stamina = false;
 global.debug.scene = function() {
     gmui_text("Varn: " + string(round(varn.hp)) + " / " + string(varn.hp_max));
     var _nav = varn.nav;
@@ -59,6 +61,22 @@ global.debug.scene = function() {
     hold_varn = gmui_checkbox(hold_varn, "Hold Varn still");
     if (gmui_button("Restart fight")) room_restart();
     global.duel_learning = gmui_checkbox(global.duel_learning, "Varn learns from you");
+    gmui_separator();
+    gmui_text("Cheats");
+    gmui_text("Damage: " + string(cheat_damage));
+    cheat_damage = gmui_slider_int(cheat_damage, 50, 3000);
+    if (gmui_button("Hit Varn") && !varn.dead) {
+        varn.hp = max(0, varn.hp - cheat_damage);
+        varn.flash = 0.12;
+        if (varn.hp <= 0) { // the same death as a real hit
+            varn.dead = true;
+            varn.on_death();
+        }
+    }
+    if (gmui_button("+1 potion")) player.potions++;
+    if (gmui_button("Heal me") && !player.dead) player.hp = player.hp_max;
+    cheat_stamina = gmui_checkbox(cheat_stamina, "Infinite stamina");
+    gmui_separator();
     if (current_time >= debug_next) { // rebuilt ten times a second, on real time so it still refreshes while paused
         debug_next = current_time + 100;
         debug_cache = debug_lines();
@@ -74,3 +92,7 @@ show_habits = true;
 intro = true;          // the start screen, the world waits behind it
 global.demo_menu = true;
 demo_pause(true);
+
+fight_start = 0;      // on the game clock, set when the fight begins
+fight_end = -1;
+summary = undefined;  // the lines shown after the fight, built once
