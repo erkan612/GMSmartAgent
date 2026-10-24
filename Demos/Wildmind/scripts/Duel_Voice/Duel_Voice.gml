@@ -85,7 +85,6 @@ function duel_habits_draw(_x, _y) { // what Varn knows about the player, for the
 
 function __duel_habits_rows() {
     static _kinds = varn_attack_kinds();
-    static _names = ["Cleave", "Sweep", "Slam", "Charge", "Volley"];
     static _on = make_color_rgb(255, 120, 40);   // a bar he acts on
     static _off = make_color_rgb(110, 110, 110);
     var _rows = [{ text : "What Varn knows about you", col : make_color_rgb(255, 170, 90), bar : -1 }];
@@ -123,7 +122,7 @@ function __duel_habits_rows() {
         var _r = duel_read(_kinds[_i], _s);
         var _what = "no idea yet";
         if (_r.sure > 0.05) _what = (_r.dodge == "stay") ? "you stand still" : "you dodge " + duel_dodge_words(_r.dodge);
-        array_push(_rows, { text : _names[_i] + ": " + _what + "  (" + string(o_duel.seen[$ _kinds[_i]]) + " seen)", col : c_white, bar : _r.sure, bar_col : (_r.sure >= DUEL_READ_SURE) ? _on : _off });
+        array_push(_rows, { text : varn_attack_name(_kinds[_i]) + ": " + _what + "  (" + string(o_duel.seen[$ _kinds[_i]]) + " seen)", col : c_white, bar : _r.sure, bar_col : (_r.sure >= DUEL_READ_SURE) ? _on : _off });
     }
     return _rows;
 }

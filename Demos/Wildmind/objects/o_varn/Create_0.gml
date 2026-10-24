@@ -32,6 +32,7 @@ given_up = {};      // attacks he has said won't work on this player
 used_at = {};       // when he last used each attack, see duel_lands_rest
 played = false;     // the current attack is shaped by something he learned
 phase = 1;
+crowd_time = 0;     // seconds the player has stayed close, the shockwave's trigger
 leap_dir = 0;
 volley_fired = false;
 thought = "";
@@ -86,7 +87,9 @@ take = function(_option) { // acts on a fresh choice from his agent
         }
         //windup_time = (tactic == "quick") ? _a.windup * VARN_QUICK : _a.windup;
         //windup_time = _a.windup * VARN_WINDUP_SCALE * ((tactic == "quick") ? VARN_QUICK : 1);
-        windup_time = max(VARN_MIN_WINDUP, _a.windup * VARN_WINDUP_SCALE * ((tactic == "quick") ? VARN_QUICK : 1));
+        //windup_time = max(VARN_MIN_WINDUP, _a.windup * VARN_WINDUP_SCALE * ((tactic == "quick") ? VARN_QUICK : 1));
+        var _tune = varn_phase_tune(phase);
+        windup_time = max(_tune.min_windup, _a.windup * VARN_WINDUP_SCALE * _tune.windup * ((tactic == "quick") ? VARN_QUICK : 1));
         windup_at = demo_now();
         if (using_read || tactic != "") varn_taunt_read(id);
         played = using_read || tactic != "" || following;
@@ -154,7 +157,7 @@ after_start = function(_landed) { // his attack is over: guess what the player d
     gmsa_agent_set_input(agent, "expect_punish", (follow.answer == "punish") ? _sure : 0);
     gmsa_agent_set_input(agent, "expect_gap", (follow.answer == "back_off" || follow.answer == "drink") ? _sure : 0);
     gmsa_agent_set_input(agent, "expect_shoot", (follow.answer == "shoot") ? _sure : 0);
-    recover_time = attack.recover;
+    recover_time = attack.recover * varn_phase_tune(phase).recover;
     if (_sure > 0) {
         thought = duel_after_words(follow.answer) + " (" + string(round(_sure * 100)) + "%)";
         if (follow.answer == "punish" || follow.answer == "drink") recover_time = min(recover_time, VARN_SHORT_RECOVER);
@@ -205,6 +208,17 @@ strike = function(_dt) { // the active part of an attack, every step
             break;
         case varn_shape.CIRCLE:
             demo_swing_hit_circle(swing, slam_x, slam_y, attack.radius);
+            break;
+        case varn_shape.RING:
+            demo_swing_hit_circle(swing, x, y, attack.radius);
+            if (!volley_fired) { // the burst happens once: crowding resets and nearby pillars crack
+                volley_fired = true;
+                crowd_time = 0;
+                if (varn_crack_pillars(x, y, attack.radius) > 0) {
+                    varn_say(id, "Your cover is gone.");
+                    taunt_wait = 8;
+                }
+            }
             break;
         case varn_shape.VOLLEY:
             if (!volley_fired) {

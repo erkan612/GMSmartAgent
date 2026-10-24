@@ -1,7 +1,8 @@
 function varn_profile(_phase = 1) { // one profile per phase, each adds to the last. what he learned lives outside them, so it carries over
     static _one = __varn_profile_build(1);
     static _two = __varn_profile_build(2);
-    return (_phase >= 2) ? _two : _one;
+    static _three = __varn_profile_build(3);
+    return (_phase >= 3) ? _three : ((_phase >= 2) ? _two : _one);
 }
 
 function __varn_profile_build(_phase) {
@@ -27,6 +28,9 @@ function __varn_profile_build(_phase) {
         if (_pl.state != player_state.ATTACK || point_distance(_v.x, _v.y, _pl.x, _pl.y) > 110) return 0;
         return (abs(angle_difference(point_direction(_v.x, _v.y, _pl.x, _pl.y), _v.facing)) < 60) ? 1 : 0;
     }));
+    gmsa_profile_add_input(_p, gmsa_input_pull("crowded", function(_agent, _target) { // seconds the player has stayed close, see crowd_time
+        return _agent.owner.crowd_time;
+    }, 0, 2));
     gmsa_profile_add_input(_p, gmsa_input_pull("clear_line", function(_agent, _target) { // no pillar in the way of a charge
         var _v = _agent.owner;
         return demo_arena_line_clear(global.arena, _v.x, _v.y, _v.target.x, _v.target.y, _v.radius) ? 1 : 0;
@@ -128,6 +132,11 @@ function __varn_profile_build(_phase) {
         var _leap = gmsa_profile_add_action(_p, "leap", { weight : 0.7, cooldown : 6000000 });
         gmsa_action_add_consideration(_leap, "distance", gmsa_curve_make(gmsa_curve.LINEAR, { m : -4, b : 1 }));         // 0 from 125 px
         gmsa_action_add_consideration(_leap, "close_works", gmsa_curve_make(gmsa_curve.LINEAR, { m : -0.6, b : 1 })); // more when his close attacks don't land on this player
+    }
+
+    if (_phase >= 3) { // phase three: crowding him gets answered
+        var _shock = gmsa_profile_add_action(_p, "shockwave", { weight : 1.6, cooldown : 6000000 });
+        gmsa_action_add_consideration(_shock, "crowded", gmsa_curve_make(gmsa_curve.STEP, { c : 0.6 })); // close for over 1.2 s
     }
 
     gmsa_profile_add_action(_p, "hold", { weight : 0.12 });

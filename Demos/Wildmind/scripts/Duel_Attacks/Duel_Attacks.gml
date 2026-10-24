@@ -1,7 +1,9 @@
 enum varn_state { FREE, WINDUP, HOLD, ACTIVE, RECOVER, GUARD, LEAP }
-enum varn_shape { ARC, SIDE, CIRCLE, CHARGE, VOLLEY }
+enum varn_shape { ARC, SIDE, CIRCLE, CHARGE, VOLLEY, RING }
 
 #macro VARN_PHASE_2 0.66     // below this share of his health, phase two
+#macro VARN_PHASE_3 0.33     // and phase three
+#macro VARN_CROWD_DIST 110   // the player this close counts as crowding him, see crowd_time
 #macro VARN_LEAP_CROUCH 0.3  // the crouch before a leap, the player's warning
 #macro VARN_LEAP_TIME 0.35
 #macro VARN_LEAP_DIST 220
@@ -26,6 +28,7 @@ function varn_attack(_name) { // each attack's shape and timing, undefined for a
         counter     : { shape : varn_shape.ARC,    windup : 0.30, lock : 0.80, active : 0.12, recover : 0.60, damage : 20, knock : 380, reach : 120, half : 70 }, // a quick cleave against a player who punishes
         chase       : { shape : varn_shape.CHARGE, windup : 0.45, lock : 0.80, active : 0.50, recover : 0.80, damage : 25, knock : 480, speed : 640 },              // a charge after a player who backs off or drinks
         volley      : { shape : varn_shape.VOLLEY, windup : 0.70, lock : 0.70, active : 0.90, recover : 0.70, damage : 16, knock : 160, count : 5, spread : 15, speed : 460 }, // phase two: a fan of bolts, active lasts their flight
+        shockwave   : { shape : varn_shape.RING,   windup : 0.75, lock : 0.00, active : 0.12, recover : 0.60, damage : 10, knock : 760, radius : 150 },              // phase three: a burst around him that pushes the player away and cracks pillars
     };
     return _attacks[$ _name];
 }
@@ -54,6 +57,7 @@ function varn_threatens(_v) { // whether the attack he's starting can reach the 
         case varn_shape.SIDE:   return _d <= _a.reach + 60;
         case varn_shape.CHARGE: return _d <= _a.speed * _a.active + _v.radius;
         case varn_shape.VOLLEY: return _d <= _a.speed * _a.active;
+        case varn_shape.RING:   return _d <= _a.radius + 40;
     }
     return true; // the slam is aimed at the player
 }
@@ -68,6 +72,8 @@ function varn_in_zone(_v, _x, _y) { // whether the current attack, as aimed righ
             return point_distance(_v.x, _v.y, _x, _y) <= _a.reach + _r && abs(angle_difference(point_direction(_v.x, _v.y, _x, _y), _dir)) <= _a.half;
         case varn_shape.CIRCLE:
             return point_distance(_v.slam_x, _v.slam_y, _x, _y) <= _a.radius + _r;
+        case varn_shape.RING:
+            return point_distance(_v.x, _v.y, _x, _y) <= _a.radius + _r;
         case varn_shape.VOLLEY:
             var _half = _a.spread * (_a.count - 1) / 2 + 6;
             return point_distance(_v.x, _v.y, _x, _y) <= _a.speed * _a.active && abs(angle_difference(point_direction(_v.x, _v.y, _x, _y), _v.facing)) <= _half;
@@ -81,9 +87,38 @@ function varn_in_zone(_v, _x, _y) { // whether the current attack, as aimed righ
     return false;
 }
 
-function varn_attack_kinds() { // every attack he learns about, in the order the panels list them
-    static _kinds = ["cleave", "sweep", "slam", "charge", "volley"];
+function varn_attack_kinds() { // every attack he learns about, in the order the panels list them. a new attack only needs adding here
+    static _kinds = ["cleave", "sweep", "slam", "charge", "volley", "shockwave"];
     return _kinds;
+}
+
+function varn_attack_name(_kind) {
+    return string_upper(string_char_at(_kind, 1)) + string_delete(_kind, 1, 1);
+}
+
+function varn_phase_tune(_phase) { // how hard each phase pushes. windup and recover are shares of the normal ones, walk is his GMNav speed
+    static _tune = [
+        undefined,
+        { min_windup : VARN_MIN_WINDUP, windup : 1,    recover : 1,    walk : 2.5 },
+        { min_windup : VARN_MIN_WINDUP, windup : 0.95, recover : 0.85, walk : 2.8 },
+        { min_windup : 0.6,             windup : 0.85, recover : 0.6,  walk : 3.3 },
+    ];
+    return _tune[clamp(_phase, 1, 3)];
+}
+
+function varn_crack_pillars(_x, _y, _reach) { // the shockwave cracks pillars it reaches, the second crack brings one down. returns how many fell
+    var _arena = global.arena;
+    var _fell = 0;
+    for (var _i = 0; _i < array_length(_arena.pillars); _i++) {
+        var _p = _arena.pillars[_i];
+        if (_p.broken || point_distance(_x, _y, _p.x, _p.y) > _reach + _p.r) continue;
+        _p.cracks += 1;
+        if (_p.cracks >= 2) {
+            demo_arena_break_pillar(_arena, o_duel.nav_grid, _i, 32);
+            _fell++;
+        }
+    }
+    return _fell;
 }
 
 function varn_leap_dir(_v) { // away from the player, turned aside when a pillar or the wall is behind him

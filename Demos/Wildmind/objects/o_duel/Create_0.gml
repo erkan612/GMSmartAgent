@@ -87,7 +87,9 @@ global.debug.scene = function() {
     }
 };
 
-seen = { cleave : 0, sweep : 0, slam : 0, charge : 0, volley : 0 }; // answers recorded per attack, for the habits panel
+seen = {}; // answers recorded per attack, for the habits panel
+var _kinds = varn_attack_kinds();
+for (var _i = 0; _i < array_length(_kinds); _i++) seen[$ _kinds[_i]] = 0;
 show_habits = true;
 intro = true;          // the start screen, the world waits behind it
 global.demo_menu = true;

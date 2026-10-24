@@ -3,10 +3,10 @@ if (instance_exists(varn)) {
     var _x = (display_get_gui_width() - _w) / 2;
     var _y = display_get_gui_height() - 50;
     draw_set_colour(c_white);
-    draw_text(_x, _y - 22, "Oathkeeper Varn" + ((varn.phase >= 2) ? "  II" : ""));
+    draw_text(_x, _y - 22, "Oathkeeper Varn" + ((varn.phase >= 3) ? "  III" : ((varn.phase >= 2) ? "  II" : "")));
     __hud_bar(_x, _y, _w, 12, varn.hp / varn.hp_max, make_color_rgb(190, 60, 40));
     draw_set_colour(c_black); // where the phases change
-    draw_line(_x + _w * 0.33, _y, _x + _w * 0.33, _y + 12);
+    draw_line(_x + _w * VARN_PHASE_3, _y, _x + _w * VARN_PHASE_3, _y + 12);
     draw_line(_x + _w * VARN_PHASE_2, _y, _x + _w * VARN_PHASE_2, _y + 12);
 }
 

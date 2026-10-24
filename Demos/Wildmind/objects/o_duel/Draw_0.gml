@@ -1,7 +1,14 @@
 draw_sprite(demo_art("floor"), 0, arena.cx, arena.cy);
 for (var _i = 0; _i < array_length(arena.pillars); _i++) {
     var _p = arena.pillars[_i];
-    if (!_p.broken) draw_sprite(demo_art("pillar"), 0, _p.x, _p.y);
+    if (_p.broken) { // rubble, it doesn't block anything
+        draw_set_colour(make_color_rgb(90, 85, 80));
+        draw_circle(_p.x - 14, _p.y + 6, 12, false);
+        draw_circle(_p.x + 12, _p.y - 8, 10, false);
+        draw_circle(_p.x + 4, _p.y + 14, 8, false);
+    } else {
+        draw_sprite_ext(demo_art("pillar"), 0, _p.x, _p.y, 1, 1, 0, (_p.cracks > 0) ? c_gray : c_white, 1);
+    }
 }
 
 if (global.debug.nav) {

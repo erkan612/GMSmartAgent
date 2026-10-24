@@ -22,6 +22,14 @@ if (state == varn_state.WINDUP || state == varn_state.HOLD || state == varn_stat
         case varn_shape.CHARGE:
             if (state != varn_state.ACTIVE) demo_draw_lane(x, y, facing, attack.speed * attack.active + radius, radius * 2, _col, 0.15 + 0.15 * _t);
             break;
+        case varn_shape.RING:
+            draw_set_colour(_col);
+            draw_set_alpha(0.15);
+            draw_circle(x, y, attack.radius, false);
+            draw_set_alpha(0.3);
+            draw_circle(x, y, attack.radius * _t, false);
+            draw_set_alpha(1);
+            break;
         case varn_shape.VOLLEY:
             if (state != varn_state.ACTIVE) {
                 for (var _i = 0; _i < attack.count; _i++) {

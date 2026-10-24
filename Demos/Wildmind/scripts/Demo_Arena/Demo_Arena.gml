@@ -3,7 +3,7 @@ function demo_arena_create(_cx, _cy, _r) { // a round floor inside a wall
 }
 
 function demo_arena_add_pillar(_arena, _x, _y, _r) {
-    array_push(_arena.pillars, { x : _x, y : _y, r : _r, broken : false });
+    array_push(_arena.pillars, { x : _x, y : _y, r : _r, broken : false, cracks : 0 });
 }
 
 function demo_arena_fits(_arena, _x, _y, _r) { // false when a circle there would touch a pillar or the wall
@@ -68,4 +68,21 @@ function demo_arena_line_clear(_arena, _x1, _y1, _x2, _y2, _pad) { // false when
         if (point_distance(_p.x, _p.y, _x1 + _dx * _t, _y1 + _dy * _t) < _p.r + _pad) return false;
     }
     return true;
+}
+
+function demo_arena_break_pillar(_arena, _grid, _i, _tile) { // a pillar falls: its cells open up and the clearance map is rebuilt, so paths change with it
+    var _p = _arena.pillars[_i];
+    if (_p.broken) return;
+    _p.broken = true;
+    var _c1 = floor((_p.x - _p.r) / _tile) - 1;
+    var _c2 = floor((_p.x + _p.r) / _tile) + 1;
+    var _r1 = floor((_p.y - _p.r) / _tile) - 1;
+    var _r2 = floor((_p.y + _p.r) / _tile) + 1;
+    for (var _c = _c1; _c <= _c2; _c++) {
+        for (var _r = _r1; _r <= _r2; _r++) {
+            if (!gmnav_grid_in_bounds(_grid, _c, _r)) continue;
+            gmnav_grid_set_blocked(_grid, _c, _r, !demo_arena_fits(_arena, (_c + 0.5) * _tile, (_r + 0.5) * _tile, _tile * 0.5));
+        }
+    }
+    gmnav_clearance_build(_grid);
 }

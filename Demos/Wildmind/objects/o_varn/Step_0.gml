@@ -6,6 +6,8 @@ if (dead) exit;
 fighter_tick(id, _dt);
 state_time += _dt;
 var _alive = instance_exists(target) && !target.dead;
+if (_alive && point_distance(x, y, target.x, target.y) < VARN_CROWD_DIST) crowd_time += _dt;
+else crowd_time = max(0, crowd_time - 2 * _dt);
 if (after != undefined && _alive) { // watching what the player does after his attack
     if (target.state == player_state.ATTACK) after.attacked = true;
     if (target.state == player_state.SHOOT) after.shot = true;
@@ -16,10 +18,12 @@ var _to_player = _alive ? point_direction(x, y, target.x, target.y) : facing;
 
 switch (state) {
     case varn_state.FREE:
-        if (phase == 1 && hp < hp_max * VARN_PHASE_2) { // swapped between actions, never mid swing
-            phase = 2;
-            gmsa_agent_set_profile(agent, varn_profile(2));
-            varn_say(id, "Enough. Now I fight.");
+        var _want = (hp < hp_max * VARN_PHASE_3) ? 3 : ((hp < hp_max * VARN_PHASE_2) ? 2 : 1);
+        if (_want > phase) { // swapped between actions, never mid swing
+            phase = _want;
+            gmsa_agent_set_profile(agent, varn_profile(phase));
+            nav.speed = varn_phase_tune(phase).walk;
+            varn_say(id, (phase == 2) ? "Enough. Now I fight." : "I will not fall here.");
             taunt_wait = 8;
         }
         facing += angle_difference(_to_player, facing) * min(1, 6 * _dt);
